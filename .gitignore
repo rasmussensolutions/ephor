@@ -57,3 +57,7 @@ deploy/cloudflare/dev-tunnel.yml
 
 # Private release signing material
 .release-keys/
+
+# Python updater test caches
+__pycache__/
+*.pyc

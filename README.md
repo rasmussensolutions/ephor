@@ -144,6 +144,12 @@ See [architecture](docs/architecture.md) and the notes in `deploy/` for the inte
 hosting options. The project is intended for an open-source release; a license
 must be chosen before that release.
 
+## Panel updates
+
+Cloudflare hosters can update from GitHub using **Actions → Update Ephor**.
+Review and merge the generated pull request to deploy while preserving installation
+settings. See [browser-only panel updates](docs/panel-updates.md).
+
 ## Daemon releases and updates
 
 See [docs/updates.md](docs/updates.md) for signed Linux releases, self-hosted update sources, and passkey-confirmed daemon updates from the Machines page.

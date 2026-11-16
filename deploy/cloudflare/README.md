@@ -61,6 +61,13 @@ architecture checksums. Add a machine in Ephor to get its VPS enrollment command
 See [Cloudflare's deploy-button documentation](https://developers.cloudflare.com/workers/platform/deploy-buttons/)
 for account connection and automatic resource provisioning.
 
+## Updating your panel
+
+Use **Actions → Update Ephor → Run workflow** in your deployment repository,
+review the generated pull request, and merge it to deploy. This works with private
+repositories and preserves installation settings. See the [panel update guide](../../docs/panel-updates.md)
+for one-time GitHub permissions, backups, and copies created before the updater existed.
+
 ## Local development
 
 ```sh
