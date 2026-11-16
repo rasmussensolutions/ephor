@@ -17,7 +17,7 @@
     "dev:website": "bun run --filter @ephor/website dev",
     "dev:server": "bun run --filter @ephor/server dev",
     "dev:worker": "bun run --filter @ephor/worker dev",
-    "build": "bun run --filter @ephor/dashboard build && bun run --parallel --filter @ephor/website --filter @ephor/server build && bun run --filter @ephor/worker build",
+    "build": "bun scripts/build.ts",
     "build:daemon": "cargo build --release --package ephord",
     "typecheck": "bun run --filter '@ephor/*' typecheck",
     "lint": "biome check .",
@@ -29,10 +29,29 @@
     "bundle:daemon": "bun scripts/bundle-daemon.ts",
     "dev:tunnel": "bun --env-file=apps/server/.env scripts/dev-tunnel.ts",
     "release:daemon": "bun scripts/release-daemon.ts",
-    "test:services:linux": "bun scripts/test-services-linux.ts"
+    "test:services:linux": "bun scripts/test-services-linux.ts",
+    "build:all": "bun run --filter @ephor/dashboard build && bun run --parallel --filter @ephor/website --filter @ephor/server build && bun run --filter @ephor/worker build",
+    "build:cloudflare": "bun scripts/download-daemon.ts && bun run --filter @ephor/dashboard build",
+    "deploy": "bun run --filter @ephor/worker exec:wrangler d1 migrations apply DB --remote --config ../../wrangler.jsonc && bun run --filter @ephor/worker exec:wrangler deploy --config ../../wrangler.jsonc"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.7",
     "typescript": "7.0.2"
+  },
+  "cloudflare": {
+    "bindings": {
+      "DB": {
+        "description": "Stores your Ephor account, machines and deployment data. Cloudflare creates this database for you."
+      },
+      "EPHOR_ORIGIN": {
+        "description": "The exact HTTPS address where you will open Ephor, without a trailing slash. For workers.dev use https://<Worker name>.<your Cloudflare subdomain>.workers.dev. Find your subdomain in Workers & Pages."
+      },
+      "BETTER_AUTH_SECRET": {
+        "description": "Generate a unique 64-character random password in your password manager. Keep this secret for future deployments."
+      },
+      "EPHOR_SETUP_CODE": {
+        "description": "Generate a separate random password of 32\u2013128 characters in your password manager. Save it and enter it on Ephor\u2019s setup screen after deployment. It can be used once."
+      }
+    }
   }
 }

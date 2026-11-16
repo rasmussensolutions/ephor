@@ -2,6 +2,14 @@
 
 A server-management panel for machines and the services running on them.
 
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https%3A%2F%2Fgithub.com%2Frasmussensolutions%2Fephor)
+
+Deploy your own panel entirely in the browser. Cloudflare creates the D1 database,
+downloads the verified daemon release, builds the dashboard, and applies database
+migrations. Enter your panel address and two private secrets in the deployment
+form, then open Ephor and register your owner passkey using your saved setup code.
+See the [browser deployment guide](deploy/cloudflare/README.md#deploy-in-your-browser).
+
 The dashboard includes passkey authentication, deployment-controlled owner setup,
 recovery codes, session management, and security activity. The shared API runs on
 Bun/Node with PostgreSQL or Cloudflare Workers with D1. The Rust daemon supports
@@ -15,7 +23,7 @@ dependencies, protected setup, and local recovery points.
 [Off-site backups](docs/backups.md) add encrypted Restic/S3 storage, schedules,
 recovery-kit export, and restore into a separate service on another machine.
 
-## Requirements
+## Local development requirements
 
 - Bun **1.3.14** (package manager, workspace scripts, and local API development)
 - Node.js **22.12+**; **24.12.0** is pinned for development and CI

@@ -7,6 +7,18 @@ implemented. The owner will eventually control all enrolled machines.
 
 ## First setup
 
+Cloudflare's browser deployment accepts a private `EPHOR_SETUP_CODE` Worker
+secret. A new owner can exchange this code on the existing setup screen without
+running a terminal command. It must be a separately generated random value of
+32–128 characters. Its consumption is stored as a hash in the database and is
+atomic across Worker instances. The deployment code remains available until
+consumed or removed by the operator; the resulting enrollment grant expires after
+ten minutes. If enrollment is interrupted, rotate the Worker secret to a new
+random value to restart setup. A configured owner cannot be replaced through
+this mechanism, even if the secret changes. Remove the secret after registration.
+Administrator-issued setup codes take precedence and keep their existing expiry.
+See the [browser deployment guide](../deploy/cloudflare/README.md#deploy-in-your-browser).
+
 Choose the final dashboard hostname before enrolling passkeys. WebAuthn binds
 credentials to that hostname. Production requires HTTPS; HTTP is accepted only
 for `localhost` development. `EPHOR_ORIGIN` is an exact origin without a trailing

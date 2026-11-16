@@ -1,0 +1,5 @@
+# Use your password manager to generate two different random passwords.
+# Keep the authentication secret stable across deployments.
+BETTER_AUTH_SECRET=
+# Save this code for the owner setup screen after deployment.
+EPHOR_SETUP_CODE=

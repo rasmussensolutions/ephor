@@ -49,6 +49,7 @@ export default {
       {
         origin: env.EPHOR_ORIGIN,
         secret: env.BETTER_AUTH_SECRET,
+        setupCode: env.EPHOR_SETUP_CODE || undefined,
         database: env.DB,
         sql,
         releaseUrl: env.EPHOR_RELEASE_URL,

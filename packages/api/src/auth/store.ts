@@ -26,6 +26,7 @@ export interface AuthState {
   credentials: string[];
   recovery: string[];
   setup?: { hash: string; expires: number };
+  usedDeploymentSetup?: string;
   grant?: { hash: string; expires: number; epoch: number };
 }
 
@@ -97,19 +98,30 @@ export class AuthStore {
     return code;
   }
 
-  async start(kind: "setup" | "recovery", token: string, name: string) {
+  async start(
+    kind: "setup" | "recovery",
+    token: string,
+    name: string,
+    deploymentCode?: string,
+  ) {
     const digest = await hash(token);
+    const deploymentHash = deploymentCode
+      ? await hash(deploymentCode)
+      : undefined;
     const grant = randomToken();
     const grantHash = await hash(grant);
     await this.change((s) => {
       if (kind === "setup") {
-        if (
-          s.configured ||
-          !s.setup ||
-          s.setup.expires <= Date.now() ||
-          s.setup.hash !== digest
-        )
+        // An explicitly issued administrator code takes precedence. Consumption
+        // of a deployment code is durable across requests, restarts and retries.
+        const valid = s.setup
+          ? s.setup.expires > Date.now() && s.setup.hash === digest
+          : deploymentHash !== undefined &&
+            deploymentHash === digest &&
+            s.usedDeploymentSetup !== deploymentHash;
+        if (s.configured || !valid)
           throw new AuthError("INVALID_OR_EXPIRED_CODE", 401);
+        if (deploymentHash) s.usedDeploymentSetup = deploymentHash;
         s.name = name;
         delete s.setup;
       } else {

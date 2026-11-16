@@ -8,12 +8,24 @@ export interface AuthEnvironment {
   secret: string;
   database: BetterAuthOptions["database"];
   sql: Sql;
+  setupCode?: string;
   releaseUrl?: string;
   releasePublicKey?: string;
   loadDaemonRelease?: () => Promise<unknown>;
 }
 
 export function validateConfig(env: AuthEnvironment) {
+  if (
+    env.setupCode !== undefined &&
+    (env.setupCode.length < 32 ||
+      env.setupCode.length > 128 ||
+      env.setupCode.trim() !== env.setupCode ||
+      new Set(env.setupCode).size < 12 ||
+      env.setupCode === env.secret)
+  )
+    throw new Error(
+      "EPHOR_SETUP_CODE must be a separate, randomly generated code of 32–128 characters without surrounding spaces.",
+    );
   const url = new URL(env.origin);
   if (
     url.origin !== env.origin ||

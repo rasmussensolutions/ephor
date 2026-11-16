@@ -184,7 +184,7 @@ export function createApi(
       if (!name || name.length > 80) throw new AuthError("INVALID_NAME");
       let token: string;
       try {
-        token = await store.start(kind, body.code.trim(), name);
+        token = await store.start(kind, body.code.trim(), name, env.setupCode);
       } catch (error) {
         await store.audit(`${kind}.rejected`);
         throw error;
