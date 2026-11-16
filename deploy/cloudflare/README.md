@@ -21,7 +21,8 @@ and rate limits. The landing page remains a separate frontend.
 
    Cloudflare stores the two secrets as Worker secrets. Use the provided official
    release URL and public key. Accept the detected `bun run build` and
-   `bun run deploy` commands. Cloudflare creates and binds the D1 database.
+   `bun run deploy` commands. Turn off **Enable Preview builds**, since owner
+   passkeys use your final panel address. Cloudflare creates and binds the D1 database.
 3. Click **Deploy**. The build downloads both published Linux daemon binaries,
    checks the pinned release manifest and binary checksums, builds the dashboard,
    applies D1 migrations, and deploys the Worker and assets.

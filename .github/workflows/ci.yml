@@ -41,6 +41,10 @@ jobs:
         env:
           TEST_DATABASE_URL: postgres://ephor_test:test_password@localhost:5432/ephor_test
       - run: bun run build
+      - name: Verify Cloudflare deployment template
+        run: |
+          WORKERS_CI=1 bun run build
+          bun run --filter @ephor/worker exec:wrangler deploy --config ../../wrangler.jsonc --dry-run --outdir /tmp/ephor-cloudflare-template
       - run: bun run typecheck
       - name: Check generated routes are committed
         run: git diff --exit-code -- apps/dashboard/src/routeTree.gen.ts apps/website/src/routeTree.gen.ts

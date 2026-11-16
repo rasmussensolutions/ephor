@@ -44,7 +44,7 @@
         "description": "Stores your Ephor account, machines and deployment data. Cloudflare creates this database for you."
       },
       "EPHOR_ORIGIN": {
-        "description": "The exact HTTPS address where you will open Ephor, without a trailing slash. For workers.dev use https://<Worker name>.<your Cloudflare subdomain>.workers.dev. Find your subdomain in Workers & Pages."
+        "description": "The exact HTTPS address where you will open Ephor, without a trailing slash. For example, `https://ephor.your-subdomain.workers.dev`. The first part must match your project name. Find your subdomain in Workers & Pages."
       },
       "BETTER_AUTH_SECRET": {
         "description": "Generate a unique 64-character random password in your password manager. Keep this secret for future deployments."
