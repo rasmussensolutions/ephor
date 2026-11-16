@@ -1,0 +1,271 @@
+{
+  "helperImage": "docker.io/library/alpine@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f",
+  "templates": [
+    {
+      "id": "postgres",
+      "version": 1,
+      "name": "PostgreSQL",
+      "category": "Databases",
+      "description": "Private PostgreSQL with persistent storage.",
+      "technology": "postgres",
+      "web": false,
+      "components": [
+        {
+          "id": "database",
+          "image": "docker.io/library/postgres@sha256:d3244e8ce3f165ee3c93d9c4a4b1d0fe48b3a89e2287b717fdcbbde92d405065",
+          "port": 5432,
+          "memoryMb": 256,
+          "cpus": 1,
+          "user": "70:70",
+          "environment": {
+            "POSTGRES_USER": "ephor",
+            "POSTGRES_DB": "app",
+            "POSTGRES_PASSWORD": "${DB_PASSWORD}",
+            "PGDATA": "/var/lib/postgresql/data/pgdata"
+          },
+          "volumes": [
+            {
+              "key": "database",
+              "target": "/var/lib/postgresql/data",
+              "uid": 70
+            }
+          ],
+          "health": ["CMD", "pg_isready", "-U", "ephor", "-d", "app"],
+          "command": [],
+          "capabilities": [],
+          "tmpfs": {
+            "/var/run/postgresql": "rw,nosuid,size=16m,mode=1777"
+          },
+          "internal": false
+        }
+      ],
+      "secrets": ["DB_PASSWORD"],
+      "notes": "Connect through an SSH tunnel using the loopback port shown after deployment."
+    },
+    {
+      "id": "redis",
+      "version": 1,
+      "name": "Redis",
+      "category": "Databases",
+      "description": "Password-protected Redis with append-only persistence.",
+      "technology": "redis",
+      "web": false,
+      "components": [
+        {
+          "id": "redis",
+          "image": "docker.io/library/redis@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe",
+          "port": 6379,
+          "memoryMb": 128,
+          "cpus": 1,
+          "user": "999:1000",
+          "environment": {
+            "REDISCLI_AUTH": "${DB_PASSWORD}"
+          },
+          "volumes": [
+            {
+              "key": "data",
+              "target": "/data",
+              "uid": 999
+            }
+          ],
+          "health": ["CMD", "redis-cli", "ping"],
+          "command": [
+            "/bin/sh",
+            "-ec",
+            "exec redis-server --appendonly yes --appendfsync everysec --requirepass \"$REDISCLI_AUTH\" --maxmemory 96mb --maxmemory-policy noeviction"
+          ],
+          "capabilities": [],
+          "tmpfs": {},
+          "internal": false
+        }
+      ],
+      "secrets": ["DB_PASSWORD"],
+      "notes": "Append-only persistence may lose up to one second of writes after power loss. Connect through an SSH tunnel."
+    },
+    {
+      "id": "uptime-kuma",
+      "version": 1,
+      "name": "Uptime Kuma",
+      "category": "Monitoring",
+      "description": "Uptime monitoring with a persistent local database.",
+      "technology": "uptimekuma",
+      "web": true,
+      "components": [
+        {
+          "id": "web",
+          "image": "docker.io/louislam/uptime-kuma@sha256:7554dba313c84e44fee921ef3b5626ba1c711e412e82815e8c957517026112a9",
+          "port": 3001,
+          "memoryMb": 384,
+          "cpus": 1,
+          "user": "1000:1000",
+          "environment": {},
+          "volumes": [
+            {
+              "key": "data",
+              "target": "/app/data",
+              "uid": 1000
+            }
+          ],
+          "health": ["CMD", "node", "extra/healthcheck.js"],
+          "command": [],
+          "capabilities": [],
+          "tmpfs": {},
+          "internal": false
+        }
+      ],
+      "secrets": ["ACCESS_PASSWORD"],
+      "notes": "Open the protected site and create your administrator account before removing setup protection."
+    },
+    {
+      "id": "wordpress",
+      "version": 1,
+      "name": "WordPress",
+      "category": "Publishing",
+      "description": "WordPress with a private MariaDB database and persistent uploads.",
+      "technology": "wordpress",
+      "web": true,
+      "components": [
+        {
+          "id": "database",
+          "image": "docker.io/library/mariadb@sha256:5e73baf8179b29f115101bb102763a47a017361f3e9792daccba6646c3ab1532",
+          "port": 3306,
+          "memoryMb": 384,
+          "cpus": 1,
+          "user": "999:999",
+          "environment": {
+            "MARIADB_DATABASE": "app",
+            "MARIADB_USER": "ephor",
+            "MARIADB_PASSWORD": "${DB_PASSWORD}",
+            "MARIADB_ROOT_PASSWORD": "${ROOT_PASSWORD}"
+          },
+          "volumes": [
+            {
+              "key": "database",
+              "target": "/var/lib/mysql",
+              "uid": 999
+            }
+          ],
+          "health": [
+            "CMD",
+            "healthcheck.sh",
+            "--connect",
+            "--innodb_initialized"
+          ],
+          "command": [],
+          "capabilities": [],
+          "tmpfs": {
+            "/run/mysqld": "rw,nosuid,size=16m,uid=999,gid=999,mode=0755"
+          },
+          "internal": true
+        },
+        {
+          "id": "web",
+          "image": "docker.io/library/wordpress@sha256:5d2c212561c4b5442ebc4d98933a9cbadcf3dee8888ed3fd9ed44667c27cc905",
+          "port": 80,
+          "memoryMb": 384,
+          "cpus": 1,
+          "user": "0:0",
+          "environment": {
+            "WORDPRESS_DB_HOST": "database:3306",
+            "WORDPRESS_DB_USER": "ephor",
+            "WORDPRESS_DB_PASSWORD": "${DB_PASSWORD}",
+            "WORDPRESS_DB_NAME": "app",
+            "WORDPRESS_CONFIG_EXTRA": "define('DISALLOW_FILE_EDIT', true);"
+          },
+          "volumes": [
+            {
+              "key": "files",
+              "target": "/var/www/html",
+              "uid": 33
+            }
+          ],
+          "health": [
+            "CMD",
+            "php",
+            "-r",
+            "exit(@file_get_contents('http://127.0.0.1/wp-login.php') === false ? 1 : 0);"
+          ],
+          "command": [],
+          "capabilities": [
+            "CHOWN",
+            "DAC_OVERRIDE",
+            "SETUID",
+            "SETGID",
+            "NET_BIND_SERVICE"
+          ],
+          "tmpfs": {
+            "/var/run/apache2": "rw,nosuid,size=16m",
+            "/var/lock/apache2": "rw,nosuid,size=16m"
+          },
+          "internal": false
+        }
+      ],
+      "secrets": ["DB_PASSWORD", "ROOT_PASSWORD", "ACCESS_PASSWORD"],
+      "notes": "Complete the WordPress installer behind setup protection. The reviewed Apache image needs limited capabilities for initialization."
+    },
+    {
+      "id": "umami",
+      "version": 1,
+      "name": "Umami",
+      "category": "Analytics",
+      "description": "Website analytics with a private PostgreSQL database.",
+      "technology": "umami",
+      "web": true,
+      "components": [
+        {
+          "id": "database",
+          "image": "docker.io/library/postgres@sha256:d3244e8ce3f165ee3c93d9c4a4b1d0fe48b3a89e2287b717fdcbbde92d405065",
+          "port": 5432,
+          "memoryMb": 256,
+          "cpus": 1,
+          "user": "70:70",
+          "environment": {
+            "POSTGRES_USER": "ephor",
+            "POSTGRES_DB": "app",
+            "POSTGRES_PASSWORD": "${DB_PASSWORD}",
+            "PGDATA": "/var/lib/postgresql/data/pgdata"
+          },
+          "volumes": [
+            {
+              "key": "database",
+              "target": "/var/lib/postgresql/data",
+              "uid": 70
+            }
+          ],
+          "health": ["CMD", "pg_isready", "-U", "ephor", "-d", "app"],
+          "command": [],
+          "capabilities": [],
+          "tmpfs": {
+            "/var/run/postgresql": "rw,nosuid,size=16m,mode=1777"
+          },
+          "internal": true
+        },
+        {
+          "id": "web",
+          "image": "ghcr.io/umami-software/umami@sha256:b64f40400d77bcadd39cf5c62a1e368c99524ca442024f96e1133355a19a5dbc",
+          "port": 3000,
+          "memoryMb": 512,
+          "cpus": 1,
+          "user": "1001:1001",
+          "environment": {
+            "DATABASE_URL": "postgresql://ephor:${DB_PASSWORD}@database:5432/app",
+            "APP_SECRET": "${APP_SECRET}"
+          },
+          "volumes": [],
+          "health": [
+            "CMD",
+            "node",
+            "-e",
+            "fetch('http://127.0.0.1:3000/api/heartbeat').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+          ],
+          "command": [],
+          "capabilities": [],
+          "tmpfs": {},
+          "internal": false
+        }
+      ],
+      "secrets": ["DB_PASSWORD", "APP_SECRET", "ACCESS_PASSWORD"],
+      "notes": "Behind setup protection, sign in as admin with password umami and immediately change that password before publishing."
+    }
+  ]
+}

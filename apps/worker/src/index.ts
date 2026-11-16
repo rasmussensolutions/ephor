@@ -1,0 +1,67 @@
+import {
+  createApi,
+  processNotifications,
+  pruneMachineMetrics,
+  type Sql,
+} from "@ephor/api";
+
+function database(env: Env): Sql {
+  return {
+    async query<T extends Record<string, unknown>>(
+      query: string,
+      values: unknown[] = [],
+    ) {
+      const ordered: unknown[] = [];
+      const statement = query.replace(/\$(\d+)/g, (_, index: string) => {
+        ordered.push(values[Number(index) - 1]);
+        return "?";
+      });
+      return (
+        await env.DB.prepare(statement)
+          .bind(...ordered)
+          .all<T>()
+      ).results;
+    },
+  } satisfies Sql;
+}
+
+export default {
+  async scheduled(_controller, env) {
+    await processNotifications({
+      sql: database(env),
+      origin: env.EPHOR_ORIGIN,
+      secret: env.BETTER_AUTH_SECRET,
+    });
+    await pruneMachineMetrics(database(env));
+    await env.DB.prepare(
+      "DELETE FROM ephor_service_metric WHERE observed_at < ?",
+    )
+      .bind(Date.now() - 24 * 60 * 60 * 1000)
+      .run();
+  },
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    if (!url.pathname.startsWith("/api/") && url.pathname !== "/health")
+      return env.ASSETS.fetch(request);
+    const sql = database(env);
+    // Never retain D1 bindings or request state in global scope.
+    return createApi(
+      {
+        origin: env.EPHOR_ORIGIN,
+        secret: env.BETTER_AUTH_SECRET,
+        database: env.DB,
+        sql,
+        releaseUrl: env.EPHOR_RELEASE_URL,
+        releasePublicKey: env.EPHOR_RELEASE_PUBLIC_KEY,
+        loadDaemonRelease: async () => {
+          const response = await env.ASSETS.fetch(
+            new Request(`${env.EPHOR_ORIGIN}/daemon/manifest.json`),
+          );
+          if (!response.ok) throw new Error("Daemon release is unavailable");
+          return response.json();
+        },
+      },
+      (req) => req.headers.get("cf-connecting-ip") ?? "shared",
+    ).fetch(request);
+  },
+} satisfies ExportedHandler<Env>;

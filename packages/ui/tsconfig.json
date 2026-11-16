@@ -1,0 +1,5 @@
+{
+  "extends": "@ephor/typescript-config/react.json",
+  "compilerOptions": { "types": ["react"] },
+  "include": ["src"]
+}

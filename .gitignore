@@ -1,0 +1,59 @@
+node_modules/
+dist/
+.output/
+.tanstack/
+.wrangler/
+.turbo/
+target/
+coverage/
+*.tsbuildinfo
+*.log
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+.DS_Store
+.idea/
+
+# Local caches, test reports, and generated exports
+.cache/
+.nyc_output/
+playwright-report/
+test-results/
+blob-report/
+/output/
+
+# Local databases and their journal files
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+
+# Private keys and credential bundles
+*.pem
+*.key
+*.p12
+*.pfx
+.envrc
+
+# Editor swap files and temporary backups
+*.swp
+*.swo
+*.bak
+*~
+
+# Generated from Wrangler configuration
+apps/worker/worker-configuration.d.ts
+
+# Deployment-built Linux agent artifacts
+apps/dashboard/public/daemon/
+
+# Machine-specific named development tunnel configuration
+deploy/cloudflare/dev-tunnel.yml
+
+# Private release signing material
+.release-keys/
