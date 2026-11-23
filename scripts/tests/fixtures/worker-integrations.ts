@@ -2,7 +2,7 @@ import { AiIntegration } from "../../../packages/api/src/ai/store";
 import type { Sql } from "../../../packages/api/src/auth/store";
 import { Notifications } from "../../../packages/api/src/notifications/store";
 import { defaultPreferences } from "../../../packages/api/src/notifications/types";
-import { PanelUpdates } from "../../../packages/api/src/panel/updates";
+import { Providers } from "../../../packages/api/src/panel/release/providers";
 import { dnsRecords } from "../../../packages/api/src/services/domains";
 import { githubSource } from "../../../packages/api/src/services/github";
 import { GitHubApp } from "../../../packages/api/src/services/github-app";
@@ -64,9 +64,32 @@ export default {
           )[0],
         );
       }
+      if (scenario === "releases") {
+        const providers = new Providers();
+        await providers.railway(
+          {
+            host: "railway",
+            token: "fixture",
+            serviceId: "fixture",
+            environmentId: "fixture",
+          },
+          "query { fixture }",
+        );
+        await providers.cf(
+          {
+            host: "cloudflare",
+            token: "fixture",
+            worker: "fixture",
+            accountId: "fixture",
+            databaseId: "fixture",
+          },
+          "/workers/scripts/fixture/settings",
+        );
+        return Response.json({ ok: true });
+      }
       const github =
         scenario === "panel"
-          ? new PanelUpdates({ sql, secret, origin, database: env.DB }).github
+          ? new GitHubApp(sql, secret, origin, fetch, "panel")
           : new GitHubApp(sql, secret, origin);
       if (scenario === "redirect")
         return Response.json(await github.api("/redirect", "fixture-token"));

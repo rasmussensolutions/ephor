@@ -94,6 +94,10 @@ test("integrations use native Workers fetch and D1 without following credential-
           account: { login: "fixture" },
         });
       }
+      if (url.hostname === "backboard.railway.com")
+        return json({ data: { fixture: true } });
+      if (url.hostname === "api.cloudflare.com")
+        return json({ success: true, result: {} });
       if (url.hostname === "openrouter.ai")
         return json({
           data: [
@@ -159,6 +163,7 @@ test("integrations use native Workers fetch and D1 without following credential-
     assert.equal((await invoke("email")).email_status, "sent");
     assert.ok((await invoke("dns")).length > 0);
     assert.equal((await invoke("legacy")).repositoryId, "1");
+    assert.equal((await invoke("releases")).ok, true);
     const before = calls.length;
     const redirect = await runtime.dispatchFetch("https://fixture/redirect");
     assert.equal(redirect.status, 500);
@@ -169,6 +174,7 @@ test("integrations use native Workers fetch and D1 without following credential-
     assert.equal(calls.length, before + 1);
     redirectAll = true;
     for (const [scenario, code] of [
+      ["releases", "RAILWAY_HTTP_302"],
       ["ai", "AI_PROVIDER_UNAVAILABLE"],
       ["dns", "DNS_LOOKUP_FAILED"],
       ["legacy", "GITHUB_REPOSITORY_UNAVAILABLE"],

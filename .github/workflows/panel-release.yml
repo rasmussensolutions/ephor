@@ -1,0 +1,105 @@
+name: Release panel
+on:
+  push:
+    tags: ["panel-v*"]
+permissions:
+  contents: read
+concurrency:
+  group: panel-release
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version-file: .bun-version
+      - run: bun install --frozen-lockfile
+      - run: bun run lint && bun run test && bun run test:worker
+      - run: bun run build:cloudflare && bun run --filter @ephor/worker build && bun run typecheck
+      - run: bun build scripts/install-panel.ts --target=node --outfile=dist/install.mjs
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: panel-web
+          path: |
+            apps/dashboard/dist/client
+            apps/worker/dist/index.js
+            dist/install.mjs
+          retention-days: 3
+  image:
+    needs: verify
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: amd64
+            runner: blacksmith-4vcpu-ubuntu-2404
+          - arch: arm64
+            runner: blacksmith-4vcpu-ubuntu-2404-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: useblacksmith/setup-docker-builder@06dd9c83a5d541274d2e3ac67625560979275267
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version-file: .bun-version
+      - name: Build and test release image
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          docker buildx build --load --platform "linux/$ARCH" -t ephor-panel-test -f deploy/docker/Dockerfile .
+          bun scripts/test-panel-image.ts ephor-panel-test
+      - name: Publish architecture image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker tag ephor-panel-test "ghcr.io/rasmussensolutions/ephor-panel:$RELEASE_TAG-$ARCH"
+          docker push "ghcr.io/rasmussensolutions/ephor-panel:$RELEASE_TAG-$ARCH"
+  publish:
+    needs: [verify, image]
+    runs-on: ubuntu-latest
+    environment: daemon-release
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version-file: .bun-version
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: panel-web
+          path: .
+      - name: Assemble, sign and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EPHOR_RELEASE_SIGNING_KEY: ${{ secrets.EPHOR_RELEASE_SIGNING_KEY }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          image="ghcr.io/rasmussensolutions/ephor-panel"
+          docker buildx imagetools create -t "$image:$RELEASE_TAG" "$image:$RELEASE_TAG-amd64" "$image:$RELEASE_TAG-arm64"
+          digest="$(docker buildx imagetools inspect "$image:$RELEASE_TAG" --format '{{.Manifest.Digest}}')"
+          export EPHOR_PANEL_IMAGE="$image@$digest"
+          bun scripts/release-panel.ts dist/panel-release
+          gh release create "$RELEASE_TAG" --verify-tag --draft --title "Ephor panel ${RELEASE_TAG#panel-v}" --notes "Official signed panel release for Docker, Railway and Cloudflare Workers. See docs/panel-updates.md." dist/panel-release/*
+          gh release edit "$RELEASE_TAG" --draft=false --latest=false
+          if ! gh release view panel-stable >/dev/null 2>&1; then
+            gh release create panel-stable --target "$GITHUB_SHA" --prerelease --latest=false --title 'Panel stable channel' --notes 'Signed pointer to the current panel release. Versioned release assets are immutable.'
+          fi
+          gh release upload panel-stable dist/panel-release/panel-release.json deploy/panel/install.sh --clobber

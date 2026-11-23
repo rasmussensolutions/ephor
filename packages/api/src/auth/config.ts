@@ -13,6 +13,10 @@ export interface AuthEnvironment {
     frontend: "same-runtime" | "unknown";
     host?: "railway" | "vps" | "other";
   };
+  panelUpdaterToken?: string;
+  railwayProjectToken?: string;
+  railwayServiceId?: string;
+  railwayEnvironmentId?: string;
   setupCode?: string;
   releaseUrl?: string;
   releasePublicKey?: string;

@@ -1,57 +1,20 @@
-# Docker Compose
+# Docker / VPS
 
-This distribution contains the dashboard/API and PostgreSQL. Put the panel behind
-an HTTPS reverse proxy. It binds only to host loopback by default; do not expose
-the PostgreSQL port publicly.
+Use the [release installer](../../docs/panel-updates.md#docker--vps) on a Linux
+host with Docker Engine, Compose v2, Node.js 22+, and systemd. It installs the
+official image by digest, private PostgreSQL, and the host updater. Point an HTTPS
+reverse proxy at `127.0.0.1:3002` and enroll using the printed setup code.
 
-Create a private environment file (outside version control) containing:
+Updates are approved in Ephor's **Updates** page. The host updater verifies the
+signed release independently and replaces the panel. The web application runs
+unprivileged with a read-only root filesystem and never receives a Docker socket.
 
-```dotenv
-EPHOR_ORIGIN=https://panel.example.com
-EPHOR_DB_PASSWORD=<generate with openssl rand -hex 32>
-BETTER_AUTH_SECRET=<generate another with openssl rand -hex 32>
-```
+Configuration is private under `/var/lib/ephor`; database backups are under
+`/var/lib/ephor/data/backups`. Preserve both the database and authentication secret.
+See [adoption and recovery](../../docs/panel-updates.md#existing-source-installations)
+for existing Compose deployments.
 
-Use hex for the database password so it is safe in the connection URL. Then, from
-the repository root:
-
-```sh
-docker compose --env-file /path/to/private.env -f deploy/docker/compose.yaml build
-docker compose --env-file /path/to/private.env -f deploy/docker/compose.yaml up -d database
-docker compose --env-file /path/to/private.env -f deploy/docker/compose.yaml run --rm panel bun apps/server/dist/auth.js migrate
-docker compose --env-file /path/to/private.env -f deploy/docker/compose.yaml up -d panel
-docker compose --env-file /path/to/private.env -f deploy/docker/compose.yaml exec panel bun apps/server/dist/auth.js setup
-```
-
-Open the configured origin through your HTTPS reverse proxy and enter the setup
-code. The panel runs as a non-root user with a read-only filesystem; PostgreSQL
-persists in a named volume. Migrations are explicit, never applied implicitly by
-web requests. Back up the database volume and environment secrets.
-
-Use the same `exec ... auth.js` command with `recover` for deployment-level
-recovery or `cleanup` for retention maintenance. Run `migrate` before starting an
-updated application image. `/health` is the liveness endpoint.
-
-## Machine enrollment
-
-Apply migration `0002_machines.sql` through the existing migration command. Before
-building the dashboard, run `bun run bundle:daemon` on a build machine with Docker
-and include the generated `apps/dashboard/public/daemon/` artifacts in your build
-context/deployed assets. Git-only deployments do not include these gitignored
-artifacts automatically. The panel must have a public HTTPS origin; `/api/*` and
-`/daemon/*` must be reachable by the VPS. See [connecting machines](../../docs/machines.md).
-
-## Panel updates
-
-Open **Updates** in Ephor and connect its dedicated Updates GitHub App to the
-repository that hosts this panel. Select your host and deployment method.
-For Docker/VPS, select **I deploy updates manually** unless an existing deployment
-pipeline already builds the production branch, runs migrations, and restarts the
-panel. A repository merge alone does not replace your container. For manual
-updates, pull the merged production branch and repeat the build, migration, and
-panel startup commands above, keeping the database volume and secrets. Set
-`EPHOR_HOST=vps` to suggest VPS hosting during setup.
-
-Ephor separates repository progress from the version actually serving requests.
-See the [panel update guide](../../docs/panel-updates.md) for the full review flow,
-required GitHub permissions, and upgrading older installations.
+`Dockerfile` is used by the official release pipeline. `compose.yaml` is a
+reference for custom operators; set `EPHOR_PANEL_IMAGE` to a verified release's
+immutable digest. Custom Compose installations must arrange their own updater
+or adopt the managed layout. Building from source is a development workflow.

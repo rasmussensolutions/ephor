@@ -1,6 +1,7 @@
 import {
   createApi,
   processNotifications,
+  processPanelRelease,
   pruneMachineMetrics,
   type Sql,
 } from "@ephor/api";
@@ -27,6 +28,13 @@ function database(env: Env): Sql {
 
 export default {
   async scheduled(_controller, env) {
+    await processPanelRelease({
+      sql: database(env),
+      database: env.DB,
+      origin: env.EPHOR_ORIGIN,
+      secret: env.BETTER_AUTH_SECRET,
+      deployment: { runtime: "cloudflare-worker", frontend: "same-runtime" },
+    });
     await processNotifications({
       sql: database(env),
       origin: env.EPHOR_ORIGIN,

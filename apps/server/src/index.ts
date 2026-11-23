@@ -3,6 +3,7 @@ import { join } from "node:path";
 import {
   createApi,
   processNotifications,
+  processPanelRelease,
   pruneMachineMetrics,
   pruneServiceMetrics,
 } from "@ephor/api";
@@ -16,6 +17,17 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
 }
 
 const { env, pool } = environment();
+if (process.env.EPHOR_MANAGED_INSTALL === "1") {
+  if (
+    process.env.RAILWAY_PROJECT_ID &&
+    process.env.RAILWAY_VOLUME_MOUNT_PATH !== "/data"
+  )
+    throw new Error(
+      "Attach a persistent Railway volume at /data before starting Ephor.",
+    );
+  const { migrateInstallation } = await import("./migrations");
+  await migrateInstallation(pool);
+}
 // Forwarded headers are deliberately ignored. A shared bucket is safe behind a proxy;
 // use perimeter limits as well when many administrators share that proxy.
 const app = createApi(env);
@@ -52,12 +64,27 @@ if (assets) {
   app.use("*", serveStatic({ root: assets }));
   app.get("*", serveStatic({ root: assets, path: "index.html" }));
 }
-const server = serve(
-  { fetch: app.fetch, port, hostname: process.env.HOST ?? "127.0.0.1" },
-  (info) => {
-    console.info(`Ephor API listening on http://localhost:${info.port}`);
-  },
-);
+const hostname = process.env.HOST ?? "127.0.0.1";
+// Bun must use its native Request implementation. The Node adapter overrides
+// globals, which can recurse when a request body is cloned under Bun.
+const stopServer: () => Promise<void> = process.versions.bun
+  ? (() => {
+      const server = Bun.serve({ fetch: app.fetch, port, hostname });
+      return async () => {
+        await server.stop();
+        await pool.end();
+      };
+    })()
+  : (() => {
+      const server = serve({ fetch: app.fetch, port, hostname });
+      return () =>
+        new Promise<void>((resolve, reject) =>
+          server.close(() => {
+            pool.end().then(resolve, reject);
+          }),
+        );
+    })();
+console.info(`Ephor API listening on http://localhost:${port}`);
 
 // Keep the retention window bounded even when every service is stopped.
 let pruning = false;
@@ -84,6 +111,7 @@ async function notificationTick() {
   if (notifying) return;
   notifying = true;
   try {
+    await processPanelRelease(env);
     await processNotifications(env);
   } catch {
     console.error("Notification processing failed; will retry.");
@@ -99,6 +127,6 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, () => {
     clearInterval(metricsCleanup);
     clearInterval(notificationTimer);
-    server.close(() => void pool.end());
+    void stopServer();
   });
 }

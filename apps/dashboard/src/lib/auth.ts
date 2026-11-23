@@ -279,32 +279,21 @@ const messages: Record<string, string> = {
   REAUTH_REQUIRED: "Verify your identity with a passkey, then try again.",
   TOO_MANY_ATTEMPTS: "Too many attempts. Wait a minute, then try again.",
   PASSKEY_LIMIT: "You can register up to ten passkeys.",
-  PANEL_INVALID_VERSION:
-    "This repository has no valid recorded Ephor version. Follow the panel update setup guide.",
-  PANEL_INVALID_CONFIG:
-    "Choose your host and deployment method, then confirm the setup.",
   PANEL_UPDATE_BUSY:
-    "Another update operation is in progress. Wait for it to finish or clear the current attempt.",
-  PANEL_REPOSITORY_CHANGED:
-    "The repository identity or production branch changed. Reconnect panel updates.",
-  PANEL_USE_DEPLOYMENT_COPY:
-    "Select your own Ephor deployment repository, not the official source repository.",
-  PANEL_NOT_CONFIGURED: "Connect your panel deployment repository first.",
-  PANEL_DEPLOYMENT_PENDING:
-    "The previous update is not running yet. Check your host’s deployment before preparing another update.",
-  PANEL_ALREADY_CURRENT:
-    "Your repository already contains the latest tested version. Check deployment status if the panel is older.",
-  PANEL_WORKFLOW_UPGRADE:
-    "Your repository needs the latest Update Ephor workflow. Follow the older-installation instructions in the panel update guide.",
-  PANEL_NOT_PREPARED:
-    "The update is still being prepared or preparation failed. Check the workflow status.",
-  PANEL_REVIEW_CHANGED:
-    "The reviewed changes or production branch changed. Clear this attempt and prepare a new update. Repository rules may also require review in GitHub.",
-  PANEL_MANUAL_REVIEW:
-    "This update changes protected configuration or is too large for automatic review. Review it in GitHub.",
-  PANEL_CHECKS_PENDING: "The update checks have not all passed yet.",
-  PANEL_MERGE_BLOCKED:
-    "GitHub blocked the merge. Resolve required checks or reviews, then retry.",
+    "Another update is in progress. Wait for it to finish; check hosting logs if it stalls.",
+  PANEL_INVALID_HOST:
+    "Check the hosting details. The selected service and environment must be this panel's deployment.",
+  PANEL_HOST_UNAVAILABLE:
+    "Could not verify this host. Check the token permissions and deployment IDs.",
+  PANEL_UPDATER_REQUIRED:
+    "Install the Ephor host updater first. See the Docker adoption guide.",
+  PANEL_UPDATER_OFFLINE:
+    "The host updater has not connected recently. Check ephor-updater.timer on the Docker host.",
+  PANEL_CHECK_REQUIRED: "Check for updates before installing a release.",
+  PANEL_RELEASE_REPLAY:
+    "The release channel returned an older version. Installation was blocked; try again later.",
+  PANEL_RELEASE_INCOMPATIBLE:
+    "This release cannot be installed from the current version. Refresh and check its release notes.",
   UNAUTHORIZED: "Your session has ended. Please sign in again.",
 };
 export function errorMessage(code: string) {

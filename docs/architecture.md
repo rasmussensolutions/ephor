@@ -81,3 +81,15 @@ with PostgreSQL and D1 adapters supplied by the runtime entry points.
 
 See [authentication](authentication.md) for the owner model, security invariants,
 setup/recovery operations, storage migrations, and testing.
+
+## Release distribution
+
+Panel installs consume signed release artifacts, separately from daemon releases.
+Docker and Railway use the same multi-platform image digest; Cloudflare uses the
+prebuilt Worker and dashboard asset manifest. The update controller stores
+encrypted provider configuration and leased, durable jobs in SQL. Provider
+credentials never reach the client. Docker delegates deployment to a host timer
+with an independently verified release ledger; no Docker socket enters the panel.
+The server migrates under a PostgreSQL lock after a persistent backup; Worker
+updates use D1 Time Travel and atomic migration batches. Only the compiled target
+version can acknowledge completion. See [installation and recovery](panel-updates.md).

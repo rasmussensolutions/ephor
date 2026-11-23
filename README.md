@@ -2,13 +2,18 @@
 
 A server-management panel for machines and the services running on them.
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https%3A%2F%2Fgithub.com%2Frasmussensolutions%2Fephor)
+Install an official release on **Cloudflare Workers**, **Railway**, or **Docker/VPS**.
+No fork, repository copy, or host-side build is required. The installer connects
+updates once; afterward use **Updates → Update** in the panel.
 
-Deploy your own panel entirely in the browser. Cloudflare creates the D1 database,
-downloads the verified daemon release, builds the dashboard, and applies database
-migrations. Enter your panel address and two private secrets in the deployment
-form, then open Ephor and register your owner passkey using your saved setup code.
-See the [browser deployment guide](deploy/cloudflare/README.md#deploy-in-your-browser).
+```sh
+curl -fL --proto '=https' https://github.com/rasmussensolutions/ephor/releases/download/panel-stable/install.sh -o install-ephor.sh
+sh install-ephor.sh cloudflare  # or railway; use sudo for docker on Linux
+```
+
+See the [installation guide](docs/panel-updates.md#install) for prerequisites,
+provider tokens, and adopting an existing installation. Cloudflare remains a native
+Worker; it does not need a container.
 
 The dashboard includes passkey authentication, deployment-controlled owner setup,
 recovery codes, session management, and security activity. The shared API runs on
@@ -146,11 +151,10 @@ must be chosen before that release.
 
 ## Panel updates
 
-Use the panel’s **Updates** page to connect your hosting repository, prepare an
-update, review changes and checks, and install it. Cloudflare/Railway Git deployments
-and VPS deployment pipelines deploy the merge; manual hosts get explicit deployment
-instructions. The panel verifies the running version separately. The GitHub
-**Actions → Update Ephor** workflow remains available. See [panel updates](docs/panel-updates.md).
+Use **Updates** to check and install signed, tested releases. Docker's host updater,
+Railway's deployment API, and Cloudflare's Worker API install the correct artifact
+for your host. Database recovery points precede migrations; success is confirmed
+by the running version. See [panel updates and recovery](docs/panel-updates.md).
 
 ## Daemon releases and updates
 

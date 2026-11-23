@@ -1,176 +1,187 @@
-# Update your Ephor panel
+# Install and update Ephor
 
-## Update from inside Ephor
+Ephor hosts install official releases. You do not need to fork, clone, merge, or
+build this repository. Docker and Railway run the official container image;
+Cloudflare runs a native Worker with prebuilt dashboard assets, not a container.
 
-The **Updates** page can prepare, review, and merge updates to your own GitHub
-repository. It works with public and private deployment copies, including copies
-with unrelated Git history. It selects the latest official `main` commit that
-passed CI; it does not automatically install untested changes.
+The installer connects updates once. Afterward open **Updates → Check for updates
+→ Update to …** and authorize with your passkey. The page reconnects during a
+restart and confirms the version actually running. Closing the browser does not
+cancel an approved update. Machine components remain together under each
+machine's **Maintenance** tab.
 
-### Connect once
+## Install
 
-1. Open **Updates → Connect GitHub**. Create the suggested **Ephor Updates** App,
-   then install it with access to **only your panel deployment repository**.
-   This connection is separate from the read-only App used to build applications.
-   No manually copied keys, personal tokens, or Cloudflare/Railway API tokens are
-   needed. GitHub consent screens are part of this one-time setup.
-2. Return to Ephor and click **Finish connecting**. Select your GitHub account,
-   deployment repository, hosting provider, and deployment method.
-3. Confirm that the repository's default branch is your production branch and
-   that the deployment arrangement below matches your installation, then save.
-   Your host is suggested when detected, but hosting a Worker or Railway service
-   alone does not prove Git deployments are configured.
-4. Enable GitHub Actions in the repository and permit the updater's requested
-   workflow permissions. Organization policies can require administrator approval.
+You need Node.js 22 or newer and curl on the computer running the installer.
+Download the small bootstrap, inspect it if desired, then run it for your host:
 
-The Updates App requests Contents, Actions, and Pull requests write access plus
-Checks and Commit statuses read access. Its private key is encrypted in Ephor's
-existing integration store. Short-lived operation tokens are scoped to the chosen
-repository; they never reach the browser or GitHub Actions. Service builds continue
-using read-only tokens from the separate service App. The updater workflow keeps
-using its repository's temporary `GITHUB_TOKEN` to prepare a branch; Ephor creates
-the pull request with its App token so checks can run without workflow-created-PR
-approval prompts. Repository protection rules and required human reviews still apply.
+```sh
+curl -fL --proto '=https' https://github.com/rasmussensolutions/ephor/releases/download/panel-stable/install.sh -o install-ephor.sh
+sh install-ephor.sh cloudflare
+# or: sh install-ephor.sh railway
+# on a Linux Docker host: sudo sh install-ephor.sh docker
+```
 
-### Hosting arrangements
+The bootstrap verifies the signed release and installer checksum before running
+it. Builds happen once in Ephor's release workflow. A release includes the pinned
+image digest, Worker code, assets, migrations, and installer/updater. Save the
+setup code and authentication secret printed by the installer in your password
+manager. Enter the setup code on the panel, register your passkey, and save your
+recovery codes. The initial installer uses a terminal; subsequent updates happen
+in the panel. No repository connection is necessary.
 
-| Hosting                                                                           | Choose                        | What happens after installation                                                                                                                                          |
-| --------------------------------------------------------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Cloudflare Workers + D1 with Workers Builds                                       | My host deploys GitHub pushes | A merge starts the configured build and deploy command, including D1 migrations. Disable preview builds against production data.                                         |
-| Railway connected to GitHub                                                       | My host deploys GitHub pushes | A merge triggers autodeploy. Configure `bun apps/server/dist/auth.js migrate` as the pre-deploy command and retain PostgreSQL and the existing secrets.                  |
-| VPS / Docker with an existing Git deployment pipeline                             | My host deploys GitHub pushes | Your pipeline builds the new code/image, applies migrations, and restarts the panel. Only the production branch should deploy.                                           |
-| VPS / Docker, CLI-deployed Worker, Railway image deployment, or other manual host | I deploy updates manually     | Ephor updates the repository; deployment is an explicit operator step. The UI says **Merge update for manual deployment** and does not claim that the panel has updated. |
+### Cloudflare Workers
 
-For a conventional VPS, merging a GitHub pull request cannot restart a process or
-replace a container by itself. Configure a deployment pipeline once to get routine
-updates entirely from the panel, or retain manual deployment. Ephor does not mount
-the Docker socket, accept arbitrary deployment shell commands, or execute a local
-`git pull` inside a running Worker/container. Split frontend/API deployments must
-deploy both from the same source revision; the version check confirms the API's
-bundled upstream version, and the browser must reload the updated frontend.
+Create an account-scoped API token with **Workers Scripts Edit** and **D1 Edit**.
+Cloudflare scopes these permissions to an account, not to one individual Worker;
+use a dedicated account if you need a stronger deployment boundary. Enter the
+token without putting it in shell history:
 
-### Install an update
+```sh
+read -r -s CLOUDFLARE_API_TOKEN; export CLOUDFLARE_API_TOKEN
+sh install-ephor.sh cloudflare
+unset CLOUDFLARE_API_TOKEN
+```
 
-1. Click **Check for updates**, then **Prepare update**.
-2. After preparation finishes, click **Review update**. Ephor opens the update PR
-   through its App, starts repository checks, and displays the changed files and
-   available diffs. Review database migrations and any files whose diff is not
-   available in the panel using the GitHub link.
-3. Wait for checks to pass, confirm a usable database backup/recovery point, and
-   click **Install update** (or **Merge update for manual deployment**). Confirm
-   the operation with your passkey.
-4. Watch deployment status in Ephor. A merged repository is distinct from a
-   running update: **Updated** appears only when this API is serving the target
-   upstream version. Reload the panel afterward to load the new dashboard.
+The wizard asks for the account ID and Worker name, creates D1, deploys the signed
+release, sets private secrets, enables the workers.dev address and minute cron,
+and stores the update connection encrypted in D1. Accept the proposed workers.dev
+origin for the simplest install. For a custom domain, attach it to that same
+Worker in Cloudflare and use its exact HTTPS origin without a trailing slash.
+Existing custom domains remain attached during updates.
 
-The update locks its official target, production base, and reviewed head. Changed
-branches, failed checks, repository approval rules, conflicts, protected hosting
-configuration, or edits to existing migrations stop installation. There is no
-automatic bypass of branch protections. The GitHub links expose preparation logs
-and any required manual review. If the new version does not appear, check your
-host's deployment logs; a code rollback does not reverse database migrations.
+The built-in **Deploy to Cloudflare** repository button creates a deployment copy
+and builds source. It is no longer the recommended installation method. Native
+Workers do not need Cloudflare Containers.
 
-**Clear attempt** forgets local progress only. It does not cancel workflows,
-close PRs, delete branches, or roll back deployments. Resolve those in GitHub or
-your host before retrying. Disconnecting the Updates App likewise leaves already
-started external work running. The hosting repository remains independent of the
-official repository until you explicitly install an update.
+### Railway
 
-### Older installations
+Create an empty Railway project and a **project token** scoped to the intended
+environment. Set it privately, then run:
 
-Install the version that adds the Updates page once using the existing GitHub
-workflow or your normal deployment process, including its database migrations.
-Also copy the current `.github/workflows/update-ephor.yml` and
-`scripts/update-ephor.py` from the official repository into your deployment copy
-using GitHub's file editor. The workflow must contain `# ephor-panel-protocol: 1`.
-Automation files are deliberately preserved by ordinary updates, so upgrading the
-panel code alone does not upgrade an old updater workflow. Review future updater
-and workflow changes separately. Keep your existing `.ephor-upstream.json` value;
-never substitute a guessed upstream base.
+```sh
+read -r -s RAILWAY_PROJECT_TOKEN; export RAILWAY_PROJECT_TOKEN
+sh install-ephor.sh railway
+unset RAILWAY_PROJECT_TOKEN
+```
 
-## Alternative: update through GitHub in your browser
+Supply the project and environment IDs. The installer creates PostgreSQL 17 and
+the Ephor image service, attaches their persistent volumes, configures private
+database networking, creates an HTTPS domain, and deploys. The project token is
+stored as a service secret and the panel encrypts its update connection in the
+database. Use a dedicated project/environment. Railway charges for these services
+and volumes under your plan. A panel volume mounted at **/data** is required;
+Ephor refuses to start on Railway without it.
 
-Your deployment repository is an independent copy. Updating the official Ephor
-repository does not update your panel until you choose to merge an update.
-This workflow works in public or private GitHub repositories without a personal
-access token, a Cloudflare API token, or a local checkout.
+### Docker / VPS
 
-## One-time setup
+On a Linux host with Docker Engine, Compose v2, Node.js 22+, and systemd, run
+`sudo sh install-ephor.sh docker`. Supply the public HTTPS origin. Point your
+existing reverse proxy at `127.0.0.1:3002`. PostgreSQL is private to the Compose
+network. Configuration is root-readable under `/var/lib/ephor`.
 
-In your deployment repository, open **Settings → Actions → General**:
+The installer creates an `ephor-updater` systemd timer. Every 30 seconds it checks
+for an owner-approved job. Only this host process has Docker authority. The web
+panel runs as UID 1000 and has no Docker socket, shell-command endpoint, or
+host filesystem mount apart from its backup directory. The updater independently
+verifies the release signature, allowed registry and image digest, and keeps a
+monotonic local release ledger. It also updates its own installer executable from
+the verified release. It never accepts a command or image URL from a browser.
 
-- Enable GitHub Actions if necessary and allow the actions used by this repository.
-- Under **Workflow permissions**, enable **Allow GitHub Actions to create and
-  approve pull requests**. The workflow requests its own limited permissions;
-  you do not need to make every workflow writable.
-- An organization policy may require your organization administrator to enable this.
+## Existing source installations
 
-Keep **Cloudflare preview builds disabled**. The update branch is for review;
-only merging into your configured production branch should deploy it. The GitHub
-repository's default branch must be that same production branch.
+Back up the database and keep the exact `BETTER_AUTH_SECRET`, database, origin,
+and owner credentials. Do not run first-time setup again. Disable repository build
+triggers before adopting releases; a later Git push could otherwise replace an
+installed release. The old GitHub Updates App is no longer needed: revoke it in
+GitHub after adoption. The separate read-only GitHub App for deploying your own
+services is unchanged. Legacy integration records are retained, not silently
+removed.
 
-New deployment copies include the updater. If you deployed before it was added,
-use GitHub's file editor to copy these files from the official Ephor repository
-into the same paths on your default branch:
+- **Cloudflare:** run `sh install-ephor.sh cloudflare --adopt` with the existing
+  Worker name and origin. Confirm that its Git build trigger is disabled. The
+  installer verifies the existing D1 binding, records a Time Travel bookmark,
+  applies only missing migrations, and inherits the existing bindings and secrets.
+  Then connect the account ID, Worker name, D1 ID, and API token once under
+  **Updates → Hosting setup**. It does not create a replacement database.
+- **Railway:** disconnect the panel's GitHub source, keep its database and secret
+  variables, and attach a persistent volume at `/data`. Switch the service source
+  to the digest from the signed release, clear the old build/start/pre-deploy
+  overrides, and use `/health`. The official image backs up and migrates on start.
+  Connect the existing service/environment and project token in Hosting setup.
+  Do not replace the database service or its volume.
+- **Docker:** the adoption path supports the existing Ephor PostgreSQL 17 Compose
+  layout, database/user `ephor`, and hexadecimal database/authentication secrets.
+  Back up the database, stop the old panel and database containers **without
+  deleting volumes**, and copy the existing `EPHOR_ORIGIN`, `EPHOR_DB_PASSWORD`,
+  and `BETTER_AUTH_SECRET` values into root-readable `/var/lib/ephor/.env`.
+  Run `sudo sh install-ephor.sh docker --adopt` and select the existing PostgreSQL
+  volume. The installer refuses a volume still used by a running container and
+  preserves it as an external volume. For a custom/external database or a different
+  PostgreSQL major version, migrate into the managed layout using a verified
+  backup first; do not point PostgreSQL 17 at another major version's data files.
 
-- `.github/workflows/update-ephor.yml`
-- `scripts/update-ephor.py`
-- `.ephor-upstream.json`
-- `.github/workflows/ci.yml` (uses standard GitHub runners in deployment copies)
-- `scripts/tests/test_update_ephor.py`
+Installation failures print created resource IDs. Inspect those resources before
+retrying so you do not create duplicates. A failed initial Cloudflare install can
+be continued with `--adopt`; retain the original setup/authentication secrets.
 
-The supplied starting version applies to the original browser-deployment template
-at `f5bc4e25a1e4660d3eedc0b0793cb0f3d8224213`. If your copy was created from a
-different version and does not already have the version file, set its `commit`
-to the exact official commit your copy was based on. Do not guess this value or
-replace an existing version file with the template's value.
+## Recovery and security
 
-## Install an update
+- Owner sessions are required to read settings; hosting changes and update
+  approval require a fresh passkey. Provider tokens never appear in status
+  responses or client-side storage. They are encrypted with authenticated,
+  per-record encryption under the installation's authentication secret.
+- Only official Ed25519-signed releases are accepted. Artifact sizes and SHA-256
+  checksums are checked before use. Provider requests reject redirects; public
+  artifact downloads follow only GitHub's release CDN redirects, without tokens.
+  Once a newer release has been observed, older channel metadata is rejected.
+- Jobs have a database-backed lease and durable stages. Deployment acceptance is
+  not success: the matching compiled version must acknowledge startup. A lost
+  provider response is reconciled without blindly starting another deployment.
+  Inspect provider logs for stalled/failed jobs before retrying. An attempt times
+  out after an hour. A failure never deletes the recovery information.
+- Cloudflare saves a **D1 Time Travel bookmark** before migrations. Its usefulness
+  is bounded by your plan's retention period. Missing SQL migrations and their
+  ledger entries run atomically. Bindings, secrets, and custom domains remain on
+  the same Worker. Keep its minute cron enabled for background updates.
+- Container startup takes a **pg_dump custom archive** before pending migrations,
+  then migrates in one transaction under a PostgreSQL advisory lock. Backup failure
+  prevents migration/startup. Archives are private under `/data/backups` (Docker:
+  `/var/lib/ephor/data/backups`). Retain them off-host according to your backup
+  policy; monitor available volume space. No archive is automatically deleted.
+- Database rollback is **not automatic**. A previous image may be incompatible
+  with a migrated schema. Restore into a separate database with `pg_restore`,
+  verify it, and point a compatible release at it; for D1 use the saved bookmark
+  through Cloudflare's recovery controls. Recovery can discard writes made after
+  the recovery point. Keep the authentication secret with your backups.
 
-1. In **Actions → Update Ephor**, click **Run workflow** on the default branch.
-2. Open the pull request linked in the completed run's summary.
-3. Review the changes, especially any new database migrations. Confirm you have
-   a usable D1 recovery point or database export before proceeding.
-4. If GitHub asks you to **Approve workflows to run**, approve the checks. Wait
-   for them to pass, then merge the pull request in GitHub.
-5. Watch the Cloudflare deployment finish, then open the panel and sign in.
+Docker diagnostics:
 
-The workflow selects the newest official `main` commit whose complete CI run
-succeeded. A newer commit still being tested is not selected. The pull request
-links the exact source commit. This is a tested-commit channel, not a promise that
-every selected commit is a separately published release.
+```sh
+sudo journalctl -u ephor-updater.service
+sudo systemctl status ephor-updater.timer
+sudo docker compose --project-name ephor --project-directory /var/lib/ephor logs panel
+```
 
-The owner account, machines and other stored data remain in the same D1 database.
-Existing Worker secrets stay in Cloudflare. Keep `BETTER_AUTH_SECRET` unchanged;
-owner setup is not repeated. Cloudflare applies new migrations during deployment.
-The update workflow itself never connects to D1 or deploys a Worker.
+A crashed host updater leaves a lock and release ledger. Inspect the process and
+container state before removing `/var/lib/ephor/updater.lock`; never run two
+updaters concurrently. If the new panel cannot start, use provider/host access to
+recover it—the failed application cannot repair its own database from the UI.
 
-## What is preserved and when updates stop
+## Publishing (maintainers)
 
-The updater uses the recorded official version as the base for a three-way merge,
-including when Cloudflare created your copy with unrelated Git history. Local
-files and compatible code edits are retained; upstream file deletions are applied
-only when they do not conflict with local changes.
+Bump `PANEL_VERSION` and `PANEL_SEQUENCE` together in
+`packages/api/src/panel/release/version.ts`, review migration compatibility, and
+push a `panel-vX.Y.Z` tag. `panel-release.yml` runs the application and native
+Workers tests before building AMD64 and ARM64 images on Blacksmith. Each image
+must pass fresh install, restart, real backup, migration, health and UID checks.
+The protected signing job assembles the multi-platform digest and signs the
+release using the pinned Ed25519 key. Never overwrite versioned assets.
 
-Both Wrangler configuration files remain byte-for-byte unchanged, including the
-Worker name, database IDs, origin, custom routes and other settings. If the official
-version changes these configuration files, automatic updating stops and requires
-a manual configuration migration. Conflicting local code changes also stop the
-update without changing your production branch.
-
-Existing migration files cannot be changed or deleted by an automatic update.
-New migrations still require review: preserving the database binding does not
-make arbitrary schema changes reversible. Reverting the code does not roll back
-a database migration; use D1 recovery/export procedures if necessary.
-
-GitHub workflow files and the updater script itself are preserved. Updates to
-those files require separate browser review and copying from the official repo;
-the updater does not request the extra access needed to rewrite workflows.
-
-An already-open update is linked instead of overwritten. If pull-request creation
-is blocked, the run summary explains how to enable it or open the prepared branch
-as a pull request manually. A previously closed update branch is left intact;
-reopen its pull request or review it through the compare link in the run summary.
-Private repositories use their own GitHub Actions allowance and organization policies.
-
-Panel updates are separate from the unified component updates on each machine’s Maintenance tab.
+The signing environment must allow `panel-v*` tags and retain its reviewer/key
+protections. GHCR package `rasmussensolutions/ephor-panel` must be public before
+announcing the first release; verify an anonymous digest pull. The `panel-stable`
+release contains only the signed channel pointer and bootstrap. Panel releases
+must use `--latest=false` so daemon discovery remains independent. Publish the
+versioned assets before moving the stable pointer. Test a disposable deployment
+before announcing a new release. Hosts never build or run `git pull` to update.

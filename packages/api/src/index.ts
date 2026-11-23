@@ -27,7 +27,14 @@ import {
 } from "./machines/maintenance";
 import { machineMetricsHistory } from "./machines/metrics";
 import { notificationOwnerRoutes } from "./notifications/routes";
-import { panelOwnerRoutes } from "./panel/routes";
+import {
+  panelReleaseOwnerRoutes,
+  panelReleasePublicRoutes,
+} from "./panel/release/routes";
+import { PANEL_VERSION } from "./panel/release/version";
+
+export { processPanelRelease } from "./panel/release/updates";
+
 import { projectOwnerRoutes } from "./projects/routes";
 import {
   protectionOwnerRoutes,
@@ -109,6 +116,7 @@ export function createApi(
       // Only these exact agent endpoints use bearer credentials rather than browser cookies.
       const agent =
         [
+          "/api/panel-updater/poll",
           "/api/agent/enroll",
           "/api/agent/telemetry",
           "/api/agent/updates/next",
@@ -161,6 +169,7 @@ export function createApi(
     // Agent heartbeats have their own per-credential budget; fleets behind one NAT
     // must not consume the browser authentication budget.
     if (
+      c.req.path === "/api/panel-updater/poll" ||
       c.req.path === "/api/agent/telemetry" ||
       c.req.path.startsWith("/api/agent/updates/") ||
       c.req.path.startsWith("/api/agent/protections/") ||
@@ -184,7 +193,11 @@ export function createApi(
   app.use("/api/*", activityMiddleware(env));
 
   app.get("/health", (context) =>
-    context.json({ status: "ok", service: "ephor-api" }),
+    context.json({
+      status: "ok",
+      service: "ephor-api",
+      version: PANEL_VERSION,
+    }),
   );
 
   app.get("/api/setup/status", async (c) => {
@@ -427,6 +440,7 @@ export function createApi(
     });
   }
 
+  panelReleasePublicRoutes(app, env);
   servicePublicRoutes(app, env, clientIP);
   integrationPublicRoutes(app, env);
   securityPublicRoutes(app, env, clientIP);
@@ -450,7 +464,7 @@ export function createApi(
   backupOwnerRoutes(app, env);
   notificationOwnerRoutes(app, env);
   integrationOwnerRoutes(app, env);
-  panelOwnerRoutes(app, env);
+  panelReleaseOwnerRoutes(app, env);
   aiOwnerRoutes(app, env);
   securityOwnerRoutes(app, env);
   protectionOwnerRoutes(app, env);

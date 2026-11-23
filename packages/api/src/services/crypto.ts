@@ -1,7 +1,10 @@
 // Domain-separated AES-GCM with per-record associated data. Portable to Workers.
 const encoder = new TextEncoder();
 function encode(bytes: Uint8Array) {
-  return btoa(String.fromCharCode(...bytes));
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 8192)
+    binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+  return btoa(binary);
 }
 function decode(value: string) {
   return Uint8Array.from(atob(value), (c) => c.charCodeAt(0));

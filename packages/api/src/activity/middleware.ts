@@ -283,6 +283,7 @@ export function activityMiddleware(env: AuthEnvironment): MiddlewareHandler {
   return async (c, next) => {
     const path = c.req.path;
     if (
+      path === "/api/panel-updater/poll" ||
       path.startsWith("/api/agent/") ||
       path.startsWith("/api/deploy/") ||
       path === "/api/integrations/github/webhook"
