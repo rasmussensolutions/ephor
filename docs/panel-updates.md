@@ -180,7 +180,9 @@ release using the pinned Ed25519 key. Never overwrite versioned assets.
 
 The signing environment must allow `panel-v*` tags and retain its reviewer/key
 protections. GHCR package `rasmussensolutions/ephor-panel` must be public before
-announcing the first release; verify an anonymous digest pull. The `panel-channel`
+announcing the first release; verify an anonymous digest pull. If the organization
+blocks public packages, an owner must allow public package creation while making
+this package public; the organization restriction can then be restored. The `panel-channel`
 branch contains only the signed channel pointer and bootstrap. Versioned GitHub
 releases stay immutable. Panel releases
 must use `--latest=false` so daemon discovery remains independent. Publish the

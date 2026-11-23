@@ -124,6 +124,12 @@ try {
   if (process.argv.includes("--self-update")) {
     // The public versioned release must exist. Use the same signed version to
     // exercise replacement of the running Worker without publishing a fake version.
+    const deployments = () =>
+      p.cf<{ deployments: { id: string }[] }>(
+        h,
+        `/workers/scripts/${h.worker}/deployments`,
+      );
+    const previousDeployment = (await deployments()).deployments[0]?.id;
     const secrets = new ServiceSecrets(secret);
     const state: ReleaseState = {
       hosting: h,
@@ -147,7 +153,8 @@ try {
     ]);
     let stage = "queued",
       complete = false;
-    for (let i = 0; i < 120; i++) {
+    // New cron schedules can take up to 15 minutes to propagate.
+    for (let i = 0; i < 240; i++) {
       await Bun.sleep(5000);
       const rows = await p.cf<{ results: { payload: string }[] }[]>(
         h,
@@ -171,6 +178,8 @@ try {
     }
     if (!complete)
       throw new Error("Worker self-update did not acknowledge completion");
+    if ((await deployments()).deployments[0]?.id === previousDeployment)
+      throw new Error("Worker acknowledged without a replacement deployment");
     console.info(
       "Cloudflare self-update and running-version acknowledgment passed.",
     );

@@ -369,6 +369,9 @@ test("Railway deploys only the signed image and saves verification state before 
         repo: null,
       });
       expect(body.variables.input.healthcheckPath).toBe("/health");
+      expect(body.variables.input.startCommand).toBe(
+        "/usr/local/bin/ephor-entrypoint bun apps/server/dist/index.js",
+      );
       return Response.json({ data: { serviceInstanceUpdate: true } });
     }
     expect(durable).toBe("verifying");

@@ -290,7 +290,10 @@ export class Providers {
       {
         input: {
           source: { image: r.image, repo: null },
-          startCommand: "bun apps/server/dist/index.js",
+          // Railway overrides ENTRYPOINT, not just CMD. Keep volume setup,
+          // privilege dropping and disabled runtime package installation.
+          startCommand:
+            "/usr/local/bin/ephor-entrypoint bun apps/server/dist/index.js",
           preDeployCommand: [],
           healthcheckPath: "/health",
           healthcheckTimeout: 300,
