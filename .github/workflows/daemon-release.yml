@@ -85,7 +85,10 @@ jobs:
           EPHOR_RELEASE_SIGNING_KEY: ${{ secrets.EPHOR_RELEASE_SIGNING_KEY }}
           RELEASE_TAG: ${{ github.ref_name }}
           REPOSITORY: ${{ github.repository }}
-        run: bun scripts/release-daemon.ts sign apps/dashboard/public/daemon "https://github.com/$REPOSITORY/releases/download/$RELEASE_TAG/" apps/dashboard/public/daemon/release.json
+        run: |
+          export EPHOR_RELEASE_PUBLIC_KEY="$(bun -p 'JSON.parse(await Bun.file("wrangler.jsonc").text()).vars.EPHOR_RELEASE_PUBLIC_KEY')"
+          test -n "$EPHOR_RELEASE_PUBLIC_KEY"
+          bun scripts/release-daemon.ts sign apps/dashboard/public/daemon "https://github.com/$REPOSITORY/releases/download/$RELEASE_TAG/" apps/dashboard/public/daemon/release.json
       - name: Publish immutable versioned assets
         env:
           GH_TOKEN: ${{ github.token }}

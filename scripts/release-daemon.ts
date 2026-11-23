@@ -100,6 +100,13 @@ if (command === "keygen") {
     createPublicKey(key).export({ format: "jwk" }).x ?? "",
     "base64url",
   ).toString("hex");
+  if (
+    process.env.EPHOR_RELEASE_PUBLIC_KEY &&
+    process.env.EPHOR_RELEASE_PUBLIC_KEY !== publicKey
+  )
+    throw new Error(
+      "Signing key does not match the configured release public key.",
+    );
   await verifyRelease(envelope, publicKey);
   await writeFile(output, `${JSON.stringify(envelope, null, 2)}\n`, {
     flag: "wx",

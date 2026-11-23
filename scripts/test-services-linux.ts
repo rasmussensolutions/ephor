@@ -59,16 +59,51 @@ try {
   }
   if (!ready) throw new Error("Isolated Docker engine did not become ready");
   await run(["docker", "exec", name, "df", "-h", "/var/lib/docker"]);
-  await run([
-    "docker",
-    "exec",
-    name,
-    "/service-tests",
-    process.argv[2] ?? "services::",
-    "--ignored",
-    "--test-threads=1",
-    "--nocapture",
-  ]);
+  const list = Bun.spawn(
+    [
+      "docker",
+      "exec",
+      name,
+      "/service-tests",
+      process.argv[2] ?? "services::",
+      "--ignored",
+      "--list",
+    ],
+    { stdout: "pipe", stderr: "inherit" },
+  );
+  const output = await new Response(list.stdout).text();
+  if (await list.exited) throw new Error("Cannot list Linux integration tests");
+  const tests = output
+    .split("\n")
+    .filter((line) => line.endsWith(": test"))
+    .map((line) => line.slice(0, -6));
+  if (!tests.length) throw new Error("No Linux integration tests matched");
+  // Run the long catalog sweep after focused checks. Each process failure stops
+  // the suite immediately instead of hiding a known failure for another 20 minutes.
+  tests.sort(
+    (a, b) =>
+      Number(a.includes("catalog_persistence_backup_restore")) -
+        Number(b.includes("catalog_persistence_backup_restore")) ||
+      a.localeCompare(b),
+  );
+  for (const test of tests) {
+    console.info(`Starting ${test}`);
+    const started = Date.now();
+    await run([
+      "docker",
+      "exec",
+      name,
+      "/service-tests",
+      test,
+      "--exact",
+      "--ignored",
+      "--test-threads=1",
+      "--nocapture",
+    ]);
+    console.info(
+      `Passed ${test} in ${Math.round((Date.now() - started) / 1000)}s`,
+    );
+  }
 } catch (error) {
   // Preserve disk diagnostics before deleting the disposable engine and its volumes.
   await run(["docker", "exec", name, "df", "-h", "/var/lib/docker"]).catch(

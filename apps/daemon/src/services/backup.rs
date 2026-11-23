@@ -41,6 +41,23 @@ fn safe_segment(s: &str) -> bool {
         && s.bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
+#[cfg(test)]
+fn isolated_fixture_endpoint(value: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(value) else {
+        return false;
+    };
+    url.scheme() == "http"
+        && url.port() == Some(5000)
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.path() == "/"
+        && url.query().is_none()
+        && url.fragment().is_none()
+        && url
+            .host_str()
+            .and_then(|host| host.parse::<std::net::Ipv4Addr>().ok())
+            .is_some_and(|ip| ip.is_private())
+}
 fn validate_task(t: &Task) -> Result<()> {
     ensure!(
         id(&t.id) && ["check", "backup", "restore"].contains(&t.action.as_str()),
@@ -72,7 +89,7 @@ fn validate_task(t: &Task) -> Result<()> {
     #[cfg(test)]
     if d.provider == "fixture" {
         ensure!(
-            d.endpoint.starts_with("http://172.") && d.endpoint.ends_with(":5000"),
+            isolated_fixture_endpoint(&d.endpoint),
             "Invalid isolated fixture"
         );
         if let Some(job) = &t.job {
@@ -658,6 +675,28 @@ mod tests {
         let mut t = good;
         t.destination.secret_key = "secret\nAWS_CONFIG_FILE=/etc/passwd".into();
         assert!(validate_task(&t).is_err());
+    }
+    #[test]
+    fn isolated_s3_fixture_accepts_private_pools_only() {
+        for address in ["10.240.0.2", "172.18.0.2", "192.168.1.2"] {
+            let mut t = task();
+            t.destination.provider = "fixture".into();
+            t.destination.endpoint = format!("http://{address}:5000");
+            assert!(validate_task(&t).is_ok());
+        }
+        for endpoint in [
+            "http://172.1.0.2:5000",
+            "http://172.evil.test:5000",
+            "http://169.254.169.254:5000",
+            "http://127.0.0.1:5000",
+            "http://10.240.0.2:80",
+            "http://user@10.240.0.2:5000",
+            "http://10.240.0.2:5000/path",
+            "http://10.240.0.2:5000/?other",
+            "http://10.240.0.2:5000/#other",
+        ] {
+            assert!(!isolated_fixture_endpoint(endpoint), "{endpoint}");
+        }
     }
     #[test]
     fn snapshot_ids_are_exact_and_unambiguous() {
