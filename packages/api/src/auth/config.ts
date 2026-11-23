@@ -14,7 +14,7 @@ export interface AuthEnvironment {
     host?: "railway" | "vps" | "other";
   };
   panelUpdaterToken?: string;
-  railwayProjectToken?: string;
+  railwayApiToken?: string;
   railwayServiceId?: string;
   railwayEnvironmentId?: string;
   setupCode?: string;

@@ -507,10 +507,10 @@ async function main() {
         `Open ${url}. If using a custom domain, attach it in Cloudflare first.`,
       );
     } else if (host === "railway") {
-      const token = process.env.RAILWAY_PROJECT_TOKEN;
+      const token = process.env.RAILWAY_API_TOKEN;
       if (!token)
         throw new Error(
-          "Set RAILWAY_PROJECT_TOKEN to a project token for the target environment.",
+          "Set RAILWAY_API_TOKEN to a workspace-scoped API token for the target project.",
         );
       const projectId = await ask("Railway project ID"),
         environmentId = await ask("Railway environment ID");
@@ -568,7 +568,7 @@ async function main() {
         DATABASE_URL: `postgresql://ephor:${dbPassword}@ephor-database.railway.internal:5432/ephor`,
         BETTER_AUTH_SECRET: secret,
         EPHOR_SETUP_CODE: setup,
-        EPHOR_RAILWAY_PROJECT_TOKEN: token,
+        EPHOR_RAILWAY_API_TOKEN: token,
         PORT: "3002",
       });
       await volume(h.serviceId, "/data");

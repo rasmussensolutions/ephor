@@ -339,7 +339,7 @@ test("Railway deploys only the signed image and saves verification state before 
   const r = await release();
   const h: Extract<Hosting, { host: "railway" }> = {
     host: "railway",
-    token: "project-token",
+    token: "workspace-token",
     serviceId: crypto.randomUUID(),
     environmentId: crypto.randomUUID(),
   };
@@ -359,9 +359,10 @@ test("Railway deploys only the signed image and saves verification state before 
     _input: RequestInfo | URL,
     init?: RequestInit,
   ) => {
-    expect(new Headers(init?.headers).get("Project-Access-Token")).toBe(
-      "project-token",
+    expect(new Headers(init?.headers).get("Authorization")).toBe(
+      "Bearer workspace-token",
     );
+    expect(new Headers(init?.headers).has("Project-Access-Token")).toBe(false);
     const body = JSON.parse(String(init?.body));
     calls++;
     if (calls === 1) {

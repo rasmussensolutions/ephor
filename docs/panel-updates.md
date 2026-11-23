@@ -56,20 +56,23 @@ Workers do not need Cloudflare Containers.
 
 ### Railway
 
-Create an empty Railway project and a **project token** scoped to the intended
-environment. Set it privately, then run:
+Create an empty Railway project and a **workspace-scoped API token** from
+Railway account settings, selecting the workspace containing that project.
+Use a dedicated workspace for Ephor: the token can manage other projects in
+that workspace. Project deployment tokens cannot provision services or change
+release image configuration. Set the token privately, then run:
 
 ```sh
-read -r -s RAILWAY_PROJECT_TOKEN; export RAILWAY_PROJECT_TOKEN
+read -r -s RAILWAY_API_TOKEN; export RAILWAY_API_TOKEN
 sh install-ephor.sh railway
-unset RAILWAY_PROJECT_TOKEN
+unset RAILWAY_API_TOKEN
 ```
 
 Supply the project and environment IDs. The installer creates PostgreSQL 17 and
 the Ephor image service, attaches their persistent volumes, configures private
-database networking, creates an HTTPS domain, and deploys. The project token is
+database networking, creates an HTTPS domain, and deploys. The workspace token is
 stored as a service secret and the panel encrypts its update connection in the
-database. Use a dedicated project/environment. Railway charges for these services
+database. Use a dedicated workspace and project. Railway charges for these services
 and volumes under your plan. A panel volume mounted at **/data** is required;
 Ephor refuses to start on Railway without it.
 
@@ -108,7 +111,7 @@ removed.
   variables, and attach a persistent volume at `/data`. Switch the service source
   to the digest from the signed release, clear the old build/start/pre-deploy
   overrides, and use `/health`. The official image backs up and migrates on start.
-  Connect the existing service/environment and project token in Hosting setup.
+  Connect the existing service/environment and workspace API token in Hosting setup.
   Do not replace the database service or its volume.
 - **Docker:** the adoption path supports the existing Ephor PostgreSQL 17 Compose
   layout, database/user `ephor`, and hexadecimal database/authentication secrets.

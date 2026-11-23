@@ -71,7 +71,7 @@ function UpdatesPage() {
     databaseId: "D1 database ID",
     serviceId: "Railway service ID",
     environmentId: "Railway environment ID",
-    token: host === "railway" ? "Project token" : "Cloudflare API token",
+    token: host === "railway" ? "Workspace API token" : "Cloudflare API token",
   };
   return (
     <>
@@ -200,7 +200,7 @@ function UpdatesPage() {
                     ? "The Ephor installer connects the host updater automatically. Existing installations can run the adoption command in the guide."
                     : host === "cloudflare"
                       ? "Use a token limited to this account with Workers Scripts Edit and D1 Edit. Secrets and database bindings are preserved."
-                      : "Use a Railway project token for this environment. The service must use the Ephor release image with a persistent volume mounted at /data."}{" "}
+                      : "Use a workspace-scoped Railway API token. It can manage other projects in that workspace, so use a dedicated workspace for Ephor. Project deployment tokens cannot configure release images. The panel needs a persistent volume at /data."}{" "}
                   <a
                     className="text-primary underline"
                     href={guide}

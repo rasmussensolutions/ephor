@@ -232,10 +232,10 @@ export class PanelReleases {
   }
   async tick() {
     const initial = await this.state();
-    if (!initial.hosting && this.env.railwayProjectToken)
+    if (!initial.hosting && this.env.railwayApiToken)
       await this.configure({
         host: "railway",
-        token: this.env.railwayProjectToken,
+        token: this.env.railwayApiToken,
         serviceId: this.env.railwayServiceId,
         environmentId: this.env.railwayEnvironmentId,
       });

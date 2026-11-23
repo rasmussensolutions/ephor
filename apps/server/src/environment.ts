@@ -38,7 +38,7 @@ export function environment() {
     secret: process.env.BETTER_AUTH_SECRET ?? "",
     setupCode: process.env.EPHOR_SETUP_CODE || undefined,
     panelUpdaterToken: process.env.EPHOR_PANEL_UPDATER_TOKEN,
-    railwayProjectToken: process.env.EPHOR_RAILWAY_PROJECT_TOKEN,
+    railwayApiToken: process.env.EPHOR_RAILWAY_API_TOKEN,
     railwayServiceId: process.env.RAILWAY_SERVICE_ID,
     railwayEnvironmentId: process.env.RAILWAY_ENVIRONMENT_ID,
     database: pool,

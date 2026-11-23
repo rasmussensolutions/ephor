@@ -12,6 +12,6 @@ Use `/health` as the health check. Preserve `DATABASE_URL`, `EPHOR_ORIGIN`,
 `BETTER_AUTH_SECRET`, and `EPHOR_SETUP_CODE`; never put secrets in `VITE_` variables.
 
 The installer connects updates automatically. For adoption, open **Updates →
-Hosting setup** and provide the service ID, environment ID, and project token.
+Hosting setup** and provide the service ID, environment ID, and workspace-scoped API token (use a dedicated workspace).
 The backend validates these against the service's Railway runtime identity.
 See [existing installations and recovery](../../docs/panel-updates.md#existing-source-installations).

@@ -62,7 +62,7 @@ export class Providers {
         signal: AbortSignal.timeout(30_000),
         headers: {
           "Content-Type": "application/json",
-          "Project-Access-Token": h.token,
+          Authorization: `Bearer ${h.token}`,
         },
         body: JSON.stringify({
           query,
