@@ -49,7 +49,7 @@ binding for migrations so changing the database name in the form works.
 
 Worker builds use `WORKERS_CI=1` to select `build:cloudflare`. The daemon version
 and manifest checksum are pinned in `scripts/download-daemon.ts`. This build uses
-published release assets and requires no Docker or Rust toolchain. The daemon
+published release assets (currently daemon `0.2.2`, with unified maintenance) and requires no Docker or Rust toolchain. The daemon
 download files are generated during every build and included in the deployed
 dashboard assets. Further pushes to your copied repository rebuild the panel and
 apply pending migrations while preserving the configured owner.

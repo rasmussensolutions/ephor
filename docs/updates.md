@@ -46,7 +46,7 @@ bun run bundle:daemon
 EPHOR_DAEMON_LOCAL=1 bun run build
 ```
 
-A maintainer must publish a new signed daemon release with `updaterProtocol: 3` and a higher version, then update the immutable release pin in `scripts/download-daemon.ts` for template deployments. **The existing pinned 0.1.0 release is not a shared-binary release.** Do not replace that release or claim support by editing its manifest. Until a compatible bundle and signed release are available, the panel explains what is missing and disables the relevant action. Building source locally does not publish a release.
+The official `daemon-v0.2.2` release provides `updaterProtocol: 3` and is pinned in `scripts/download-daemon.ts` for template deployments, including the README’s Deploy to Cloudflare button. The older `0.1.0` release remains immutable. Existing machines must run the Maintenance setup command once to migrate before they can claim protocol-3 updates. For future releases, publish a new signed version and update the template’s version and manifest checksum together. Building source locally does not publish a release.
 
 New enrollment uses the shared executable immediately; with release variables configured it also enables the updater automatically. Existing machines use **Maintenance → Get setup or repair command** once, after passkey verification. Run that command on the enrolled Linux/systemd machine with sudo access within ten minutes. It downloads one checksummed candidate, snapshots the old layout, replaces the canonical executable and converts existing `/usr/local/libexec/ephor-{services,security,protections,updater}` copies into compatibility symlinks. New unit definitions invoke `/usr/local/bin/ephord` directly. Existing units and OS-update guards that reference old paths continue working through those aliases. Unexpected symlinks, unsafe permissions and component downgrades are rejected.
 
@@ -114,15 +114,17 @@ Build, then sign with version-specific HTTPS artifact URLs:
 bun run bundle:daemon
 EPHOR_RELEASE_SIGNING_KEY_FILE=.release-keys/private.pem \
   bun run release:daemon sign apps/dashboard/public/daemon \
-  https://downloads.example.com/daemon/0.1.0/ \
+  https://downloads.example.com/daemon/0.2.2/ \
   /tmp/ephor-release.json
 ```
 
-Upload the binaries to those version-specific URLs, then publish the signed file at the panel's configured stable manifest URL. Do not regenerate the signed JSON or alter its embedded `manifest` string. The signing command checks bundled binary checksums and verifies its own signature before writing. It refuses to overwrite an existing output file.
+Upload the binaries to those version-specific URLs, then publish the signed file at the panel's configured stable manifest URL. Do not regenerate the signed JSON or alter its embedded `manifest` string. The signing command checks bundled binary checksums and verifies its own signature before writing. It refuses to overwrite an existing output file. Set `EPHOR_RELEASE_PUBLIC_KEY` when signing to require the corresponding private key; official release CI checks it against the key in the Cloudflare template before publication.
 
 ## Validation
 
 `bun run test` covers signature validation, API authorization, queue concurrency, cross-machine isolation, expiry, and receipts on SQLite (and PostgreSQL when `TEST_DATABASE_URL` is set). `cargo test --workspace --locked` checks daemon signature and version handling.
+
+`bun run test` also exercises architecture artifact assembly, signing, checksum and version rejection, and the Linux integration harness's failure handling. Service integration tests run individually, stop on the first failure, and run the lengthy catalog sweep last. Their disposable Docker engine uses a dedicated address pool so retained recovery fixtures cannot exhaust Docker's default pools.
 
 The optional Linux integration test runs the production executable against the real API over verified HTTPS in an unprivileged Docker container. It checks legacy compatibility, migration, unsafe-link rejection, one-inode convergence, inactive/absent roles, lost receipts, tampering, rollback and crash recovery. Only systemctl is replaced by a harness that launches the real executable; this does not substitute for testing actual systemd sandboxing on a deployment VPS.
 
