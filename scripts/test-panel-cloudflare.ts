@@ -122,8 +122,18 @@ try {
   if (enrollment.status !== 200 || !enrollment.headers.get("set-cookie"))
     throw new Error("Cloudflare owner setup failed");
   if (process.argv.includes("--self-update")) {
-    // The public versioned release must exist. Use the same signed version to
-    // exercise replacement of the running Worker without publishing a fake version.
+    // Both versions must be published. --update-to tests a real version upgrade.
+    const targetIndex = process.argv.indexOf("--update-to");
+    const targetEnvelope =
+      targetIndex >= 0
+        ? JSON.parse(
+            await readFile(
+              `${process.argv[targetIndex + 1]}/panel-release.json`,
+              "utf8",
+            ),
+          )
+        : e;
+    const targetRelease = await verifyRelease(targetEnvelope);
     const deployments = () =>
       p.cf<{ deployments: { id: string }[] }>(
         h,
@@ -135,9 +145,9 @@ try {
       hosting: h,
       job: {
         id: crypto.randomUUID(),
-        envelope: e,
-        version: r.version,
-        sequence: r.sequence,
+        envelope: targetEnvelope,
+        version: targetRelease.version,
+        sequence: targetRelease.sequence,
         stage: "queued",
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -180,6 +190,13 @@ try {
       throw new Error("Worker self-update did not acknowledge completion");
     if ((await deployments()).deployments[0]?.id === previousDeployment)
       throw new Error("Worker acknowledged without a replacement deployment");
+    const running = (await fetch(`${origin}/health`).then((response) =>
+      response.json(),
+    )) as { version: string };
+    if (running.version !== targetRelease.version)
+      throw new Error(
+        "Updated Worker version does not match the approved release",
+      );
     console.info(
       "Cloudflare self-update and running-version acknowledgment passed.",
     );

@@ -66,7 +66,8 @@ async function setup() {
     panel = new PanelReleases(
       { ...f.env, panelUpdaterToken: "a".repeat(64) },
       undefined,
-      undefined,
+      // Fixture versions must not change when the application is released.
+      { version: "0.3.1", sequence: 2 },
       verify,
     );
   const r = await release(),
