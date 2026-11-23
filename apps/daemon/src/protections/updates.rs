@@ -173,7 +173,7 @@ fn files(policy: &Policy, enabled: bool) -> BTreeMap<String, String> {
     BTreeMap::from([
         (APT.into(), format!("{}Ephor::Updates::Managed \"true\";\nEphor::Updates::MaxGapDays \"{}\";\nEphor::Updates::AutomaticReboot \"{}\";\n", apt_config(enabled), max_gap(policy), policy.automatic_reboot)),
         (TIMER.into(), format!("[Timer]\nOnCalendar=\nOnBootSec=\nOnStartupSec=\nOnUnitActiveSec=\nOnUnitInactiveSec=\nOnCalendar={days} *-*-* {:02}:{:02}:00 UTC\nRandomizedDelaySec=0\nAccuracySec=1s\nPersistent=false\n", policy.start_minute / 60, policy.start_minute % 60)),
-        (SERVICE.into(), "[Service]\nExecCondition=/usr/local/libexec/ephor-protections protection-updates-window\nExecStartPre=/usr/bin/apt-get -o APT::Update::Error-Mode=any -o Acquire::Retries=0 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update\nExecStartPre=/usr/local/libexec/ephor-protections protection-updates-continue\n".into()),
+        (SERVICE.into(), "[Service]\nExecCondition=/usr/local/bin/ephord protection-updates-window\nExecStartPre=/usr/bin/apt-get -o APT::Update::Error-Mode=any -o Acquire::Retries=0 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update\nExecStartPre=/usr/local/bin/ephord protection-updates-continue\n".into()),
     ])
 }
 fn effective(m: &Managed) -> bool {

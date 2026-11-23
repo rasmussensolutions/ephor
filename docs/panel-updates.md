@@ -173,4 +173,4 @@ as a pull request manually. A previously closed update branch is left intact;
 reopen its pull request or review it through the compare link in the run summary.
 Private repositories use their own GitHub Actions allowance and organization policies.
 
-Panel updates are separate from the signed daemon updates on the Machines page.
+Panel updates are separate from the unified component updates on each machine’s Maintenance tab.

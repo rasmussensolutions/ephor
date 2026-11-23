@@ -1,5 +1,9 @@
 import { AuthError } from "../auth/store";
-import { type DaemonRelease, shellQuote } from "../machines/installer";
+import {
+  type DaemonRelease,
+  sharedRoleInstaller,
+  shellQuote,
+} from "../machines/installer";
 export function protectionCommand(origin: string, token: string) {
   return `(set -eu; f=$(mktemp); trap 'rm -f "$f"' EXIT; curl --fail --silent --show-error --proto '=https' ${shellQuote(`${origin}/api/agent/protections/install.sh`)} -o "$f"; if [ "$(id -u)" = 0 ]; then printf '%s\\n' ${shellQuote(token)} | sh "$f"; else sudo -v; printf '%s\\n' ${shellQuote(token)} | sudo sh "$f"; fi)`;
 }
@@ -10,7 +14,7 @@ export function protectionInstaller(origin: string, release: DaemonRelease) {
     release.managedUpdatesProtocol !== 2
   )
     throw new AuthError("PROTECTION_BUILD_REQUIRED", 409);
-  return `#!/bin/sh
+  const script = `#!/bin/sh
 set -eu
 umask 077
 [ "$(id -u)" = 0 ] && [ "$(uname -s)" = Linux ] || { echo 'Linux and root required.' >&2; exit 1; }
@@ -137,4 +141,5 @@ systemctl restart ephor-protections.service
 systemctl is-active --quiet ephor-protections.service
 echo 'Protection management connected. Review protections in Security > Overview > Managed protections.'
 `;
+  return sharedRoleInstaller(script, release, "protections");
 }

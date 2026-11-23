@@ -38,6 +38,10 @@ type MachineRow = Record<string, unknown> & {
   telemetry: string | null;
   updater_key: string | null;
   updater_seen: number | null;
+  updater_protocol: number;
+  updater_components: string | null;
+  update_policy: "manual" | "automatic" | "pinned";
+  pinned_version: string | null;
   provider_override: string | null;
   worker_version: string | null;
   worker_seen: number | string | null;
@@ -328,7 +332,7 @@ export class MachineStore {
 
   async list(id?: string) {
     const rows = await this.sql.query<MachineRow>(
-      "SELECT id, name, state, created_at, enrollment_expires, enrolled_at, last_seen, telemetry, updater_key, updater_seen, provider_override, (SELECT version FROM ephor_service_worker WHERE machine_id=ephor_machine.id) AS worker_version, (SELECT last_seen FROM ephor_service_worker WHERE machine_id=ephor_machine.id) AS worker_seen FROM ephor_machine" +
+      "SELECT id, name, state, created_at, enrollment_expires, enrolled_at, last_seen, telemetry, updater_key, updater_seen, updater_protocol, updater_components, update_policy, pinned_version, provider_override, (SELECT version FROM ephor_service_worker WHERE machine_id=ephor_machine.id) AS worker_version, (SELECT last_seen FROM ephor_service_worker WHERE machine_id=ephor_machine.id) AS worker_seen FROM ephor_machine" +
         (id ? " WHERE id = $1" : "") +
         " ORDER BY created_at DESC",
       id ? [id] : [],
@@ -357,6 +361,20 @@ export class MachineStore {
               : now - Number(row.last_seen) < OFFLINE_MS
                 ? "online"
                 : "offline",
+      maintenance: {
+        protocol: Number(row.updater_protocol),
+        policy: row.update_policy as
+          | "manual"
+          | "automatic"
+          | "pinned"
+          | undefined,
+        pinnedVersion: row.pinned_version as string | null | undefined,
+        components: row.updater_components
+          ? (JSON.parse(
+              row.updater_components,
+            ) as import("./updates").MachineComponent[])
+          : [],
+      },
       updaterKey: row.updater_key,
       updaterSeen: row.updater_seen === null ? null : Number(row.updater_seen),
       createdAt: Number(row.created_at),
@@ -369,7 +387,16 @@ export class MachineStore {
   }
 }
 
-export type Machine = Awaited<ReturnType<MachineStore["list"]>>[number];
+type ListedMachine = Awaited<ReturnType<MachineStore["list"]>>[number];
+export type Machine = Omit<ListedMachine, "maintenance"> & {
+  maintenance?: Omit<
+    ListedMachine["maintenance"],
+    "policy" | "pinnedVersion"
+  > & {
+    policy?: "manual" | "automatic" | "pinned";
+    pinnedVersion?: string | null;
+  };
+};
 export interface MachineList {
   machines: Machine[];
   releaseInfo?: {
@@ -379,6 +406,7 @@ export interface MachineList {
     release?: import("./releases").ReleaseManifest;
     publicKey?: string;
     bootstrapCommand?: string;
+    maintenanceAvailable?: boolean;
   };
   updates?: import("./updates").UpdateJob[];
   installer: {

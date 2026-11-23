@@ -14,6 +14,7 @@ export async function verifyLocalDaemon(
   if (
     !Number.isInteger(manifest.serviceProtocol) ||
     manifest.serviceProtocol < minimumProtocol ||
+    manifest.updaterProtocol !== 3 ||
     !/^[a-f0-9]{64}$/.test(manifest.buildId ?? "")
   )
     throw new Error(

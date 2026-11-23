@@ -1,5 +1,9 @@
 import { AuthError } from "../auth/store";
-import { type DaemonRelease, shellQuote } from "../machines/installer";
+import {
+  type DaemonRelease,
+  sharedRoleInstaller,
+  shellQuote,
+} from "../machines/installer";
 
 export function securityCommand(origin: string, token: string) {
   return `(set -eu; f=$(mktemp); trap 'rm -f "$f"' EXIT; curl --fail --silent --show-error --proto '=https' ${shellQuote(`${origin}/api/agent/security/install.sh`)} -o "$f"; if [ "$(id -u)" = 0 ]; then printf '%s\\n' ${shellQuote(token)} | sh "$f"; else sudo -v; printf '%s\\n' ${shellQuote(token)} | sudo sh "$f"; fi)`;
@@ -7,7 +11,7 @@ export function securityCommand(origin: string, token: string) {
 export function securityInstaller(origin: string, release: DaemonRelease) {
   if (!origin.startsWith("https://") || release.securityProtocol !== 1)
     throw new AuthError("SECURITY_BUILD_REQUIRED", 409);
-  return `#!/bin/sh
+  const script = `#!/bin/sh
 set -eu
 umask 077
 [ "$(id -u)" = 0 ] && [ "$(uname -s)" = Linux ] || { echo 'Linux and root are required.' >&2; exit 1; }
@@ -78,4 +82,5 @@ systemctl restart ephor-security.service
 systemctl is-active --quiet ephor-security.service
 echo 'Security collection enabled. Findings will appear after the first scan.'
 `;
+  return sharedRoleInstaller(script, release, "security");
 }

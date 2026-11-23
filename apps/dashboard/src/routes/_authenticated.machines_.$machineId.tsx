@@ -1,10 +1,5 @@
 import type { MachineDetail } from "@ephor/api/machines";
-import {
-  ArrowClockwiseIcon,
-  CheckIcon,
-  PlugIcon,
-  PlusIcon,
-} from "@phosphor-icons/react";
+import { PlugIcon, PlusIcon } from "@phosphor-icons/react";
 
 import { ClockIcon } from "@phosphor-icons/react/dist/csr/Clock";
 import { CpuIcon } from "@phosphor-icons/react/dist/csr/Cpu";
@@ -13,6 +8,7 @@ import { MemoryIcon } from "@phosphor-icons/react/dist/csr/Memory";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
 import { MachineCharts } from "@/components/machines/machine-charts";
+import { MachineMaintenance } from "@/components/machines/machine-maintenance";
 import { MachineServices } from "@/components/machines/machine-services";
 import { MachineSettings } from "@/components/machines/machine-settings";
 import { MachineStatus } from "@/components/machines/machine-status";
@@ -58,18 +54,18 @@ function MachinePage({ initial }: { initial: MachineDetail }) {
   const [data, setData] = useState(initial);
   const [now, setNow] = useState(Date.now);
   const [tab, setTab] = useState("Overview");
+  useEffect(() => {
+    const select = () => {
+      if (window.location.hash === "#maintenance") setTab("Maintenance");
+    };
+    select();
+    window.addEventListener("hashchange", select);
+    return () => window.removeEventListener("hashchange", select);
+  }, []);
   const [refreshError, setRefreshError] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
-  const [updateCheck, setUpdateCheck] = useState<
-    "idle" | "checking" | "complete"
-  >("idle");
-  useEffect(() => {
-    if (updateCheck !== "complete") return;
-    const timeout = setTimeout(() => setUpdateCheck("idle"), 3000);
-    return () => clearTimeout(timeout);
-  }, [updateCheck]);
   const id = initial.machine.id;
   const refresh = useCallback(async () => {
     setData(await api<MachineDetail>(`/machines/${id}`));
@@ -175,13 +171,20 @@ function MachinePage({ initial }: { initial: MachineDetail }) {
             "Canvas",
             "Storage",
             "Security",
+            "Maintenance",
             "Settings",
           ].map((value) => (
             <button
               type="button"
               key={value}
               aria-pressed={tab === value}
-              onClick={() => setTab(value)}
+              onClick={() => {
+                setTab(value);
+                void navigate({
+                  hash: value === "Maintenance" ? "maintenance" : "",
+                  replace: true,
+                });
+              }}
               className={`rounded-md px-3 py-1.5 text-sm ${tab === value ? "bg-card" : "text-muted-foreground"}`}
             >
               {value}
@@ -189,53 +192,6 @@ function MachinePage({ initial }: { initial: MachineDetail }) {
           ))}
         </nav>
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          <Button
-            variant="raised"
-            size="action"
-            disabled={busy || !releaseInfo?.configured}
-            title={
-              !releaseInfo?.configured
-                ? "Release updates are not configured."
-                : undefined
-            }
-            aria-live="polite"
-            aria-busy={updateCheck === "checking"}
-            alternateContent={{
-              active: updateCheck !== "idle",
-              children: (
-                <>
-                  {updateCheck === "complete" ? (
-                    <CheckIcon
-                      aria-hidden="true"
-                      data-icon="inline-start"
-                      className="size-[1em]"
-                    />
-                  ) : (
-                    <ArrowClockwiseIcon
-                      aria-hidden="true"
-                      data-icon="inline-start"
-                      className="size-[1em] motion-safe:animate-spin"
-                    />
-                  )}
-                  {updateCheck === "complete" ? "Check complete" : "Checking…"}
-                </>
-              ),
-            }}
-            onClick={async () => {
-              setUpdateCheck("checking");
-              const checked = await run(async () => {
-                await api("/machines/updates/check", {});
-              });
-              setUpdateCheck(checked ? "complete" : "idle");
-            }}
-          >
-            <ArrowClockwiseIcon
-              aria-hidden="true"
-              data-icon="inline-start"
-              className="size-[1em]"
-            />
-            Check for updates
-          </Button>
           <Button
             variant="destructive-gradient"
             size="action"
@@ -431,29 +387,23 @@ function MachinePage({ initial }: { initial: MachineDetail }) {
           )}
         </section>
       )}
+      {tab === "Maintenance" && (
+        <MachineMaintenance
+          machine={machine}
+          releaseInfo={releaseInfo}
+          job={data.updates[0]}
+          refresh={refresh}
+        />
+      )}
       {tab === "Settings" && (
         <section className="space-y-5 rounded-xl border bg-card p-5">
-          <h2 className="font-medium">Provider & daemon</h2>
+          <h2 className="font-medium">Provider</h2>
           <MachineSettings
             machine={machine}
             busy={busy}
-            releaseInfo={releaseInfo}
-            job={data.updates[0]}
             saveProvider={async (provider) => {
               await api("/machines/provider", { id, provider });
               await refresh();
-            }}
-            update={() => {
-              if (
-                confirm(
-                  `Update the Ephor daemon on “${machine.name}” to ${releaseInfo?.release?.version}? Monitoring will briefly restart. Your services will keep running.`,
-                )
-              )
-                void run(async () => {
-                  await signIn();
-                  await api("/machines/updates", { id });
-                  setNotice("Daemon update queued.");
-                });
             }}
           />
         </section>

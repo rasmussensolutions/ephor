@@ -62,7 +62,9 @@ The command downloads the installer to a temporary file. The installer downloads
 the binary from **your panel**, verifies the pinned SHA-256 hash, creates the
 `ephord` system user, enrolls as that user, and installs/enables `ephord.service`.
 It also installs Docker Engine 28+, Buildx, Git, checksummed Railpack, and the
-separate `ephor-services.service` deployment worker. It installs the checksummed
+separate `ephor-services.service` deployment worker. Current bundles install only
+one `/usr/local/bin/ephord`; these services invoke different modes with their own
+credentials and permissions. It installs the checksummed
 Trivy scanner and enables `ephor-security.service` with its own credential and
 root-owned state directory. Dependency installation is
 automatic on Ubuntu and Debian using Docker's official apt repository. Other
@@ -72,9 +74,9 @@ manual setup. [Docker installation reference](https://docs.docker.com/engine/ins
 
 The machine appears as pending, then connecting, then online once its first
 sample arrives. Let the command finish: monitoring can appear before deployments
-and Security are ready. Machine Settings shows deployment readiness and provides
-a repair command if worker setup fails. The Security tab shows collector status
-and provides its own setup/repair command. A failed helper does not prevent the
+and Security are ready. Machine Maintenance shows one Ephor version, role status and an update policy, and provides
+one setup or repair command for the installed helpers. The Security tab shows collector status
+and links to that same Maintenance page. A failed helper does not prevent the
 other helper from being attempted or remove successful monitoring enrollment.
 
 The enrollment command contains separate monitoring, deployment and Security enrollment secrets. It is shown once, not stored in browser
@@ -126,7 +128,9 @@ restart it in a loop. Fix network errors and it reconnects automatically, or use
   signing or protection against a compromised panel serving both malicious code
   and a matching hash. After this initial trust bootstrap, the optional updater
   independently verifies signed releases against a root-owned pinned key. Updates
-  require an explicit panel request and fresh owner authentication.
+  require an explicit panel request and fresh owner authentication by default.
+  An owner can instead authorize automatic signed updates when idle, or pin the
+  installed version, through Maintenance with a fresh passkey.
 - A compromised monitored host can forge its own measurements. Monitoring does not
   provide hardware attestation. A stolen machine credential remains usable until
   revoked; disconnect and re-enroll to replace it.
@@ -279,9 +283,9 @@ Metadata references: [Hetzner](https://docs.hetzner.cloud/reference/cloud#server
 [DigitalOcean](https://docs.digitalocean.com/products/droplets/how-to/access-metadata/),
 [Linode](https://techdocs.akamai.com/cloud-computing/docs/metadata-service-api).
 
-## Signed daemon updates
+## Unified machine maintenance
 
-See [Daemon updates](updates.md) to configure signed releases and enable passkey-confirmed updates from the Machines page. Existing installations need the one-time updater bootstrap command shown in machine details.
+See [Machine maintenance](updates.md) to configure signed releases and enable passkey-confirmed updates of all installed components. Existing installations run the single setup or repair command from their Maintenance tab once.
 
 ## Machine detail pages and history
 
@@ -293,7 +297,8 @@ Select a machine name or **Details** in Machines to open `/machines/<id>`.
   detail pages and the deployment worker’s connection status.
 - **Storage** shows used and free space for every reported filesystem. Mounts can
   share a physical disk, so their totals are not added together.
-- **Settings** preserves provider overrides, signed daemon updates and disconnect.
+- **Maintenance** manages updates, setup and repair for all five Ephor components.
+- **Settings** preserves provider overrides.
   Updating or disconnecting still requires fresh passkey authentication.
 
 Apply `0012_machine_metrics.sql` before starting the updated panel:

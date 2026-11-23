@@ -16,10 +16,14 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+#[path = "layout.rs"]
+mod layout;
+pub use layout::{layout_check, migrate_layout, recover as recover_migration};
+use layout::{layout_lock, recover_layout, unified};
+
 const CONFIG: &str = "/etc/ephor/updater.json";
 const STATE: &str = "/var/lib/ephor-updater";
 const BINARY: &str = "/usr/local/bin/ephord";
-const STAGED: &str = "/usr/local/bin/.ephord-update";
 const MAX_BINARY: u64 = 32 * 1024 * 1024;
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -64,10 +68,294 @@ struct Job {
 #[serde(rename_all = "camelCase")]
 struct Journal {
     job: Job,
+    #[serde(default)]
+    components: Vec<ComponentBackup>,
+    #[serde(default)]
+    shared: bool,
     previous_hash: String,
     previous_version: String,
     status: String,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Component {
+    Monitoring,
+    Deployments,
+    Security,
+    Protections,
+    Updater,
+}
+const COMPONENTS: [Component; 5] = [
+    Component::Monitoring,
+    Component::Deployments,
+    Component::Security,
+    Component::Protections,
+    Component::Updater,
+];
+impl Component {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Monitoring => "monitoring",
+            Self::Deployments => "deployments",
+            Self::Security => "security",
+            Self::Protections => "protections",
+            Self::Updater => "updater",
+        }
+    }
+    fn legacy_path(self) -> &'static str {
+        match self {
+            Self::Monitoring => BINARY,
+            Self::Deployments => "/usr/local/libexec/ephor-services",
+            Self::Security => "/usr/local/libexec/ephor-security",
+            Self::Protections => "/usr/local/libexec/ephor-protections",
+            Self::Updater => "/usr/local/libexec/ephor-updater",
+        }
+    }
+    fn path(self) -> &'static str {
+        if unified() {
+            BINARY
+        } else {
+            self.legacy_path()
+        }
+    }
+    fn unit(self) -> &'static str {
+        match self {
+            Self::Monitoring => "ephord.service",
+            Self::Deployments => "ephor-services.service",
+            Self::Security => "ephor-security.service",
+            Self::Protections => "ephor-protections.service",
+            Self::Updater => "ephor-updater.service",
+        }
+    }
+}
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ComponentBackup {
+    component: Component,
+    hash: String,
+    active: bool,
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ComponentStatus {
+    id: Component,
+    installed: bool,
+    version: Option<String>,
+    build_id: Option<String>,
+    active: bool,
+}
+fn component_installed(component: Component) -> Result<bool> {
+    let path = if unified() && component != Component::Monitoring {
+        format!("/etc/systemd/system/{}", component.unit())
+    } else {
+        component.legacy_path().into()
+    };
+    match fs::symlink_metadata(path) {
+        Ok(meta) => {
+            ensure!(
+                meta.is_file() && meta.uid() == 0 && meta.permissions().mode() & 0o022 == 0,
+                "Unsafe component executable"
+            );
+            Ok(true)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e.into()),
+    }
+}
+fn output(program: &str, args: &[&str]) -> Result<Vec<u8>> {
+    use std::process::Stdio;
+    let mut child = Command::new(program)
+        .env_clear()
+        .env("PATH", "/usr/sbin:/usr/bin:/sbin:/bin")
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()?;
+    let stdout = child.stdout.take().context("Missing output")?;
+    let reader = thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stdout.take(8193).read_to_end(&mut bytes).map(|_| bytes)
+    });
+    let mut success = false;
+    for _ in 0..50 {
+        if let Some(status) = child.try_wait()? {
+            success = status.success();
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    let bytes = reader
+        .join()
+        .map_err(|_| anyhow::anyhow!("Component output failed"))??;
+    ensure!(
+        success && bytes.len() <= 8192,
+        "Component command failed or timed out"
+    );
+    Ok(bytes)
+}
+fn active(component: Component) -> bool {
+    output("/usr/bin/systemctl", &["is-active", component.unit()]).is_ok()
+}
+fn build_info(component: Component) -> Option<serde_json::Value> {
+    serde_json::from_slice(&output(component.path(), &["--build-info"]).ok()?).ok()
+}
+fn inventory() -> Result<Vec<ComponentStatus>> {
+    COMPONENTS
+        .iter()
+        .map(|&component| {
+            let present = component_installed(component)?;
+            let info = if present { build_info(component) } else { None };
+            let version = info
+                .as_ref()
+                .and_then(|i| i["version"].as_str())
+                .map(str::to_owned)
+                .or_else(|| {
+                    if !present {
+                        return None;
+                    }
+                    let text =
+                        String::from_utf8(output(component.path(), &["--version"]).ok()?).ok()?;
+                    let v = text.trim().strip_prefix("ephord ")?;
+                    version(v).ok()?;
+                    Some(v.into())
+                });
+            Ok(ComponentStatus {
+                id: component,
+                installed: present,
+                version,
+                build_id: info
+                    .as_ref()
+                    .and_then(|i| i["buildId"].as_str())
+                    .map(str::to_owned),
+                active: present && (component == Component::Updater || active(component)),
+            })
+        })
+        .collect()
+}
+fn component_health(
+    component: Component,
+    manifest: &Manifest,
+    expected_hash: &str,
+    was_active: bool,
+) -> bool {
+    let Some(info) = build_info(component) else {
+        return false;
+    };
+    if info["version"] != manifest.version || info["buildId"] != manifest.build_id {
+        return false;
+    }
+    if component == Component::Updater {
+        return output(component.path(), &["update-check"]).is_ok();
+    }
+    if !was_active {
+        return true;
+    }
+    if !active(component) {
+        return false;
+    }
+    // Monitoring runs under a different UID; the capability-free updater cannot
+    // inspect its /proc executable. Fresh signed-build telemetry verifies it below.
+    if component == Component::Monitoring {
+        return true;
+    }
+    // Confirm the running process uses the verified binary, not merely that the unit is active.
+    let Ok(pid) = output(
+        "/usr/bin/systemctl",
+        &["show", "--property=MainPID", "--value", component.unit()],
+    ) else {
+        return false;
+    };
+    let Ok(pid) = String::from_utf8(pid) else {
+        return false;
+    };
+    let Ok(pid) = pid.trim().parse::<u32>() else {
+        return false;
+    };
+    if pid == 0 {
+        return false;
+    }
+    match read_limited(Path::new(&format!("/proc/{pid}/exe")), MAX_BINARY) {
+        Ok(bytes) => digest(&bytes) == expected_hash,
+        Err(e)
+            if e.downcast_ref::<std::io::Error>()
+                .is_some_and(|e| e.kind() == std::io::ErrorKind::PermissionDenied) =>
+        {
+            // Linux ptrace restrictions also apply between root processes with
+            // different capability sets. Do not grant the updater CAP_SYS_PTRACE.
+            // systemd has just stopped/restarted this fixed unit; verify its
+            // executed path, exact role arguments and PID through the manager.
+            output(
+                "/usr/bin/systemctl",
+                &["show", "--property=ExecStart", "--value", component.unit()],
+            )
+            .ok()
+            .and_then(|b| String::from_utf8(b).ok())
+            .is_some_and(|s| expected_start(&s, component, pid))
+        }
+        Err(_) => false,
+    }
+}
+fn expected_start(value: &str, component: Component, pid: u32) -> bool {
+    let mode = match component {
+        Component::Deployments => "service-worker",
+        Component::Security => "security-worker",
+        Component::Protections => "protection-worker",
+        _ => return false,
+    };
+    // Legacy unit definitions remain valid through root-owned migration aliases.
+    [component.path(), component.legacy_path()]
+        .into_iter()
+        .any(|path| {
+            value
+                .trim()
+                .starts_with(&format!("{{ path={path} ; argv[]={path} {mode} ; "))
+                && value.matches('{').count() == 1
+                && value
+                    .split(" ; ")
+                    .any(|field| field == format!("pid={pid}"))
+        })
+}
+pub fn check() -> Result<()> {
+    root()?;
+    private_file(Path::new(CONFIG))?;
+    let settings: Settings = serde_json::from_slice(&read_limited(Path::new(CONFIG), 4096)?)?;
+    decode::<32>(&settings.public_key)?;
+    crate::config::panel_url(&settings.panel)?;
+    ensure!(
+        settings.panel.starts_with("https://") && crate::config::token(&settings.credential),
+        "Invalid updater identity"
+    );
+    let path = Path::new(STATE).join("journal.json");
+    if path.exists() {
+        private_file(&path)?;
+        let _: Journal = serde_json::from_slice(&read_limited(&path, 30000)?)?;
+    }
+    Ok(())
+}
+
+pub fn maintenance_lease(start: bool) -> Result<()> {
+    check()?;
+    let mut token = String::new();
+    std::io::stdin().take(66).read_to_string(&mut token)?;
+    let token = token.trim();
+    ensure!(crate::config::token(token), "Invalid maintenance grant");
+    let settings: Settings = serde_json::from_slice(&read_limited(Path::new(CONFIG), 4096)?)?;
+    post(
+        &super::client()?,
+        &settings,
+        if start {
+            "maintenance-start"
+        } else {
+            "maintenance-end"
+        },
+        serde_json::json!({"token":token}),
+    )?;
+    Ok(())
+}
+
 fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -122,13 +410,15 @@ fn verify(envelope: &Envelope, key: &str, installed: &str) -> Result<Manifest> {
     ensure!(
         manifest.schema == 1
             && manifest.protocol == 1
-            && manifest.updater_protocol == 1
+            && [1, 2, 3].contains(&manifest.updater_protocol)
             && manifest.channel == "stable"
             && manifest.expires_at > now(),
         "Expired or incompatible release"
     );
     ensure!(
-        version(&manifest.version)? > version(installed)?,
+        version(&manifest.version)? > version(installed)?
+            || (manifest.updater_protocol >= 2
+                && version(&manifest.version)? == version(installed)?),
         "Downgrade or same-version update rejected"
     );
     ensure!(
@@ -195,12 +485,12 @@ fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
     File::open(path.parent().context("Missing parent")?)?.sync_all()?;
     Ok(())
 }
-fn systemctl(action: &str) -> Result<()> {
+fn systemctl_component(action: &str, component: Component) -> Result<()> {
     let mut command = Command::new("/usr/bin/systemctl");
     command
         .env_clear()
         .env("PATH", "/usr/sbin:/usr/bin:/sbin:/bin")
-        .args([action, "ephord.service"]);
+        .args([action, component.unit()]);
     let mut child = command.spawn()?;
     for _ in 0..100 {
         if let Some(status) = child.try_wait()? {
@@ -213,25 +503,35 @@ fn systemctl(action: &str) -> Result<()> {
     let _ = child.wait();
     bail!("systemctl timed out")
 }
-fn install(bytes: &[u8]) -> Result<()> {
-    directory(Path::new("/usr/local/bin"))?;
-    if Path::new(STAGED).exists() {
-        let meta = fs::symlink_metadata(STAGED)?;
+fn systemctl(action: &str) -> Result<()> {
+    systemctl_component(action, Component::Monitoring)
+}
+fn install_component(bytes: &[u8], component: Component) -> Result<()> {
+    let binary = Path::new(component.legacy_path());
+    let parent = binary.parent().context("Missing executable parent")?;
+    directory(parent)?;
+    let staged_path = parent.join(format!(".ephor-{}-update", component.name()));
+    let staged_path = staged_path.as_path();
+    if staged_path.exists() {
+        let meta = fs::symlink_metadata(staged_path)?;
         ensure!(meta.is_file() && meta.uid() == 0, "Unsafe staging file");
-        fs::remove_file(STAGED)?;
+        fs::remove_file(staged_path)?;
     }
     let mut staged = OpenOptions::new()
         .write(true)
         .create_new(true)
         .mode(0o755)
-        .open(STAGED)?;
+        .open(staged_path)?;
     staged.write_all(bytes)?;
     // UMask=0077 protects state, but the monitoring user must execute this file.
     staged.set_permissions(fs::Permissions::from_mode(0o755))?;
     staged.sync_all()?;
-    fs::rename(STAGED, BINARY)?;
-    File::open("/usr/local/bin")?.sync_all()?;
+    fs::rename(staged_path, binary)?;
+    File::open(parent)?.sync_all()?;
     Ok(())
+}
+fn install(bytes: &[u8]) -> Result<()> {
+    install_component(bytes, Component::Monitoring)
 }
 fn read_limited(path: &Path, max: u64) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
@@ -265,11 +565,65 @@ fn report(client: &Client, settings: &Settings, journal: &Journal) -> Result<()>
         client,
         settings,
         "report",
-        serde_json::json!({"id":journal.job.id,"status":journal.status,"error": if journal.status == "rolled_back" {Some("Update did not complete health verification; previous binary restored.")} else if journal.status == "failed" {Some("Release verification or download failed before installation.")} else {None}}),
+        serde_json::json!({"id":journal.job.id,"status":journal.status,"error": if journal.status == "rolled_back" {Some("Update did not complete health verification; previous Ephor components restored.")} else if journal.status == "failed" {Some("Update could not start: release, download, or machine-readiness checks failed.")} else {None}}),
     )?;
     Ok(())
 }
 fn restore(journal: &mut Journal, state: &Path) -> Result<()> {
+    if journal.shared {
+        private_file(&state.join("previous"))?;
+        let bytes = read_limited(&state.join("previous"), MAX_BINARY)?;
+        ensure!(
+            digest(&bytes) == journal.previous_hash,
+            "Shared backup integrity failed"
+        );
+        for c in &journal.components {
+            if c.active {
+                systemctl_component("stop", c.component)?;
+            }
+        }
+        install(&bytes)?;
+        for c in &journal.components {
+            if c.active {
+                systemctl_component("restart", c.component)?;
+            }
+        }
+        write_private(&state.join("version"), journal.previous_version.as_bytes())?;
+        journal.status = "rolled_back".into();
+        write_private(&state.join("journal.json"), &serde_json::to_vec(journal)?)?;
+        return Ok(());
+    }
+    if !journal.components.is_empty() {
+        // Validate every backup before restoring any component. An interrupted restore is retried.
+        let mut backups = Vec::new();
+        for backup in &journal.components {
+            let path = state.join(format!("{}.previous", backup.component.name()));
+            private_file(&path)?;
+            let bytes = read_limited(&path, MAX_BINARY)?;
+            ensure!(
+                digest(&bytes) == backup.hash,
+                "Component backup integrity failed"
+            );
+            backups.push((backup, bytes));
+        }
+        for (backup, _) in &backups {
+            if backup.active && backup.component != Component::Updater {
+                systemctl_component("stop", backup.component)?;
+            }
+        }
+        for (backup, bytes) in &backups {
+            install_component(bytes, backup.component)?;
+        }
+        for (backup, _) in &backups {
+            if backup.active && backup.component != Component::Updater {
+                systemctl_component("restart", backup.component)?;
+            }
+        }
+        write_private(&state.join("version"), journal.previous_version.as_bytes())?;
+        journal.status = "rolled_back".into();
+        write_private(&state.join("journal.json"), &serde_json::to_vec(journal)?)?;
+        return Ok(());
+    }
     let backup = read_limited(&state.join("previous"), MAX_BINARY)?;
     ensure!(
         digest(&backup) == journal.previous_hash,
@@ -286,16 +640,39 @@ pub fn configure(key: &str, panel: &str, installed: &str) -> Result<()> {
     root()?;
     decode::<32>(key)?;
     version(installed)?;
+    for component in inventory()?.iter().filter(|c| c.installed) {
+        if let Some(current) = &component.version {
+            ensure!(
+                version(current)? <= version(env!("CARGO_PKG_VERSION"))?,
+                "Panel bundle is older than an installed component; deploy a newer bundle before repair"
+            );
+        }
+    }
     directory(Path::new("/etc/ephor"))?;
-    ensure!(
-        !Path::new(CONFIG).exists(),
-        "Updater is already configured; change trust only through local administration"
-    );
     let identity = crate::config::Config::load(Path::new("/var/lib/ephord/identity.json"))?;
     ensure!(
         identity.panel.starts_with("https://") && identity.panel == panel,
         "Updater panel must match the enrolled HTTPS identity"
     );
+    if Path::new(CONFIG).exists() {
+        check()?;
+        let previous: Settings = serde_json::from_slice(&read_limited(Path::new(CONFIG), 4096)?)?;
+        ensure!(
+            previous.public_key == key
+                && previous.panel == panel
+                && previous.credential == identity.credential,
+            "Existing updater trust or identity differs; local administration is required"
+        );
+        let journal = Path::new(STATE).join("journal.json");
+        if journal.exists() {
+            let journal: Journal = serde_json::from_slice(&read_limited(&journal, 30000)?)?;
+            ensure!(
+                ["succeeded", "failed", "rolled_back"].contains(&journal.status.as_str()),
+                "Recover the interrupted update before repairing maintenance"
+            );
+        }
+        return Ok(());
+    }
     write_private(
         Path::new(CONFIG),
         &serde_json::to_vec(&Settings {
@@ -317,6 +694,11 @@ fn root() -> Result<()> {
 }
 pub fn run() -> Result<()> {
     root()?;
+    let _layout_lock = layout_lock()?;
+    recover_layout()?;
+    if unified() {
+        layout_check()?;
+    }
     private_file(Path::new(CONFIG))?;
     let settings: Settings = serde_json::from_slice(&read_limited(Path::new(CONFIG), 4096)?)?;
     crate::config::panel_url(&settings.panel)?;
@@ -343,8 +725,11 @@ pub fn run() -> Result<()> {
     let journal_path = state.join("journal.json");
     if journal_path.exists() {
         private_file(&journal_path)?;
-        let mut journal: Journal = serde_json::from_slice(&read_limited(&journal_path, 24000)?)?;
-        if !["succeeded", "rolled_back", "failed"].contains(&journal.status.as_str()) {
+        let mut journal: Journal = serde_json::from_slice(&read_limited(&journal_path, 30000)?)?;
+        if journal.status == "prepared" {
+            journal.status = "failed".into();
+            write_private(&journal_path, &serde_json::to_vec(&journal)?)?;
+        } else if !["succeeded", "rolled_back", "failed"].contains(&journal.status.as_str()) {
             restore(&mut journal, state)?;
         }
         // Persist the receipt until acknowledged; never repeat a job after an ambiguous response.
@@ -354,14 +739,14 @@ pub fn run() -> Result<()> {
         &client,
         &settings,
         "next",
-        serde_json::json!({"publicKey":settings.public_key}),
+        serde_json::json!({"publicKey":settings.public_key,"protocol":if unified(){3}else{2},"components":inventory()?}),
     )?;
     if response["job"].is_null() {
         return Ok(());
     }
     let job: Job = serde_json::from_value(response["job"].clone())?;
     if journal_path.exists() {
-        let old: Journal = serde_json::from_slice(&read_limited(&journal_path, 24000)?)?;
+        let old: Journal = serde_json::from_slice(&read_limited(&journal_path, 30000)?)?;
         if old.job.id == job.id {
             return Ok(());
         }
@@ -371,16 +756,44 @@ pub fn run() -> Result<()> {
     let installed = String::from_utf8(read_limited(&state.join("version"), 64)?)?;
     let mut journal = Journal {
         job,
+        components: Vec::new(),
+        shared: unified(),
         previous_hash: String::new(),
         previous_version: installed.clone(),
         status: "failed".into(),
     };
+    let mut mutation_started = false;
     let result = (|| -> Result<()> {
         let manifest = verify(&journal.job.envelope, &settings.public_key, &installed)?;
+        ensure!(
+            (manifest.updater_protocol == 3) == journal.shared,
+            "Shared-binary updates require migrated layout and protocol 3"
+        );
         let artifact = manifest
             .artifacts
             .get(std::env::consts::ARCH)
             .context("No artifact for this architecture")?;
+        if manifest.updater_protocol >= 2 {
+            let components = inventory()?;
+            for c in components.iter().filter(|c| c.installed) {
+                let current = c
+                    .version
+                    .as_deref()
+                    .context("Cannot determine installed component version")?;
+                ensure!(
+                    version(current)? <= version(&manifest.version)?,
+                    "Component downgrade rejected"
+                );
+            }
+            ensure!(
+                components
+                    .iter()
+                    .filter(|c| c.installed)
+                    .any(|c| read_limited(Path::new(c.id.path()), MAX_BINARY)
+                        .is_ok_and(|b| digest(&b) != artifact.sha256)),
+                "All components already match the release"
+            );
+        }
         journal.status = "downloading".into();
         report(&client, &settings, &journal)?;
         // Release URLs are authorized by the pinned signer. Redirects may only remain HTTPS;
@@ -403,30 +816,94 @@ pub fn run() -> Result<()> {
             bytes.len() as u64 == artifact.size && digest(&bytes) == artifact.sha256,
             "Artifact integrity rejected"
         );
-        let meta = fs::symlink_metadata(BINARY)?;
+        let health = post(&client, &settings, "health", serde_json::json!({}))?;
         ensure!(
-            meta.is_file() && meta.uid() == 0 && meta.permissions().mode() & 0o022 == 0,
-            "Unsafe installed binary"
+            health["maintenanceBusy"] != true,
+            "Machine is busy; retry maintenance after work completes"
+        );
+        for unit in ["ephor-updates-apply.service", "apt-daily-upgrade.service"] {
+            ensure!(
+                output("/usr/bin/systemctl", &["is-active", unit]).is_err(),
+                "Operating-system maintenance is active"
+            );
+        }
+        ensure!(
+            component_installed(Component::Monitoring)?,
+            "Monitoring is not installed"
         );
         let previous = read_limited(Path::new(BINARY), MAX_BINARY)?;
         journal.previous_hash = digest(&previous);
         write_private(&state.join("previous"), &previous)?;
-        journal.status = "installing".into();
+        if manifest.updater_protocol >= 2 {
+            ensure!(
+                component_installed(Component::Updater)?,
+                "Updater is not installed"
+            );
+            for component in COMPONENTS {
+                if !component_installed(component)? {
+                    continue;
+                }
+                let bytes = read_limited(Path::new(component.path()), MAX_BINARY)?;
+                if !journal.shared {
+                    write_private(
+                        &state.join(format!("{}.previous", component.name())),
+                        &bytes,
+                    )?;
+                }
+                journal.components.push(ComponentBackup {
+                    component,
+                    hash: digest(&bytes),
+                    active: component != Component::Updater && active(component),
+                });
+            }
+        }
+        journal.status = "prepared".into();
         write_private(&journal_path, &serde_json::to_vec(&journal)?)?;
+        journal.status = "installing".into();
         report(&client, &settings, &journal)?;
         ensure!(
             journal.job.expires_at > now() && manifest.expires_at > now(),
             "Update request or release expired before installation"
         );
-        install(&bytes)?;
+        write_private(&journal_path, &serde_json::to_vec(&journal)?)?;
+        mutation_started = true;
         let started = now();
-        systemctl("restart")?;
+        if journal.components.is_empty() {
+            install(&bytes)?;
+            systemctl("restart")?;
+        } else {
+            for backup in &journal.components {
+                if backup.active {
+                    systemctl_component("stop", backup.component)?;
+                }
+            }
+            if journal.shared {
+                install(&bytes)?;
+            } else {
+                for backup in &journal.components {
+                    install_component(&bytes, backup.component)?;
+                }
+            }
+            for backup in &journal.components {
+                if backup.active {
+                    systemctl_component("restart", backup.component)?;
+                }
+            }
+        }
         for _ in 0..18 {
             thread::sleep(Duration::from_secs(5));
             if let Ok(health) = post(&client, &settings, "health", serde_json::json!({})) {
                 if health["lastSeen"].as_u64().unwrap_or(0) >= started
                     && health["telemetry"]["agentVersion"] == manifest.version
                     && health["telemetry"]["agentBuildId"] == manifest.build_id
+                    && journal.components.iter().all(|backup| {
+                        component_health(
+                            backup.component,
+                            &manifest,
+                            &artifact.sha256,
+                            backup.active,
+                        )
+                    })
                 {
                     write_private(&state.join("version"), manifest.version.as_bytes())?;
                     journal.status = "succeeded".into();
@@ -438,7 +915,7 @@ pub fn run() -> Result<()> {
         bail!("New agent did not report healthy")
     })();
     if result.is_err() {
-        if journal.status == "installing" {
+        if mutation_started {
             restore(&mut journal, state)?;
         } else {
             journal.status = "failed".into();
@@ -490,5 +967,27 @@ mod tests {
         for v in ["1.2", "01.2.3", "1.2.3-beta", "1.2.3;id"] {
             assert!(version(v).is_err());
         }
+    }
+    #[test]
+    fn systemd_health_requires_exact_role_path_arguments_and_pid() {
+        let start = "{ path=/usr/local/libexec/ephor-security ; argv[]=/usr/local/libexec/ephor-security security-worker ; ignore_errors=no ; pid=42 ; code=(null) ; status=0/0 }";
+        assert!(expected_start(start, Component::Security, 42));
+        assert!(!expected_start(start, Component::Security, 43));
+        assert!(!expected_start(start, Component::Deployments, 42));
+        assert!(!expected_start(
+            &start.replace("security-worker", "security-worker --extra"),
+            Component::Security,
+            42
+        ));
+        assert!(!expected_start(
+            &format!("{start} {start}"),
+            Component::Security,
+            42
+        ));
+        assert!(!expected_start(
+            &start.replace("/usr/local/libexec/ephor-security", "/tmp/other"),
+            Component::Security,
+            42
+        ));
     }
 }

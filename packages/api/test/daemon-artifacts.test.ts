@@ -12,6 +12,7 @@ test("local release requires compatible protocol and both verified architectures
   const manifest = {
     buildId: hash,
     serviceProtocol: 6,
+    updaterProtocol: 3,
     x86_64: hash,
     aarch64: hash,
   };
@@ -29,6 +30,12 @@ test("local release requires compatible protocol and both verified architectures
       "compatible daemon",
     );
     manifest.serviceProtocol = 6;
+    manifest.updaterProtocol = 2;
+    await save();
+    await expect(verifyLocalDaemon(directory)).rejects.toThrow(
+      "compatible daemon",
+    );
+    manifest.updaterProtocol = 3;
     await save();
     await writeFile(join(directory, "ephord-linux-aarch64"), "tampered");
     await expect(verifyLocalDaemon(directory)).rejects.toThrow(

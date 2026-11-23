@@ -59,7 +59,8 @@ test("observation enrollment does not silently enable privileged management", ()
     lastSeen: null,
     snapshot: null,
   });
-  expect(html).toContain("Connect protection management");
+  expect(html).toContain("Manage Ephor on this machine");
+  expect(html).toContain("/machines/host#maintenance");
   expect(html).toContain("separate privileged management helper");
   expect(html).not.toContain("Review CrowdSec installation</button>");
 });

@@ -1,5 +1,9 @@
 import { AuthError } from "../auth/store";
-import { type DaemonRelease, shellQuote } from "../machines/installer";
+import {
+  type DaemonRelease,
+  sharedRoleInstaller,
+  shellQuote,
+} from "../machines/installer";
 import { deploymentDependencies } from "./dependencies";
 export function serviceCommand(origin: string, token: string) {
   return `(set -eu; f=$(mktemp); trap 'rm -f "$f"' EXIT; curl --fail --silent --show-error --proto '=https' ${shellQuote(`${origin}/api/agent/services/install.sh`)} -o "$f"; if [ "$(id -u)" = 0 ]; then printf '%s\\n' ${shellQuote(token)} | sh "$f"; else sudo -v; printf '%s\\n' ${shellQuote(token)} | sudo sh "$f"; fi)`;
@@ -11,7 +15,7 @@ export function serviceInstaller(origin: string, release: DaemonRelease) {
     release.serviceProtocol < 2
   )
     throw new AuthError("SERVICE_BUILD_REQUIRED", 409);
-  return `#!/bin/sh
+  const script = `#!/bin/sh
 set -eu
 umask 077
 [ "$(id -u)" = 0 ] && [ "$(uname -s)" = Linux ] || { echo 'Linux and root are required.' >&2; exit 1; }
@@ -72,4 +76,5 @@ systemctl restart ephor-services.service
 systemctl is-active --quiet ephor-services.service
 echo 'Service worker enabled. Ports 80 and 443 must be free for custom domains. Existing services keep running if the panel is offline.'
 `;
+  return sharedRoleInstaller(script, release, "services");
 }

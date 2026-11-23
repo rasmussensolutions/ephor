@@ -236,6 +236,20 @@ const messages: Record<string, string> = {
     "The worker already claimed this deployment. It cannot be cancelled safely.",
   NO_VERIFIED_RELEASE:
     "No verified release is available. Check the panel's release configuration.",
+  MAINTENANCE_SETUP_REQUIRED:
+    "Open Maintenance and run the setup or repair command once on this machine.",
+  UPDATE_RECOVERY_REQUIRED:
+    "A previous update needs recovery. Check ephor-updater on the machine; new work stays paused until it reports the outcome.",
+  MACHINE_UPDATE_CONFIRMATION_REQUIRED:
+    "Open this machine’s Maintenance tab to confirm an update of all installed Ephor components.",
+  VERSION_PINNED:
+    "Ephor is pinned to the installed version. Change the update policy first.",
+  INVALID_EPHOR_UPDATE_POLICY: "Choose a valid Ephor update policy.",
+  MACHINE_RELEASE_REQUIRED: "No signed whole-machine release is available yet.",
+  MAINTENANCE_BUILD_REQUIRED:
+    "The panel needs a daemon bundle with unified maintenance support.",
+  MACHINE_BUSY:
+    "This machine has work in progress. Wait for deployments, builds, backups, scans and protection jobs to finish, then retry.",
   UPDATER_BOOTSTRAP_REQUIRED:
     "Enable the updater on this VPS and wait for it to connect before updating.",
   NO_COMPATIBLE_UPDATE:

@@ -4,6 +4,7 @@ import {
   protectionPlan,
 } from "@ephor/api/protections";
 import { useState } from "react";
+import { MaintenanceLink } from "@/components/machines/maintenance-link";
 import { Button } from "@/components/ui/button";
 import { api, signIn } from "@/lib/auth";
 import { when } from "./security-data";
@@ -27,10 +28,6 @@ export function MachineProtection({
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [notice, setNotice] = useState("");
-  const [grant, setGrant] = useState<{
-    command: string;
-    expiresAt: number;
-  } | null>(null);
   const [plan, setPlan] = useState<Plan | null>(null),
     [trusted, setTrusted] = useState(""),
     [tested, setTested] = useState(false);
@@ -156,52 +153,12 @@ export function MachineProtection({
             machine. The Security collector’s credentials cannot install
             software or change blocking rules.
           </p>
-          <Button
-            variant="outline"
-            disabled={busy || !installerAvailable}
-            onClick={() =>
-              void run(async () => {
-                await signIn();
-                setGrant(
-                  await api("/security/protections/enrollment", {
-                    machineId: machine.id,
-                  }),
-                );
-              })
-            }
-          >
-            Connect protection management
-          </Button>
+          <MaintenanceLink id={machine.id} />
           {!installerAvailable && (
             <p className="text-xs text-muted-foreground">
               Build the updated daemon bundle before connecting management.
             </p>
           )}
-        </div>
-      )}
-      {grant && (
-        <div className="space-y-2">
-          <p className="text-sm">
-            Run on this machine as an administrator. Requires nftables. Expires{" "}
-            {when(grant.expiresAt)}.
-          </p>
-          <pre className="max-w-full overflow-x-auto rounded-md bg-muted p-3 text-xs">
-            {grant.command}
-          </pre>
-          <Button
-            variant="outline"
-            onClick={() =>
-              void run(async () => {
-                await navigator.clipboard.writeText(grant.command);
-                setNotice("Command copied.");
-              })
-            }
-          >
-            Copy command
-          </Button>
-          <Button variant="ghost" onClick={() => setGrant(null)}>
-            Hide command
-          </Button>
         </div>
       )}
       {online && state?.supported && state.ownership !== "external" && (
@@ -412,7 +369,7 @@ export function MachineProtection({
                   machineId: machine.id,
                 });
                 setPlan(null);
-                setGrant(null);
+
                 setNotice("Management access revoked.");
               })
             }

@@ -359,7 +359,7 @@ function MachinesPage() {
                   {enrolledMachine?.deploymentWorker &&
                   enrolledMachine.deploymentWorker.lastSeen > now - 120000
                     ? "Deployments are connected. Let the installer finish, then check the Security tab for collector status."
-                    : "Keep the installer running until deployments and Security finish setting up. If either fails, use Settings for deployment repair or the Security tab for collector setup."}
+                    : "Keep the installer running until deployments and Security finish setting up. If either fails, open this machine’s Maintenance tab for one setup or repair command."}
                 </p>
                 <Button
                   variant="outline"

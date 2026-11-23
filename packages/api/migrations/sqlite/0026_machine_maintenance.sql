@@ -1,0 +1,10 @@
+ALTER TABLE ephor_machine ADD COLUMN updater_protocol INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE ephor_machine ADD COLUMN updater_components TEXT;
+ALTER TABLE ephor_machine ADD COLUMN maintenance_token_hash TEXT;
+ALTER TABLE ephor_machine ADD COLUMN maintenance_expires INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE ephor_machine ADD COLUMN maintenance_until INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE ephor_machine ADD COLUMN claim_token TEXT;
+ALTER TABLE ephor_machine ADD COLUMN claim_expires INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE ephor_update ADD COLUMN install_started INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE ephor_machine ADD COLUMN update_policy TEXT NOT NULL DEFAULT 'manual';
+ALTER TABLE ephor_machine ADD COLUMN pinned_version TEXT;

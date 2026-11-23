@@ -1,4 +1,5 @@
 import { AuthError, hash, randomToken, type Sql } from "../auth/store";
+import { machineClaim } from "../machines/maintenance-lock";
 import { TOKEN } from "../machines/store";
 import { object } from "../services/spec";
 import { findingFilter, findingJoins, stoppedResource } from "./finding-filter";
@@ -209,10 +210,13 @@ export class Security {
       ).length
     )
       return null;
-    const [job] = await this.sql.query(
-      `UPDATE ephor_security_scan SET status='running',started_at=$2,lease_until=$3 WHERE id=(SELECT id FROM ephor_security_scan WHERE machine_id=$1 AND status='queued' ORDER BY created_at,id LIMIT 1) AND status='queued' RETURNING *`,
-      [machineId, now, now + 20 * 60000],
-    );
+    const [job] =
+      (await machineClaim(this.sql, machineId, async () =>
+        this.sql.query(
+          `UPDATE ephor_security_scan SET status='running',started_at=$2,lease_until=$3 WHERE id=(SELECT id FROM ephor_security_scan WHERE machine_id=$1 AND status='queued' ORDER BY created_at,id LIMIT 1) AND status='queued' AND NOT EXISTS (SELECT 1 FROM ephor_update WHERE machine_id=$1 AND ((status IN ('queued','downloading') AND expires_at>$2) OR status='installing' OR (status='expired' AND install_started=1))) AND NOT EXISTS (SELECT 1 FROM ephor_machine WHERE id=$1 AND maintenance_until>$2) RETURNING *`,
+          [machineId, now, now + 20 * 60000],
+        ),
+      )) ?? [];
     return job
       ? {
           id: job.id,

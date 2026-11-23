@@ -113,6 +113,33 @@ fn execute() -> Result<()> {
         ensure!(args.len() == 1, "update-worker takes no arguments");
         return updater::run();
     }
+    if command == "recover-layout" {
+        return updater::recover_migration();
+    }
+    if command == "migrate-layout" {
+        ensure!(args.len() == 1, "migrate-layout takes no arguments");
+        return updater::migrate_layout();
+    }
+    if command == "layout-check" {
+        return updater::layout_check();
+    }
+    if command == "--build-info" {
+        println!(
+            "{}",
+            serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"buildId":option_env!("EPHOR_BUILD_ID").unwrap_or("development"),"updaterProtocol":3})
+        );
+        return Ok(());
+    }
+    if command == "maintenance-start" || command == "maintenance-end" {
+        ensure!(
+            args.len() == 1,
+            "Maintenance lease commands take no arguments"
+        );
+        return updater::maintenance_lease(command == "maintenance-start");
+    }
+    if command == "update-check" {
+        return updater::check();
+    }
     if command == "--version" {
         println!("ephord {}", env!("CARGO_PKG_VERSION"));
         return Ok(());

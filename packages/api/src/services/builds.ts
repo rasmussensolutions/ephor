@@ -1,4 +1,5 @@
 import { AuthError, AuthStore, type Sql } from "../auth/store";
+import { machineClaim } from "../machines/maintenance-lock";
 import { ServiceConnections } from "./connections";
 import { readDomains } from "./domains";
 import type { GitHubApp } from "./github-app";
@@ -236,9 +237,11 @@ export class Builds {
       [machineId],
     );
     for (const row of built) await this.promote(row);
-    await this.sql.query(
-      "UPDATE ephor_build SET status='running',phase='fetching',updated_at=$1 WHERE id=(SELECT id FROM ephor_build WHERE machine_id=$2 AND status='queued' ORDER BY created_at,id LIMIT 1) AND status='queued' AND NOT EXISTS (SELECT 1 FROM ephor_build WHERE machine_id=$2 AND status='running') RETURNING id",
-      [Date.now(), machineId],
+    await machineClaim(this.sql, machineId, async () =>
+      this.sql.query(
+        "UPDATE ephor_build SET status='running',phase='fetching',updated_at=$1 WHERE id=(SELECT id FROM ephor_build WHERE machine_id=$2 AND status='queued' ORDER BY created_at,id LIMIT 1) AND status='queued' AND NOT EXISTS (SELECT 1 FROM ephor_build WHERE machine_id=$2 AND status='running') AND NOT EXISTS (SELECT 1 FROM ephor_update WHERE machine_id=$2 AND ((status IN ('queued','downloading') AND expires_at>$1) OR status='installing' OR (status='expired' AND install_started=1))) AND NOT EXISTS (SELECT 1 FROM ephor_machine WHERE id=$2 AND maintenance_until>$1) RETURNING id",
+        [Date.now(), machineId],
+      ),
     );
     const [build] = await this.sql.query<Build>(
       "SELECT * FROM ephor_build WHERE machine_id=$1 AND status='running' LIMIT 1",

@@ -154,6 +154,6 @@ instructions. The panel verifies the running version separately. The GitHub
 
 ## Daemon releases and updates
 
-See [docs/updates.md](docs/updates.md) for signed Linux releases, self-hosted update sources, and passkey-confirmed daemon updates from the Machines page.
+Ephor's machine roles share one installed executable and version, with separate service permissions. **Machine → Maintenance** handles setup, repair and signed updates with manual (default), automatic-when-idle or pinned-version policies. Existing machines migrate once using a generated command. See [docs/updates.md](docs/updates.md) for release prerequisites and recovery. Panel hosting can remain on Workers, Railway, Docker or a VPS.
 
 [Notifications](docs/notifications.md) add an in-app inbox, optional Resend email, event preferences, and delivery history.

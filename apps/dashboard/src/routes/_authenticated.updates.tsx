@@ -293,7 +293,7 @@ function UpdatesPage() {
     <>
       <PageHeader
         title="Panel updates"
-        description="Review and install tested Ephor updates for this installation. Machine daemon updates remain on the Machines page."
+        description="Review and install tested Ephor updates for this installation. Machine components are updated together from each machine’s Maintenance tab."
       />
       <div className="space-y-5">
         <GitHubConnection

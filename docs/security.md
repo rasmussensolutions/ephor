@@ -16,16 +16,16 @@ On Ubuntu/Debian, the collector observes `unattended-upgrades`, effective APT pe
 
 Installed, configured and recently successful are separate states. A configured origin list does not prove full security repository coverage, and a successful scheduler run does not prove every patch was applied. Custom schedulers and unknown intervals require local review. Host package updates do not update container images. Review service restarts, held packages and reboot windows before changing update policy.
 
-Rebuild and publish the daemon artifacts, then use **Repair helper** on existing machines to receive the new checks. Machines running older helpers show automatic updates as unassessed. After repair, use **Scan now** or wait for the next host scan. Stale collection and incomplete scans never count as confirmed update coverage.
+Rebuild and publish the daemon artifacts, then use **Maintenance → Update Ephor on this machine** on existing machines to receive the new checks. Machines running older helpers show automatic updates as unassessed. After repair, use **Scan now** or wait for the next host scan. Stale collection and incomplete scans never count as confirmed update coverage.
 
 ## Enable collection
 
 1. Apply migrations `0020_security.sql` and `0021_machine_security_enrollment.sql` using the normal deployment migration process (both PostgreSQL and SQLite/D1 are supported).
 2. Build the Linux daemon artifacts from this source with `bun run bundle:daemon` before building/deploying the dashboard. The generated distribution manifest must contain `securityProtocol: 1`. Both `x86_64` and `aarch64` are supported. The panel intentionally refuses to offer an installer for older binaries.
-3. New machine enrollment automatically installs and enables Security alongside monitoring and deployments. Use the normal **Machines → Add machine** command. For an existing machine or interrupted Security setup, open its Security tab, verify your passkey, and choose **Enable collection** or **Repair helper**. Both paths require Linux, systemd, root access, and outbound HTTPS to the panel and scanner databases.
+3. New machine enrollment automatically installs and enables Security alongside monitoring and deployments. Use the normal **Machines → Add machine** command. For an existing machine or interrupted Security setup, open its Maintenance tab, verify your passkey, and choose **Get setup or repair command**. Both paths require Linux, systemd, root access, and outbound HTTPS to the panel and scanner databases.
 4. Wait for the first scan. **Scan now** queues a fresh scan; results, missing checks, and stale collection are visible in Coverage.
 
-The installer pins Ephor's binary checksum and Trivy 0.76.2, including the SHA-256 of its checksum manifest. Trivy is installed as `/usr/local/libexec/ephor-trivy`; the dedicated collector is `/usr/local/libexec/ephor-security`. Re-run **Repair helper** after publishing updated binaries to update these installations. This helper is separate from the monitoring daemon and deployment worker; the existing monitoring updater does not update it.
+The installer pins Ephor's binary checksum and Trivy 0.76.2, including the SHA-256 of its checksum manifest. Trivy is installed as `/usr/local/libexec/ephor-trivy`; the collector runs `/usr/local/bin/ephord security-worker`. Migrated installations retain the old collector path as a compatibility symlink. **Maintenance → Update Ephor on this machine** updates the shared Ephor executable; setup or repair installs the panel's pinned Trivy dependency. The collector retains its separate service sandbox and credential.
 
 Cloudflare template builds currently download the previously published daemon release via `scripts/download-daemon.ts`. Before shipping this feature through that template, publish the new daemon release and update that script's release URL and immutable manifest hash. Do not add `securityProtocol` to an old binary's manifest. Custom panel builds can bundle the new binaries directly.
 
@@ -88,7 +88,7 @@ Security → Overview → Managed protections (also on each machine's Security t
 
 ### Bootstrap and ownership
 
-Apply migration `0022_managed_protections.sql` and build a daemon bundle advertising `protectionProtocol: 1`. From Protections, verify your passkey and generate the one-use, ten-minute management enrollment command. Run it once on the machine. This explicit grant is separate from automatic observational Security enrollment.
+Apply migrations through `0026_machine_maintenance.sql` and use a daemon bundle advertising `protectionProtocol: 1`, `managedUpdatesProtocol: 2` and `updaterProtocol: 3`. Open **Machine → Maintenance**, select protection management, verify your passkey and generate the one-use, ten-minute setup command. Run it once on the machine. This explicit grant is separate from automatic observational Security enrollment. Protection management runs a mode of `/usr/local/bin/ephord`, with its existing restricted systemd service, private state and separate credential.
 
 Supported hosts are Debian/Ubuntu with systemd, OpenSSH, `dpkg-deb`, and nftables (`/usr/sbin/nft`). If nftables is absent, install it with the distribution package manager before enrollment; Ephor does not enable the distribution's nftables service or replace its ruleset. Both x86_64 and aarch64 are supported.
 
@@ -116,7 +116,7 @@ The initial trial lasts two minutes. Open a **new SSH connection**, then explici
 
 The one-hour exemption action immediately clears Ephor's current table and excludes the selected IP on subsequent refreshes; it does not erase CrowdSec's evidence. Repair/update first disable blocking. Updates install only the version pinned in the installed helper and refresh the SSH collection; a new engine version requires a reviewed helper release. Uninstall stops the isolated engine and removes its runtime/configuration, retaining the local database and receipts for recovery. Revoking management leaves detection installed but prevents further jobs.
 
-For local recovery: stop `ephor-protections.service` (its stop hook clears owned blocking), or run `/usr/local/libexec/ephor-protections protection-reset` while the helper is stopped. Kernel bans also expire without refresh. Always retain provider-console access when changing remote access controls.
+For local recovery: stop `ephor-protections.service` (its stop hook clears owned blocking), or run `/usr/local/bin/ephord protection-reset` while the helper is stopped. Kernel bans also expire without refresh. Always retain provider-console access when changing remote access controls.
 
 ### Verification
 
@@ -130,7 +130,7 @@ The package name is `unattended-upgrades`. Its Debian/Ubuntu distribution logos 
 
 ### Rollout and privilege boundary
 
-Build the source bundles before the dashboard. The manifest now requires `managedUpdatesProtocol: 2` for management enrollment. Existing machines need **Automatic updates → Repair management helper**, followed by the generated administrator command. The collector remains independently credentialed and has no access to the protection helper's private directory. New management enrollment still does not install products or enable update/reboot policies.
+Build the source bundles before the dashboard. The manifest requires `managedUpdatesProtocol: 2` for management enrollment. Existing machines use the setup or repair command in **Machine → Maintenance**. The collector remains independently credentialed and has no access to the protection helper's private directory. New management enrollment still does not install products or enable update/reboot policies. Ephor's own update policy is separate from this OS package policy.
 
 No database migration is needed for this extension: typed update actions, parameters and normalized observations use the existing protection jobs and snapshots. Older helpers remain usable for CrowdSec but cannot accept new independent-time update plans. Previously saved policies retain their original authorization until explicitly replaced; old window-based drafts must be reviewed again. Tailscale is optional and no inbound management listener is added.
 
@@ -161,7 +161,7 @@ Review/approval/results, observed policy changes, the APT successful-run timesta
 For an immediate local hold, run:
 
 ```sh
-sudo /usr/local/libexec/ephor-protections protection-updates-pause
+sudo /usr/local/bin/ephord protection-updates-pause
 ```
 
 This creates `/var/lib/ephor-protections/updates-paused`, preventing future managed starts/reboots and post-install enablement without killing active package transactions. Inspect the policy, package status and any interrupted setup before removing that marker locally. For partial setup or drift, inspect the three owned overrides and the root-only ownership record `/var/lib/ephor-protections/updates.json`; retain/back up local edits before removing/reconciling files, then run `systemctl daemon-reload`. Removing overrides restores underlying policy and may resume its automation. Do not remove the helper binary while the APT service override still references its schedule guard.

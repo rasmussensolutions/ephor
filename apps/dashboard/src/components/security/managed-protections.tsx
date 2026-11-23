@@ -10,6 +10,7 @@ import { ShieldCheckIcon } from "@phosphor-icons/react/dist/csr/ShieldCheck";
 import { useState } from "react";
 import { siDebian, siUbuntu } from "simple-icons";
 import crowdsec from "@/assets/protections/crowdsec.png";
+import { MaintenanceLink } from "@/components/machines/maintenance-link";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -244,82 +245,18 @@ function ProtectionDialog({
 }
 export function ManagementSetup({
   machine,
-  installerAvailable,
-  refresh,
 }: {
   machine: ProtectionMachine;
   installerAvailable: boolean;
   refresh: () => void;
 }) {
-  const [busy, setBusy] = useState(false),
-    [error, setError] = useState(""),
-    [command, setCommand] = useState<{
-      command: string;
-      expiresAt: number;
-    } | null>(null);
   return (
-    <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
+    <div className="space-y-2 rounded-lg border p-4">
       <p className="text-sm">
-        {machine.enabled
-          ? "Update the protection helper once to enable the latest management capabilities."
-          : "Connect the separate protection management helper once on this machine."}
+        Set up, update and repair all Ephor helpers in this machine’s
+        Maintenance tab.
       </p>
-      <p className="text-xs text-muted-foreground">
-        The Security collector has separate credentials and cannot install or
-        configure protections. Connecting management does not enable updates or
-        reboots.
-      </p>
-      {error && (
-        <p role="alert" className="text-sm text-destructive">
-          {error}
-        </p>
-      )}
-      <Button
-        variant="outline"
-        disabled={busy || !installerAvailable}
-        onClick={async () => {
-          setBusy(true);
-          setError("");
-          try {
-            await signIn();
-            setCommand(
-              await api("/security/protections/enrollment", {
-                machineId: machine.id,
-              }),
-            );
-            refresh();
-          } catch (e) {
-            setError(
-              e instanceof Error ? e.message : "Could not connect management",
-            );
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        {machine.enabled ? "Repair management helper" : "Connect management"}
-      </Button>
-      {command && (
-        <>
-          <p className="text-xs text-muted-foreground">
-            Run as administrator on {machine.name}. Expires{" "}
-            {when(command.expiresAt)}.
-          </p>
-          <pre className="overflow-x-auto rounded-md bg-muted p-3 text-xs">
-            {command.command}
-          </pre>
-          <Button
-            variant="outline"
-            onClick={() =>
-              void navigator.clipboard
-                .writeText(command.command)
-                .catch(() => setError("Could not copy the command."))
-            }
-          >
-            Copy command
-          </Button>
-        </>
-      )}
+      <MaintenanceLink id={machine.id} />
     </div>
   );
 }

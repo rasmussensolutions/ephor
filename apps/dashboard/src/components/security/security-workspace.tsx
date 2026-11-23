@@ -3,6 +3,7 @@ import { ArrowClockwiseIcon } from "@phosphor-icons/react/dist/csr/ArrowClockwis
 import { ShieldCheckIcon } from "@phosphor-icons/react/dist/csr/ShieldCheck";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
+import { MaintenanceLink } from "@/components/machines/maintenance-link";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
 import {
@@ -45,10 +46,6 @@ export function SecurityWorkspace({
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [notice, setNotice] = useState("");
-  const [command, setCommand] = useState<{
-    command: string;
-    expiresAt: number;
-  } | null>(null);
   const selectedMachine = machineId ?? machine,
     selectedService = serviceId ?? service;
   const scope = new URLSearchParams();
@@ -85,15 +82,6 @@ export function SecurityWorkspace({
     } finally {
       setBusy(false);
     }
-  }
-  function setup() {
-    if (!resourceMachine) return;
-    void run(async () => {
-      await signIn();
-      setCommand(
-        await api("/security/collector", { machineId: resourceMachine }),
-      );
-    });
   }
   return (
     <div className="space-y-6">
@@ -145,7 +133,6 @@ export function SecurityWorkspace({
                 onValueChange={(value) => {
                   setMachine(value);
                   setService("");
-                  setCommand(null);
                 }}
                 options={[
                   { value: "", label: "All machines" },
@@ -157,7 +144,6 @@ export function SecurityWorkspace({
                 value={service}
                 onValueChange={(value) => {
                   setService(value);
-                  setCommand(null);
                 }}
                 options={[
                   { value: "", label: "All services" },
@@ -215,17 +201,7 @@ export function SecurityWorkspace({
                       : "Scan now"}
                   </Button>
                 )}
-                <Button
-                  variant="outline"
-                  disabled={
-                    busy ||
-                    !data.installerAvailable ||
-                    agent?.state !== "active"
-                  }
-                  onClick={setup}
-                >
-                  {agent?.enabled ? "Repair helper" : "Enable collection"}
-                </Button>
+                {resourceMachine && <MaintenanceLink id={resourceMachine} />}
               </div>
             </div>
           )}
@@ -234,41 +210,6 @@ export function SecurityWorkspace({
               Collector installation requires a bundled daemon release with
               Security support. Existing results remain available.
             </p>
-          )}
-          {command && (
-            <div className="space-y-3 rounded-lg border p-4">
-              <p className="text-sm font-medium">Run on {agent?.name}</p>
-              <p className="text-xs text-muted-foreground">
-                Installs Ephor’s security helper and a pinned Trivy release.
-                Requires root and outbound HTTPS. Enrollment expires{" "}
-                {when(command.expiresAt)}. The helper reads host security
-                settings and Docker metadata; it does not change firewall or SSH
-                policies.
-              </p>
-              <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-3 text-xs select-all">
-                {command.command}
-              </pre>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  onClick={() =>
-                    void navigator.clipboard
-                      .writeText(command.command)
-                      .then(() => setNotice("Install command copied."))
-                      .catch(() =>
-                        setError(
-                          "Copy failed. Select and copy the command manually.",
-                        ),
-                      )
-                  }
-                >
-                  Copy command
-                </Button>
-                <Button variant="ghost" onClick={() => setCommand(null)}>
-                  Dismiss
-                </Button>
-              </div>
-            </div>
           )}
           <nav
             aria-label="Security sections"

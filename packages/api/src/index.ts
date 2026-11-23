@@ -20,6 +20,11 @@ import {
   OWNER_ID,
   randomToken,
 } from "./auth/store";
+import {
+  maintenanceInstaller,
+  maintenanceLease,
+  maintenanceOwnerRoutes,
+} from "./machines/maintenance";
 import { machineMetricsHistory } from "./machines/metrics";
 import { notificationOwnerRoutes } from "./notifications/routes";
 import { panelOwnerRoutes } from "./panel/routes";
@@ -34,7 +39,7 @@ export { processNotifications } from "./notifications/store";
 
 import { backupOwnerRoutes } from "./backups/routes";
 import { Releases } from "./machines/releases";
-import { Updates } from "./machines/updates";
+import { maintenanceBusy, Updates } from "./machines/updates";
 import {
   integrationOwnerRoutes,
   integrationPublicRoutes,
@@ -109,6 +114,8 @@ export function createApi(
           "/api/agent/updates/next",
           "/api/agent/updates/report",
           "/api/agent/updates/health",
+          "/api/agent/updates/maintenance-start",
+          "/api/agent/updates/maintenance-end",
           "/api/agent/services/enroll",
           "/api/agent/services/next",
           "/api/agent/services/report",
@@ -314,6 +321,16 @@ export function createApi(
       ),
     );
   });
+  app.get("/api/agent/maintenance.sh", async (c) => {
+    c.header("Content-Type", "text/x-shellscript; charset=utf-8");
+    return c.body(
+      maintenanceInstaller(
+        env.origin,
+        await daemonRelease(),
+        env.releaseUrl ? env.releasePublicKey : undefined,
+      ),
+    );
+  });
   app.get("/api/agent/updater.sh", async (c) => {
     c.header("Content-Type", "text/x-shellscript; charset=utf-8");
     return c.body(
@@ -352,7 +369,13 @@ export function createApi(
     return c.json({ ok: true });
   });
 
-  for (const action of ["next", "report", "health"] as const) {
+  for (const action of [
+    "next",
+    "report",
+    "health",
+    "maintenance-start",
+    "maintenance-end",
+  ] as const) {
     app.post(`/api/agent/updates/${action}`, async (c) => {
       let id: string;
       try {
@@ -365,8 +388,24 @@ export function createApi(
       }
       await store.limit(`updater:${id}`, 60);
       const body = await c.req.json();
+      if (action === "maintenance-start" || action === "maintenance-end") {
+        await maintenanceLease(
+          env.sql,
+          id,
+          body?.token,
+          action === "maintenance-start",
+        );
+        return c.json({ ok: true });
+      }
       if (action === "next")
-        return c.json({ job: await updates.next(id, body?.publicKey) });
+        return c.json({
+          job: await updates.next(
+            id,
+            body?.publicKey,
+            body?.protocol ?? 1,
+            body?.components,
+          ),
+        });
       if (action === "report") {
         await updates.report(id, body);
         return c.json({ ok: true });
@@ -374,13 +413,16 @@ export function createApi(
       const [row] = await env.sql.query<{
         telemetry: string | null;
         last_seen: number;
+        maintenance_until: number;
       }>(
-        "SELECT telemetry, last_seen FROM ephor_machine WHERE id = $1 AND state = 'active'",
+        "SELECT telemetry, last_seen, maintenance_until FROM ephor_machine WHERE id = $1 AND state = 'active'",
         [id],
       );
       return c.json({
         telemetry: row?.telemetry ? JSON.parse(row.telemetry) : null,
         lastSeen: Number(row?.last_seen ?? 0),
+        maintenanceBusy: await maintenanceBusy(env.sql, id),
+        maintenanceActive: Number(row?.maintenance_until) > Date.now(),
       });
     });
   }
@@ -402,6 +444,7 @@ export function createApi(
   app.get("/api/activity", async (c) =>
     c.json(await new Activity(env.sql).list(new URL(c.req.url).searchParams)),
   );
+  maintenanceOwnerRoutes(app, env);
   projectOwnerRoutes(app, env);
   serviceOwnerRoutes(app, env);
   backupOwnerRoutes(app, env);
@@ -424,7 +467,7 @@ export function createApi(
       true,
     );
     const body = await c.req.json();
-    return c.json(await updates.queue(body?.id));
+    return c.json(await updates.queue(body?.id, body?.wholeMachine === true));
   });
   async function machineReleaseInfo() {
     await releases.check();
@@ -444,6 +487,8 @@ export function createApi(
       releaseInfo: {
         ...releaseInfo,
         publicKey: env.releasePublicKey,
+        maintenanceAvailable:
+          (await daemonRelease().catch(() => null))?.updaterProtocol === 3,
         bootstrapCommand:
           releaseInfo.configured &&
           env.origin.startsWith("https:") &&

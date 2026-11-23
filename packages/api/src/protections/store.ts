@@ -1,4 +1,5 @@
 import { AuthError, hash, randomToken, type Sql } from "../auth/store";
+import { machineClaim } from "../machines/maintenance-lock";
 import { TOKEN } from "../machines/store";
 import { Security } from "../security/store";
 import { id, text } from "../security/validation";
@@ -62,22 +63,28 @@ export class Protections {
         "Job authorization expired.",
       );
   }
-  async issue(machineValue: unknown, actor: string) {
+  async issue(
+    machineValue: unknown,
+    actor: string,
+    preserveCredential = false,
+  ) {
     const machine = id(machineValue),
       token = randomToken(),
       expiresAt = Date.now() + 10 * MINUTE;
     const rows = await this.sql.query(
-      `INSERT INTO ephor_protection_agent(machine_id,enrollment_hash,enrollment_expires) SELECT id,$2,$3 FROM ephor_machine WHERE id=$1 AND state='active' ON CONFLICT(machine_id) DO UPDATE SET enrollment_hash=excluded.enrollment_hash,enrollment_expires=excluded.enrollment_expires,enrollment_claim_hash=NULL,credential_hash=NULL,enabled=0 RETURNING machine_id`,
+      `INSERT INTO ephor_protection_agent(machine_id,enrollment_hash,enrollment_expires) SELECT id,$2,$3 FROM ephor_machine WHERE id=$1 AND state='active' ON CONFLICT(machine_id) DO UPDATE SET enrollment_hash=excluded.enrollment_hash,enrollment_expires=excluded.enrollment_expires,enrollment_claim_hash=NULL${preserveCredential ? "" : ",credential_hash=NULL,enabled=0"} RETURNING machine_id`,
       [machine, await hash(token), expiresAt],
     );
     if (!rows.length) throw new AuthError("ACTIVE_MACHINE_REQUIRED", 409);
-    await this.cancel(machine);
+    if (!preserveCredential) await this.cancel(machine);
     await this.audit(
       machine,
       actor,
       "enrollment",
       "issued",
-      "Separate protection management grant issued; previous credential revoked.",
+      preserveCredential
+        ? "Maintenance enrollment issued; existing management remains authorized until enrollment."
+        : "Separate protection management grant issued; previous credential revoked.",
     );
     return { token, expiresAt };
   }
@@ -342,10 +349,13 @@ export class Protections {
         JSON.stringify(state.updates),
       );
     await this.expire(machine);
-    const [r] = await this.sql.query(
-      `UPDATE ephor_protection_job SET status='running',started_at=COALESCE(started_at,$3) WHERE id=(SELECT id FROM ephor_protection_job WHERE machine_id=$1 AND credential_hash=$2 AND status IN ('queued','running') AND expires_at>$3 ORDER BY created_at,id LIMIT 1) AND status IN ('queued','running') AND EXISTS(SELECT 1 FROM ephor_protection_agent a JOIN ephor_machine m ON m.id=a.machine_id WHERE a.machine_id=$1 AND a.credential_hash=$2 AND a.enabled=1 AND m.state='active') RETURNING *`,
-      [machine, digest, now],
-    );
+    const [r] =
+      (await machineClaim(this.sql, machine, async () =>
+        this.sql.query(
+          `UPDATE ephor_protection_job SET status='running',started_at=COALESCE(started_at,$3) WHERE id=(SELECT id FROM ephor_protection_job WHERE machine_id=$1 AND credential_hash=$2 AND status IN ('queued','running') AND expires_at>$3 ORDER BY created_at,id LIMIT 1) AND status IN ('queued','running') AND (status='running' OR NOT EXISTS (SELECT 1 FROM ephor_update WHERE machine_id=$1 AND ((status IN ('queued','downloading') AND expires_at>$3) OR status='installing' OR (status='expired' AND install_started=1))) AND NOT EXISTS (SELECT 1 FROM ephor_machine WHERE id=$1 AND maintenance_until>$3)) AND EXISTS(SELECT 1 FROM ephor_protection_agent a JOIN ephor_machine m ON m.id=a.machine_id WHERE a.machine_id=$1 AND a.credential_hash=$2 AND a.enabled=1 AND m.state='active') RETURNING *`,
+          [machine, digest, now],
+        ),
+      )) ?? [];
     return { job: r ? job(r) : null };
   }
   async report(machine: string, digest: string, value: unknown) {

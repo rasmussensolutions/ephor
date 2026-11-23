@@ -1,4 +1,5 @@
 import { AuthError, AuthStore, randomToken, type Sql } from "../auth/store";
+import { machineClaim } from "../machines/maintenance-lock";
 import { template } from "../services/catalog";
 import { ServiceSecrets } from "../services/crypto";
 import { readDomains } from "../services/domains";
@@ -403,9 +404,11 @@ export class Backups {
     await this.services.heartbeat(machine, Number(protocol));
     await this.tick(machine);
     // A running job is never reassigned to a different machine or expired by a timer.
-    await this.sql.query(
-      "UPDATE ephor_backup_job SET status='running',updated_at=$1 WHERE id=(SELECT id FROM ephor_backup_job WHERE machine_id=$2 AND status='queued' AND protocol <= $3 ORDER BY created_at,id LIMIT 1) AND status='queued' AND NOT EXISTS (SELECT 1 FROM ephor_backup_job WHERE machine_id=$2 AND status='running') AND NOT EXISTS (SELECT 1 FROM ephor_deployment WHERE machine_id=$2 AND status='running') RETURNING id",
-      [Date.now(), machine, protocol],
+    await machineClaim(this.sql, machine, async () =>
+      this.sql.query(
+        "UPDATE ephor_backup_job SET status='running',updated_at=$1 WHERE id=(SELECT id FROM ephor_backup_job WHERE machine_id=$2 AND status='queued' AND protocol <= $3 ORDER BY created_at,id LIMIT 1) AND status='queued' AND NOT EXISTS (SELECT 1 FROM ephor_backup_job WHERE machine_id=$2 AND status='running') AND NOT EXISTS (SELECT 1 FROM ephor_deployment WHERE machine_id=$2 AND status='running') AND NOT EXISTS (SELECT 1 FROM ephor_update WHERE machine_id=$2 AND ((status IN ('queued','downloading') AND expires_at>$1) OR status='installing' OR (status='expired' AND install_started=1))) AND NOT EXISTS (SELECT 1 FROM ephor_machine WHERE id=$2 AND maintenance_until>$1) RETURNING id",
+        [Date.now(), machine, protocol],
+      ),
     );
     const [job] = await this.sql.query<BackupJob>(
       "SELECT * FROM ephor_backup_job WHERE machine_id=$1 AND status='running'",

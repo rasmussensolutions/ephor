@@ -5,7 +5,7 @@ export interface ReleaseManifest {
   version: string;
   buildId: string;
   protocol: 1;
-  updaterProtocol: 1;
+  updaterProtocol: 1 | 2 | 3;
   channel: "stable";
   expiresAt: number;
   artifacts: Partial<
@@ -71,7 +71,7 @@ export async function verifyRelease(
   if (
     release.schema !== 1 ||
     release.protocol !== 1 ||
-    release.updaterProtocol !== 1 ||
+    ![1, 2, 3].includes(release.updaterProtocol) ||
     release.channel !== "stable" ||
     !/^[a-f0-9]{40,64}$/.test(release.buildId) ||
     !Number.isSafeInteger(release.expiresAt) ||

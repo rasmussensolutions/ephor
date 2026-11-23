@@ -7,7 +7,7 @@ export interface DaemonRelease {
   protectionProtocol?: 1;
   managedUpdatesProtocol?: 1 | 2;
   serviceProtocol?: 1 | 2 | 3 | 4 | 5 | 6;
-  updaterProtocol?: 1;
+  updaterProtocol?: 1 | 2 | 3;
   x86_64?: string;
   aarch64?: string;
 }
@@ -30,7 +30,12 @@ export function releaseManifest(value: unknown): DaemonRelease {
   }
   if (!result.x86_64 && !result.aarch64)
     throw new AuthError("DAEMON_NOT_AVAILABLE", 503);
-  if (manifest.updaterProtocol === 1) result.updaterProtocol = 1;
+  if (
+    manifest.updaterProtocol === 1 ||
+    manifest.updaterProtocol === 2 ||
+    manifest.updaterProtocol === 3
+  )
+    result.updaterProtocol = manifest.updaterProtocol;
   if (
     manifest.serviceProtocol === 1 ||
     manifest.serviceProtocol === 2 ||
@@ -105,6 +110,7 @@ ${deploymentDependencies()}
 useradd --system --user-group --home-dir /var/lib/ephord --shell /usr/sbin/nologin ephord
 install -d -o ephord -g ephord -m 0700 /var/lib/ephord
 install -o root -g root -m 0755 "$tmp/ephord" /usr/local/bin/ephord
+${release.updaterProtocol === 3 ? "/usr/local/bin/ephord migrate-layout" : ""}
 printf '%s\n' "$token" | runuser -u ephord -- /usr/local/bin/ephord enroll --panel ${shellQuote(origin)} --config /var/lib/ephord/identity.json
 unset token
 cat > /etc/systemd/system/ephord.service <<'UNIT'
@@ -143,16 +149,16 @@ systemctl daemon-reload
 systemctl enable --now ephord.service
 setup_failed=0
 if ! printf '%s\\n' "$security_token" | sh "$tmp/security.sh"; then
-  echo 'Monitoring connected, but Security setup failed. Open this machine’s Security tab in Ephor and get a setup or repair command.' >&2
+  echo 'Monitoring connected, but Security setup failed. Open this machine’s Maintenance tab in Ephor and get a setup or repair command.' >&2
   setup_failed=1
 fi
 unset security_token
 if ! printf '%s\\n' "$worker_token" | sh "$tmp/services.sh"; then
-  echo 'Monitoring connected, but deployment setup failed. Open this machine’s Settings in Ephor and get a deployment repair command.' >&2
+  echo 'Monitoring connected, but deployment setup failed. Open this machine’s Maintenance tab in Ephor and get a setup or repair command.' >&2
   setup_failed=1
 fi
 unset worker_token
-${publicKey && release.updaterProtocol === 1 ? updaterSetup(origin, publicKey, "/usr/local/bin/ephord") : ""}
+${publicKey && release.updaterProtocol ? updaterSetup(origin, publicKey, "/usr/local/bin/ephord", release.updaterProtocol ?? 1) : ""}
 [ "$setup_failed" -eq 0 ] || exit 1
 echo 'Ephor connected. Monitoring, deployments and Security are enabled. Reports will appear shortly.'
 `;
@@ -162,15 +168,26 @@ echo 'Ephor connected. Monitoring, deployments and Security are enabled. Reports
 export function updaterCommand(origin: string) {
   return `(set -eu; installer=$(mktemp); trap 'rm -f "$installer"' EXIT; curl --fail --silent --show-error --proto '=https' ${shellQuote(`${origin}/api/agent/updater.sh`)} -o "$installer"; if [ "$(id -u)" = 0 ]; then sh "$installer"; else sudo sh "$installer"; fi)`;
 }
-function updaterSetup(origin: string, key: string, source: string) {
+export function updaterSetup(
+  origin: string,
+  key: string,
+  source: string,
+  protocol = 1,
+) {
   if (!HEX_KEY.test(key)) throw new AuthError("UPDATES_NOT_CONFIGURED", 503);
   return `
-[ ! -e /etc/ephor/updater.json ] || { echo 'Updater already configured. Trust changes require local administration.' >&2; exit 1; }
+${protocol >= 2 ? "" : `[ ! -e /etc/ephor/updater.json ] || { echo 'Updater already configured. Trust changes require local administration.' >&2; exit 1; }`}
 version=$(runuser -u ephord -- /usr/local/bin/ephord --version)
 version="\${version#ephord }"
 install -d -o root -g root -m 0755 /usr/local/libexec
-install -o root -g root -m 0755 ${source} /usr/local/libexec/ephor-updater
-/usr/local/libexec/ephor-updater configure-updater ${shellQuote(key)} ${shellQuote(origin)} "$version"
+chmod 0755 ${source}
+${source} configure-updater ${shellQuote(key)} ${shellQuote(origin)} "$version"
+${
+  protocol === 3
+    ? "/usr/local/bin/ephord layout-check"
+    : `install -o root -g root -m 0755 ${source} /usr/local/libexec/.ephor-updater-setup
+mv -f /usr/local/libexec/.ephor-updater-setup /usr/local/libexec/ephor-updater`
+}
 cat > /etc/systemd/system/ephor-updater.service <<'UNIT'
 [Unit]
 Description=Ephor signed daemon updater
@@ -179,12 +196,12 @@ After=network-online.target
 [Service]
 Type=oneshot
 User=root
-ExecStart=/usr/local/libexec/ephor-updater update-worker
+ExecStart=${protocol === 3 ? "/usr/local/bin/ephord" : "/usr/local/libexec/ephor-updater"} update-worker
 TimeoutStartSec=12min
 UMask=0077
 NoNewPrivileges=true
 ProtectSystem=strict
-ReadWritePaths=/usr/local/bin /var/lib/ephor-updater
+ReadWritePaths=/usr/local/bin /var/lib/ephor-updater${protocol === 2 ? " /usr/local/libexec" : ""}
 ProtectHome=true
 PrivateTmp=true
 PrivateDevices=true
@@ -218,15 +235,23 @@ export function updaterInstaller(
   origin: string,
   release: DaemonRelease,
   key?: string,
+  alreadyLocked = false,
 ) {
-  if (!origin.startsWith("https://") || !key || release.updaterProtocol !== 1)
+  if (
+    !origin.startsWith("https://") ||
+    !key ||
+    ![1, 2, 3].includes(release.updaterProtocol ?? 0)
+  )
     throw new AuthError("UPDATER_NOT_AVAILABLE", 503);
+  if (release.updaterProtocol === 3)
+    throw new AuthError("MAINTENANCE_SETUP_REQUIRED", 409);
   return `#!/bin/sh
 set -eu
 umask 077
 [ "$(id -u)" = 0 ] && [ "$(uname -s)" = Linux ] || { echo 'Linux and root are required.' >&2; exit 1; }
+[ ! -e /var/lib/ephor-updater/shared-layout ] || { echo 'Use the unified Maintenance command.' >&2; exit 1; }
 [ -f /var/lib/ephord/identity.json ] && [ -f /etc/systemd/system/ephord.service ] || { echo 'Enroll this machine first.' >&2; exit 1; }
-[ ! -e /etc/ephor/updater.json ] || { echo 'Updater already configured.' >&2; exit 1; }
+${release.updaterProtocol === 2 ? (alreadyLocked ? "" : maintenanceLock()) : `[ ! -e /etc/ephor/updater.json ] || { echo 'Updater already configured.' >&2; exit 1; }`}
 systemctl show-environment >/dev/null
 case "$(uname -m)" in
   x86_64) arch=x86_64; expected=${shellQuote(release.x86_64 ?? "")} ;;
@@ -238,7 +263,68 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 curl --fail --silent --show-error --proto '=https' --connect-timeout 15 --max-time 300 ${shellQuote(`${origin}/daemon/`)}"ephord-linux-$arch" -o "$tmp/ephord"
 printf '%s  %s\\n' "$expected" "$tmp/ephord" | sha256sum --check --status
-${updaterSetup(origin, key, '"$tmp/ephord"')}
+${updaterSetup(origin, key, '"$tmp/ephord"', release.updaterProtocol ?? 1)}
 echo 'Updater enabled. Return to Machines to install the latest signed daemon release.'
 `;
+}
+
+// All setup substeps share the same root-owned lock as remote updates.
+export function maintenanceLock() {
+  return `
+[ ! -L /var/lib/ephor-updater ] || exit 1
+install -d -o root -g root -m 0700 /var/lib/ephor-updater
+[ ! -L /var/lib/ephor-updater/lock ] || exit 1
+exec 9>/var/lib/ephor-updater/lock
+chmod 0600 /var/lib/ephor-updater/lock
+flock -n 9 || { echo 'Ephor maintenance is already running. Retry after it finishes.' >&2; exit 1; }
+`;
+}
+
+// Feature installers configure roles; only enrollment, migration and the signed
+// updater may replace the shared executable. Old bundles cannot fragment it again.
+export function sharedRoleInstaller(
+  script: string,
+  release: DaemonRelease,
+  role: "services" | "security" | "protections",
+) {
+  if (release.updaterProtocol !== 3)
+    return script.replace(
+      "umask 077",
+      `umask 077
+[ ! -e /var/lib/ephor-updater/shared-layout ] || { echo 'Use Maintenance with a current panel bundle.' >&2; exit 1; }`,
+    );
+  const unit = `ephor-${role}.service`;
+  script = script.replace(
+    "systemctl show-environment >/dev/null",
+    `systemctl show-environment >/dev/null
+/usr/local/bin/ephord layout-check
+unit_existed=0; was_active=0
+[ ! -f /etc/systemd/system/${unit} ] || unit_existed=1
+if systemctl is-active --quiet ${unit}; then was_active=1; fi`,
+  );
+  const lines = script.split("\n");
+  script = lines
+    .filter(
+      (line) =>
+        !(
+          line.includes('"$tmp/ephord"') ||
+          line.startsWith(`mv -f /usr/local/libexec/ephor-${role}.new`)
+        ),
+    )
+    .join("\n");
+  script = script.replace(
+    "tmp=$(mktemp -d)",
+    `printf '%s  %s\\n' "$expected" /usr/local/bin/ephord | sha256sum --check --status || { echo 'Panel bundle differs from installed Ephor. Use Maintenance first.' >&2; exit 1; }
+tmp=$(mktemp -d)`,
+  );
+  script = script.replaceAll(
+    `/usr/local/libexec/ephor-${role}`,
+    "/usr/local/bin/ephord",
+  );
+  script = script.replace(
+    `systemctl enable ${unit}\nsystemctl restart ${unit}\nsystemctl is-active --quiet ${unit}`,
+    `if [ "$unit_existed" = 0 ]; then systemctl enable ${unit}; was_active=1; fi
+if [ "$was_active" = 1 ]; then systemctl restart ${unit}; systemctl is-active --quiet ${unit}; fi`,
+  );
+  return script;
 }

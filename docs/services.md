@@ -5,7 +5,7 @@ Ephor runs multiple HTTP applications and reviewed stateful catalog apps on an e
 ## First deployment
 
 1. Open **Machines → Add machine** and run the enrollment command. It installs monitoring and the deployment worker together, with Docker Engine 28+, Buildx, Git, and a checksummed Railpack executable. Ubuntu and Debian support automatic dependency installation; other systemd Linux distributions need those tools preinstalled. Existing Docker installations are checked and preserved.
-2. For an older machine or an interrupted install, open **Machines → your machine → Settings → Deployments** and get a setup, update, or repair command. Confirm your passkey and run it on that machine within ten minutes. Monitoring stays unprivileged; the separate root-owned worker manages deployments and keeps its identity and running applications when updated.
+2. For an older machine or an interrupted install, open **Machines → your machine → Maintenance** and get the unified setup or repair command. Confirm your passkey and run it on that machine within ten minutes. Monitoring stays unprivileged; the separate root-owned worker manages deployments and keeps its identity and running applications when updated.
 3. For repositories, open **Settings → Integrations → GitHub**. On the first connection, GitHub guides you through creating a GitHub App owned by you for this Ephor instance. Return to Ephor and finish connecting, then install it on your account or organization with access to **only selected repositories**. No personal access token, manually copied key, or workflow commit is needed. Organization policy may require an administrator to approve the installation.
 4. Open **Services → Deploy service**. Choose a repository and production branch, or an existing full image reference. Select its destination machine. The default build runs on that same VPS; no registry is needed.
 5. Enter a root domain or subdomain if the app should be public, runtime variables, application port, and health path. Advanced settings cover project directory for monorepos, Dockerfile/Railpack selection, build resources, build-only variables, private image credentials, and an optional separate build machine.
@@ -148,11 +148,11 @@ The Railpack planner runs non-root with a read-only source mount and no Docker s
 - Durable state/journal: `/var/lib/ephor-services/state.json` (root-only; includes application secrets).
 - Proxy certificate storage: Docker volume `ephor-caddy-data`.
 
-The helper is pinned separately at `/usr/local/libexec/ephor-services`; ordinary monitoring daemon updates do not replace it. Use the Services setup/upgrade command to replace it after backing up state. Existing configuration is preserved and the worker restarts. Avoid interrupting builds when possible; interrupted builds fail safely and can be retried. Running application containers continue through a worker restart.
+The worker runs `/usr/local/bin/ephord service-worker`, sharing one executable with the other Ephor roles. Migrated installations retain `/usr/local/libexec/ephor-services` as a compatibility symlink. **Update Ephor on this machine** replaces that shared executable once and restarts active roles after current jobs finish. For setup or repair, use the single command in the machine’s Maintenance tab. Existing configuration and stopped-role state are preserved. Running application containers continue through a worker restart.
 
 ## Development and validation
 
-Run `bun run auth:admin migrate` with the server environment loaded (the `dev:tunnel` launcher applies migrations). Apply `0024_persistent_workloads.sql` on PostgreSQL or SQLite/D1 before using persistent backup jobs. Workers deployments apply the SQLite migrations through Wrangler. Build both architectures with `bun run bundle:daemon` before building/deploying the panel; the manifest must contain `serviceProtocol: 6` for the new features. Upgrade each machine's deployment helper from Settings → Deployments. Monitoring-daemon updates alone do not replace it. Older workers remain usable for compatible existing jobs and cannot claim protocol-6 deployments or backups.
+Run `bun run auth:admin migrate` with the server environment loaded (the `dev:tunnel` launcher applies migrations). Apply `0024_persistent_workloads.sql` on PostgreSQL or SQLite/D1 before using persistent backup jobs. Workers deployments apply the SQLite migrations through Wrangler. Build both architectures with `bun run bundle:daemon` before building/deploying the panel; the manifest must contain `serviceProtocol: 6` for the new features. Enable unified maintenance once from the machine’s Maintenance tab, then use **Update Ephor on this machine**. Older workers remain usable for compatible existing jobs and cannot claim protocol-6 deployments or backups.
 
 For a source-built Cloudflare panel, run `EPHOR_DAEMON_LOCAL=1 bun run build:cloudflare`
 after bundling. This validates both local architecture checksums and protocol 6,
@@ -192,11 +192,11 @@ Services now has a searchable table with status and machine filters, CPU/memory 
 and a dedicated `/services/<id>` page. Overview contains CPU, memory, uptime, process
 count, restart count, and CPU/memory/network history. Deployments, Logs, and Settings
 keep release controls, build output, environment configuration, and domain checks together.
-GitHub and the build registry live in Settings → Integrations. Deployment readiness and repair commands live in each machine’s Settings.
+GitHub and the build registry live in Settings → Integrations. The installed Ephor version, update policy and unified repair command live in each machine’s Maintenance tab.
 
 Apply migration `0008_service_metrics.sql` before starting the updated panel. Existing
 workers remain compatible but report no resource metrics until upgraded with the
-setup/upgrade command in the machine’s Settings → Deployments. Upgrading the worker preserves its identity,
+unified setup or repair command in the machine’s Maintenance tab. Upgrading the worker preserves its identity,
 service state, and running containers. History starts when the new worker reports;
 there is no historical backfill.
 
