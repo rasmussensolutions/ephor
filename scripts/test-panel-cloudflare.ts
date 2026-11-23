@@ -7,7 +7,9 @@ import { Providers } from "../packages/api/src/panel/release/providers";
 import type {
   Hosting,
   ReleaseJob,
+  ReleaseState,
 } from "../packages/api/src/panel/release/types";
+import { ServiceSecrets } from "../packages/api/src/services/crypto";
 
 const token = process.env.CLOUDFLARE_API_TOKEN;
 const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
@@ -17,6 +19,8 @@ if (!token || !accountId || !directory)
     "Supply CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID and a signed release directory. This creates and deletes disposable live resources.",
   );
 const p = new Providers();
+const secret = `0123456789abcdef${crypto.randomUUID()}${crypto.randomUUID()}`;
+const setupCode = `0123456789abcdef${crypto.randomUUID()}`;
 const h: Extract<Hosting, { host: "cloudflare" }> = {
   host: "cloudflare",
   accountId,
@@ -38,6 +42,7 @@ try {
     name: h.worker,
   });
   h.databaseId = db.uuid;
+  console.info(`Disposable resources: Worker ${h.worker}, D1 ${db.uuid}`);
   const form = new FormData();
   form.set(
     "metadata",
@@ -50,12 +55,12 @@ try {
         {
           name: "BETTER_AUTH_SECRET",
           type: "secret_text",
-          text: crypto.randomUUID() + crypto.randomUUID(),
+          text: secret,
         },
         {
           name: "EPHOR_SETUP_CODE",
           type: "secret_text",
-          text: crypto.randomUUID() + crypto.randomUUID(),
+          text: setupCode,
         },
       ],
     }),
@@ -107,13 +112,84 @@ try {
     if (i === 39) throw Error("Worker did not become healthy");
     await Bun.sleep(2000);
   }
+  const enrollment = await fetch(`${origin}/api/setup/start`, {
+    method: "POST",
+    headers: { Origin: origin, "Content-Type": "application/json" },
+    body: JSON.stringify({ code: setupCode }),
+    signal: AbortSignal.timeout(15000),
+  });
+  await enrollment.text();
+  if (enrollment.status !== 200 || !enrollment.headers.get("set-cookie"))
+    throw new Error("Cloudflare owner setup failed");
+  if (process.argv.includes("--self-update")) {
+    // The public versioned release must exist. Use the same signed version to
+    // exercise replacement of the running Worker without publishing a fake version.
+    const secrets = new ServiceSecrets(secret);
+    const state: ReleaseState = {
+      hosting: h,
+      job: {
+        id: crypto.randomUUID(),
+        envelope: e,
+        version: r.version,
+        sequence: r.sequence,
+        stage: "queued",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        message: "Approved integration test",
+      },
+    };
+    await p.cf(h, `/d1/database/${h.databaseId}/query`, "POST", {
+      sql: "UPDATE ephor_panel_release SET payload=? WHERE id=1",
+      params: [await secrets.seal("panel-releases", state)],
+    });
+    await p.cf(h, `/workers/scripts/${h.worker}/schedules`, "PUT", [
+      { cron: "* * * * *" },
+    ]);
+    let stage = "queued",
+      complete = false;
+    for (let i = 0; i < 120; i++) {
+      await Bun.sleep(5000);
+      const rows = await p.cf<{ results: { payload: string }[] }[]>(
+        h,
+        `/d1/database/${h.databaseId}/query`,
+        "POST",
+        { sql: "SELECT payload FROM ephor_panel_release WHERE id=1" },
+      );
+      const next = await secrets.open<ReleaseState>(
+        "panel-releases",
+        rows[0]?.results[0]?.payload ?? "",
+      );
+      if (next.job?.stage !== stage) {
+        stage = next.job?.stage ?? "missing";
+        console.info(`Worker self-update: ${stage}`);
+      }
+      if (stage === "failed") throw new Error(next.job?.message);
+      if (stage === "complete") {
+        complete = true;
+        break;
+      }
+    }
+    if (!complete)
+      throw new Error("Worker self-update did not acknowledge completion");
+    console.info(
+      "Cloudflare self-update and running-version acknowledgment passed.",
+    );
+  }
 } finally {
-  await p
-    .cf(h, `/workers/scripts/${h.worker}`, "DELETE")
-    .catch((e) => console.error("Worker cleanup failed", e.message));
-  if (h.databaseId)
-    await p
-      .cf(h, `/d1/database/${h.databaseId}`, "DELETE")
-      .catch((e) => console.error("Database cleanup failed", e.message));
-  console.info("Disposable Cloudflare resource cleanup finished.");
+  const failures: string[] = [];
+  for (const path of [
+    `/workers/scripts/${h.worker}`,
+    ...(h.databaseId ? [`/d1/database/${h.databaseId}`] : []),
+  ]) {
+    try {
+      await p.cf(h, path, "DELETE");
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== "CLOUDFLARE_HTTP_404")
+        failures.push(path);
+    }
+  }
+  if (failures.length) {
+    console.error(`Disposable cleanup failed: ${failures.join(", ")}`);
+    process.exitCode = 1;
+  } else console.info("Disposable Cloudflare resources deleted.");
 }

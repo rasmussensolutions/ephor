@@ -175,6 +175,7 @@ export class ReleaseSource {
           "github.com",
           "release-assets.githubusercontent.com",
           "objects.githubusercontent.com",
+          "raw.githubusercontent.com",
         ].includes(u.hostname) ||
         u.username ||
         u.password
@@ -195,11 +196,11 @@ export class ReleaseSource {
     throw new Error("Too many release redirects");
   }
   async latest(): Promise<SignedRelease> {
-    // A dedicated channel tag avoids mixing panel and daemon GitHub 'latest' releases.
+    // A signed branch pointer works with immutable releases and independent daemon releases.
     const envelope = JSON.parse(
       new TextDecoder().decode(
         await this.download(
-          `${RELEASES}panel-stable/panel-release.json`,
+          `https://raw.githubusercontent.com/${OFFICIAL}/panel-channel/panel-release.json`,
           2_100_000,
         ),
       ),

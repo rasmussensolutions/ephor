@@ -16,7 +16,7 @@ You need Node.js 22 or newer and curl on the computer running the installer.
 Download the small bootstrap, inspect it if desired, then run it for your host:
 
 ```sh
-curl -fL --proto '=https' https://github.com/rasmussensolutions/ephor/releases/download/panel-stable/install.sh -o install-ephor.sh
+curl -fL --proto '=https' https://raw.githubusercontent.com/rasmussensolutions/ephor/panel-channel/install.sh -o install-ephor.sh
 sh install-ephor.sh cloudflare
 # or: sh install-ephor.sh railway
 # on a Linux Docker host: sudo sh install-ephor.sh docker
@@ -180,8 +180,9 @@ release using the pinned Ed25519 key. Never overwrite versioned assets.
 
 The signing environment must allow `panel-v*` tags and retain its reviewer/key
 protections. GHCR package `rasmussensolutions/ephor-panel` must be public before
-announcing the first release; verify an anonymous digest pull. The `panel-stable`
-release contains only the signed channel pointer and bootstrap. Panel releases
+announcing the first release; verify an anonymous digest pull. The `panel-channel`
+branch contains only the signed channel pointer and bootstrap. Versioned GitHub
+releases stay immutable. Panel releases
 must use `--latest=false` so daemon discovery remains independent. Publish the
 versioned assets before moving the stable pointer. Test a disposable deployment
 before announcing a new release. Hosts never build or run `git pull` to update.

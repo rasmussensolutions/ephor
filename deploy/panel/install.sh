@@ -3,7 +3,7 @@ set -eu
 command -v node >/dev/null 2>&1 || { echo 'Install Node.js 22 or newer, then run this installer again.' >&2; exit 1; }
 task_dir=$(mktemp -d)
 trap 'rm -rf "$task_dir"' EXIT HUP INT TERM
-curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 'https://github.com/rasmussensolutions/ephor/releases/download/panel-stable/panel-release.json' -o "$task_dir/release.json"
+curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 'https://raw.githubusercontent.com/rasmussensolutions/ephor/panel-channel/panel-release.json' -o "$task_dir/release.json"
 node --input-type=module - "$task_dir" <<'JS'
 import {readFile,writeFile} from 'node:fs/promises';
 import {createPublicKey,verify,createHash} from 'node:crypto';

@@ -7,7 +7,7 @@ No fork, repository copy, or host-side build is required. The installer connects
 updates once; afterward use **Updates → Update** in the panel.
 
 ```sh
-curl -fL --proto '=https' https://github.com/rasmussensolutions/ephor/releases/download/panel-stable/install.sh -o install-ephor.sh
+curl -fL --proto '=https' https://raw.githubusercontent.com/rasmussensolutions/ephor/panel-channel/install.sh -o install-ephor.sh
 sh install-ephor.sh cloudflare  # or railway; use sudo for docker on Linux
 ```
 

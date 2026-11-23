@@ -99,7 +99,4 @@ jobs:
           bun scripts/release-panel.ts dist/panel-release
           gh release create "$RELEASE_TAG" --verify-tag --draft --title "Ephor panel ${RELEASE_TAG#panel-v}" --notes "Official signed panel release for Docker, Railway and Cloudflare Workers. See docs/panel-updates.md." dist/panel-release/*
           gh release edit "$RELEASE_TAG" --draft=false --latest=false
-          if ! gh release view panel-stable >/dev/null 2>&1; then
-            gh release create panel-stable --target "$GITHUB_SHA" --prerelease --latest=false --title 'Panel stable channel' --notes 'Signed pointer to the current panel release. Versioned release assets are immutable.'
-          fi
-          gh release upload panel-stable dist/panel-release/panel-release.json deploy/panel/install.sh --clobber
+          bun scripts/publish-panel-channel.ts dist/panel-release

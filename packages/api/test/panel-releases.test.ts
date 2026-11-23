@@ -29,8 +29,8 @@ async function release(): Promise<PanelRelease> {
   };
   return {
     format: 1,
-    version: "0.3.1",
-    sequence: 2,
+    version: "0.3.2",
+    sequence: 3,
     minimumSequence: 0,
     image: `ghcr.io/rasmussensolutions/ephor-panel@sha256:${"a".repeat(64)}`,
     worker: a,
@@ -80,7 +80,7 @@ async function setup() {
 test("signed releases reject tampering, another signer, executable paths and untrusted registries", async () => {
   const r = await release(),
     e = signed(r);
-  expect((await verify(e)).version).toBe("0.3.1");
+  expect((await verify(e)).version).toBe("0.3.2");
   await expect(verify({ ...e, payload: `${e.payload} ` })).rejects.toThrow(
     "Untrusted",
   );
@@ -124,8 +124,8 @@ test("release jobs require a live updater, matching version, newer signed releas
   await expect(panel.install({ version: "wrong" })).rejects.toThrow(
     "PANEL_RELEASE_INCOMPATIBLE",
   );
-  await panel.install({ version: "0.3.1" });
-  await expect(panel.install({ version: "0.3.1" })).rejects.toThrow(
+  await panel.install({ version: "0.3.2" });
+  await expect(panel.install({ version: "0.3.2" })).rejects.toThrow(
     "PANEL_UPDATE_BUSY",
   );
   await expect(panel.configure({ host: "docker" })).rejects.toThrow(
@@ -139,11 +139,11 @@ test("release jobs require a live updater, matching version, newer signed releas
   const rows = await f.env.sql.query<{ payload: string }>(
     "SELECT payload FROM ephor_panel_release",
   );
-  expect(rows[0]?.payload).not.toContain("0.3.1");
+  expect(rows[0]?.payload).not.toContain("0.3.2");
 });
 test("deployment acceptance is not success; only the matching running version acknowledges it", async () => {
   const { panel } = await setup();
-  await panel.install({ version: "0.3.1" });
+  await panel.install({ version: "0.3.2" });
   const work = await panel.updater({});
   expect(work?.stage).toBe("queued");
   await panel.updater({ id: work?.id, stage: "verifying" });
@@ -152,7 +152,7 @@ test("deployment acceptance is not success; only the matching running version ac
   const restarted = new PanelReleases(
     panel.env,
     undefined,
-    { version: "0.3.1", sequence: 2 },
+    { version: "0.3.2", sequence: 3 },
     verify,
   );
   await restarted.tick();
@@ -189,7 +189,7 @@ test("Cloudflare upload preserves secrets and security headers; migrations inclu
     job: ReleaseJob = {
       id: "job",
       version: r.version,
-      sequence: 2,
+      sequence: 3,
       envelope: signed(r),
       stage: "queued",
       createdAt: Date.now(),

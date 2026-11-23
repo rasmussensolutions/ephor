@@ -7,7 +7,7 @@
     "dev": "bun --watch src/index.ts",
     "build": "bun build src/index.ts --target=node --outdir=dist && bun build scripts/auth.ts --target=bun --outfile=dist/auth.js",
     "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit && tsc --ignoreConfig --noEmit --target ES2022 --module ESNext --moduleResolution bundler --strict --skipLibCheck --types bun,node ../../scripts/install-panel.ts ../../scripts/release-panel.ts ../../scripts/test-panel-image.ts ../../scripts/test-panel-cloudflare.ts"
+    "typecheck": "tsc --noEmit && tsc --ignoreConfig --noEmit --target ES2022 --module ESNext --moduleResolution bundler --strict --skipLibCheck --types bun,node ../../scripts/install-panel.ts ../../scripts/release-panel.ts ../../scripts/test-panel-image.ts ../../scripts/test-panel-cloudflare.ts ../../scripts/publish-panel-channel.ts"
   },
   "dependencies": {
     "@hono/node-server": "2.1.7",
