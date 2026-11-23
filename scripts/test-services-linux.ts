@@ -41,6 +41,9 @@ try {
     security ? "ephor-security-test" : "ephor-services-test",
     "dockerd",
     "--host=unix:///var/run/docker.sock",
+    // Catalog and restore fixtures intentionally retain more networks than the
+    // default Docker pools can allocate. This config affects only this engine.
+    "--default-address-pool=base=10.240.0.0/16,size=24",
   ]);
   let ready = false;
   for (let i = 0; i < 60; i++) {
@@ -72,6 +75,9 @@ try {
     () => {},
   );
   await run(["docker", "exec", name, "docker", "system", "df"]).catch(() => {});
+  await run(["docker", "exec", name, "docker", "network", "ls"]).catch(
+    () => {},
+  );
   throw error;
 } finally {
   await run(["docker", "rm", "-fv", name]);
