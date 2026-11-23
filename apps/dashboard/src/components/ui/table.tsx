@@ -1,11 +1,19 @@
 import { cn } from "cn";
 import type { ComponentProps } from "react";
 
-function Table({ className, ...props }: ComponentProps<"table">) {
+function Table({
+  className,
+  variant = "default",
+  ...props
+}: ComponentProps<"table"> & { variant?: "default" | "layered" }) {
   return (
     <div
       data-slot="table-container"
-      className="relative w-full min-w-0 overflow-x-auto overscroll-x-none rounded-xl"
+      data-variant={variant}
+      className={cn(
+        "relative w-full min-w-0 overflow-x-auto overscroll-x-none rounded-xl",
+        variant === "layered" && "rounded-lg",
+      )}
     >
       <table
         data-slot="table"

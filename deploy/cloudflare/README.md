@@ -63,10 +63,14 @@ for account connection and automatic resource provisioning.
 
 ## Updating your panel
 
-Use **Actions → Update Ephor → Run workflow** in your deployment repository,
-review the generated pull request, and merge it to deploy. This works with private
-repositories and preserves installation settings. See the [panel update guide](../../docs/panel-updates.md)
-for one-time GitHub permissions, backups, and copies created before the updater existed.
+Open **Updates** in Ephor, connect the dedicated Updates GitHub App to your
+deployment repository, and select **Cloudflare Workers → My host deploys GitHub
+pushes**. Prepare, review, and install updates from the panel. Workers Builds must
+use the default/production branch with preview builds disabled.
+
+The GitHub **Actions → Update Ephor** workflow remains available as an alternative.
+See the [panel update guide](../../docs/panel-updates.md) for setup, backups, and
+the one-time workflow upgrade needed by older installations.
 
 ## Local development
 

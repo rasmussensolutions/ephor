@@ -24,17 +24,56 @@ const secret = "a-webhook-secret";
 async function setup() {
   const f = await fixture();
   let head = sha;
-  const requests: { path: string; ref: string | null; body: unknown }[] = [];
+  let avatarUrl = "https://avatars.githubusercontent.com/u/456?v=4";
+  let avatarBytes = "first avatar";
+  const requests: {
+    path: string;
+    ref: string | null;
+    body: unknown;
+    origin: string;
+    authenticated: boolean;
+    avatarSize: string | null;
+  }[] = [];
   const request = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input));
     requests.push({
       path: url.pathname,
       ref: url.searchParams.get("ref"),
       body: init?.body ? JSON.parse(String(init.body)) : null,
+      origin: url.origin,
+      authenticated: new Headers(init?.headers).has("Authorization"),
+      avatarSize: url.searchParams.get("s"),
     });
+    if (url.origin === "https://avatars.githubusercontent.com")
+      return new Response(avatarBytes, {
+        headers: { "Content-Type": "image/png" },
+      });
     let body: unknown;
     if (url.pathname.endsWith("/access_tokens"))
       body = { token: "ghs_ephemeral-token" };
+    else if (url.pathname === "/installation/repositories")
+      body = {
+        total_count: 2,
+        repositories: [
+          {
+            id: 123,
+            full_name: "acme/web",
+            owner: { id: 456 },
+            default_branch: "main",
+            private: true,
+            archived: false,
+            pushed_at: "2026-11-16T12:00:00Z",
+          },
+          {
+            id: 124,
+            full_name: "acme/archived",
+            owner: { id: 456 },
+            default_branch: "main",
+            private: false,
+            archived: true,
+          },
+        ],
+      };
     else if (url.pathname === "/repositories/123")
       body = {
         id: 123,
@@ -56,7 +95,11 @@ async function setup() {
             : { "@tanstack/react-start": "latest", react: "latest" },
       };
     else if (url.pathname === "/app/installations/99")
-      body = { app_id: 10, suspended_at: null, account: { login: "acme" } };
+      body = {
+        app_id: 10,
+        suspended_at: null,
+        account: { login: "acme", avatar_url: avatarUrl },
+      };
     else if (url.pathname.includes("/app-manifests/"))
       body = { id: 10, slug: "ephor-example", pem, webhook_secret: secret };
     else return new Response("{}", { status: 404 });
@@ -131,8 +174,57 @@ async function setup() {
     setHead: (s: string) => {
       head = s;
     },
+    setAvatar: (url: string, bytes: string) => {
+      avatarUrl = url;
+      avatarBytes = bytes;
+    },
   };
 }
+test("linked GitHub scopes use a fresh avatar from GitHub without forwarding credentials", async () => {
+  const f = await setup();
+  const first = await f.github.avatar("99");
+  expect(first?.headers.get("Content-Type")).toBe("image/png");
+  expect(first?.headers.get("Cache-Control")).toBe("no-store");
+  expect(await first?.text()).toBe("first avatar");
+  expect(f.requests.at(-1)).toMatchObject({
+    origin: "https://avatars.githubusercontent.com",
+    authenticated: false,
+    avatarSize: "64",
+  });
+  // GitHub can change the picture without changing the avatar URL.
+  f.setAvatar(
+    "https://avatars.githubusercontent.com/u/456?v=4",
+    "updated avatar",
+  );
+  expect(await (await f.github.avatar("99"))?.text()).toBe("updated avatar");
+  const count = f.requests.length;
+  expect(await f.github.avatar("100")).toBeNull();
+  expect(f.requests).toHaveLength(count);
+});
+
+test("unavailable avatars fall back instead of loading images from an unrelated host", async () => {
+  const f = await setup();
+  f.setAvatar("https://example.com/avatar.png", "unavailable");
+  expect(await f.github.avatar("99")).toBeNull();
+  expect(f.requests.at(-1)?.origin).toBe("https://api.github.com");
+});
+
+test("repository picker receives the last push date and excludes archived repositories", async () => {
+  const f = await setup();
+  expect(await f.github.repositories("99", 1)).toEqual({
+    repositories: [
+      {
+        id: "123",
+        name: "acme/web",
+        branch: "main",
+        private: true,
+        pushedAt: "2026-11-16T12:00:00Z",
+      },
+    ],
+    more: false,
+  });
+});
+
 test("service technology follows the selected folder and build commit", async () => {
   const f = await setup();
   const source = await f.github.source({

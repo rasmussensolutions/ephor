@@ -4,7 +4,7 @@ import type {
   ServiceSource,
   ServiceSpec,
 } from "@ephor/api/services";
-import { type FormEvent, useId, useState } from "react";
+import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -16,7 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { api, errorMessage, signIn } from "@/lib/auth";
-import { RepositoryPicker } from "./github-source";
+import { RepositoryBranchPicker, RepositoryPicker } from "./github-source";
 
 export interface EditableService {
   id: string;
@@ -26,6 +26,7 @@ export interface EditableService {
   domains?: ServiceDomains;
   source: ServiceSource;
   autoDeploy: boolean;
+  currentDeployment?: string | null;
   spec: Omit<ServiceSpec, "environment" | "registry"> & {
     environment: string[];
     registry: { server: string; username: string } | null;
@@ -54,6 +55,7 @@ export function ServiceForm({
   onBusyChange,
   initialMachineId,
   initialSourceType = "github",
+  fixedSource = false,
   className = "space-y-5 px-6 pb-8",
 }: {
   service: EditableService | null;
@@ -63,11 +65,20 @@ export function ServiceForm({
   className?: string;
   initialMachineId?: string;
   initialSourceType?: "github" | "image";
+  fixedSource?: boolean;
 }) {
   const formId = useId();
   const [step, setStep] = useState(service ? 1 : 0),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
+  const formRef = useRef<HTMLFormElement>(null);
+  const previousStep = useRef(step);
+  useEffect(() => {
+    if (fixedSource && previousStep.current !== step) {
+      formRef.current?.querySelector<HTMLElement>("h2")?.focus();
+    }
+    previousStep.current = step;
+  }, [fixedSource, step]);
   const [draft, setDraft] = useState({
     name: service?.name ?? "",
     machineId:
@@ -88,6 +99,10 @@ export function ServiceForm({
     healthPath: service?.spec.healthPath ?? "/",
     memoryMb: service?.spec.memoryMb ?? 256,
     cpus: service?.spec.cpus ?? 0.5,
+    volumes:
+      service?.spec.volumes
+        ?.map((v) => `${v.name}=${v.mountPath}`)
+        .join("\n") ?? "",
     environment: "",
     buildEnvironment: "",
     buildType: service?.source.buildType ?? "auto",
@@ -107,6 +122,7 @@ export function ServiceForm({
     if (busy) return;
     setError("");
     if (step < 2) {
+      if (step === 0 && draft.type === "github") return;
       setStep(step + 1);
       return;
     }
@@ -119,6 +135,15 @@ export function ServiceForm({
           : draft.image;
       const spec = {
         image,
+        volumes: draft.volumes
+          .split("\n")
+          .filter((l) => l.trim())
+          .map((line) => {
+            const [name, mountPath, extra] = line.trim().split("=");
+            if (!name || !mountPath || extra !== undefined)
+              throw new Error("Use volume-name=/mount/path, one per line.");
+            return { name, mountPath };
+          }),
         port: draft.port,
         healthPath: draft.healthPath,
         memoryMb: draft.memoryMb,
@@ -225,67 +250,98 @@ export function ServiceForm({
     }
   }
   return (
-    <form onSubmit={submit} className={className} aria-busy={busy}>
-      <ol
-        className="flex gap-3 text-xs text-muted-foreground"
-        aria-label="Setup progress"
-      >
-        {["Source", "Configuration", "Review & deploy"].map((title, i) => (
-          <li
-            key={title}
-            className={i === step ? "font-medium text-primary" : ""}
-            aria-current={i === step ? "step" : undefined}
-          >
-            {i + 1}. {title}
-          </li>
-        ))}
-      </ol>
+    <form
+      ref={formRef}
+      onSubmit={submit}
+      className={className}
+      aria-busy={busy}
+    >
+      {(!fixedSource || step > 0) && (
+        <ol
+          className="flex gap-3 text-xs text-muted-foreground"
+          aria-label="Setup progress"
+        >
+          {["Source", "Configuration", "Review & deploy"].map((title, i) => (
+            <li
+              key={title}
+              className={i === step ? "font-medium text-primary" : ""}
+              aria-current={i === step ? "step" : undefined}
+            >
+              {i + 1}. {title}
+            </li>
+          ))}
+        </ol>
+      )}
       {step === 0 && (
         <>
-          <div className="grid grid-cols-2 gap-2">
-            <Button
-              type="button"
-              variant={draft.type === "github" ? "raised" : "subtle-outline"}
-              size="action"
-              aria-pressed={draft.type === "github"}
-              disabled={!!service}
-              onClick={() => update("type", "github")}
-            >
-              GitHub repository
-            </Button>
-            <Button
-              type="button"
-              variant={draft.type === "image" ? "raised" : "subtle-outline"}
-              size="action"
-              aria-pressed={draft.type === "image"}
-              disabled={!!service}
-              onClick={() => update("type", "image")}
-            >
-              Container image
-            </Button>
-          </div>
+          {!fixedSource && (
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                type="button"
+                variant={draft.type === "github" ? "raised" : "subtle-outline"}
+                size="action"
+                aria-pressed={draft.type === "github"}
+                disabled={!!service}
+                onClick={() => update("type", "github")}
+              >
+                GitHub repository
+              </Button>
+              <Button
+                type="button"
+                variant={draft.type === "image" ? "raised" : "subtle-outline"}
+                size="action"
+                aria-pressed={draft.type === "image"}
+                disabled={!!service}
+                onClick={() => update("type", "image")}
+              >
+                Container image
+              </Button>
+            </div>
+          )}
           {draft.type === "github" ? (
             <RepositoryPicker
               value={draft}
-              onChange={(v) =>
+              onChange={(v) => {
                 setDraft((d) => ({
                   ...d,
                   ...v,
-                  name: d.name || v.repository.split("/")[1] || "",
-                }))
-              }
+                  branch:
+                    d.repositoryId === v.repositoryId &&
+                    d.installationId === v.installationId
+                      ? d.branch
+                      : v.branch,
+                  name:
+                    d.name && d.name !== d.repository.split("/").at(-1)
+                      ? d.name
+                      : v.repository.split("/").at(-1) || "",
+                }));
+                setStep(1);
+              }}
             />
           ) : (
-            <label htmlFor={`${formId}-1`} className="block space-y-2 text-sm">
-              <span>Container image</span>
-              <Input
-                id={`${formId}-1`}
-                required
-                placeholder="docker.io/your-team/app:latest"
-                value={draft.image}
-                onChange={(e) => update("image", e.target.value)}
-              />
-            </label>
+            <div className="space-y-4">
+              {fixedSource && (
+                <h2
+                  tabIndex={-1}
+                  className="text-xl font-semibold tracking-tight outline-none"
+                >
+                  Deploy a container image
+                </h2>
+              )}
+              <label
+                htmlFor={`${formId}-1`}
+                className="block space-y-2 text-sm"
+              >
+                <span>Container image</span>
+                <Input
+                  id={`${formId}-1`}
+                  required
+                  placeholder="docker.io/your-team/app:latest"
+                  value={draft.image}
+                  onChange={(e) => update("image", e.target.value)}
+                />
+              </label>
+            </div>
           )}
           <p className="text-xs text-muted-foreground">
             {draft.type === "github"
@@ -296,8 +352,27 @@ export function ServiceForm({
       )}
       {step === 1 && (
         <>
+          {fixedSource && (
+            <h2
+              tabIndex={-1}
+              className="text-xl font-semibold tracking-tight outline-none"
+            >
+              Configure service
+            </h2>
+          )}
+          {draft.type === "github" && draft.repositoryId && (
+            <RepositoryBranchPicker
+              key={`${draft.installationId}:${draft.repositoryId}`}
+              value={draft}
+              onChange={(branch) => update("branch", branch)}
+            />
+          )}
           {!service && (
-            <>
+            <div
+              className={
+                fixedSource ? "grid gap-5 sm:grid-cols-2" : "space-y-5"
+              }
+            >
               <label
                 htmlFor={`${formId}-2`}
                 className="block space-y-2 text-sm"
@@ -331,7 +406,7 @@ export function ServiceForm({
                     }))}
                 />
               </label>
-            </>
+            </div>
           )}
           {service && draft.type === "image" && (
             <label
@@ -441,6 +516,26 @@ export function ServiceForm({
               {service
                 ? `Leave empty to keep ${service.spec.environment.length} existing variables. Enter a complete replacement to change them, or {} to remove all.`
                 : "One NAME=value per line, or a JSON object. Encrypted at rest and never sent to the build."}
+            </span>
+          </label>
+          <label
+            className="block space-y-2 text-sm"
+            htmlFor={`${formId}-volumes`}
+          >
+            <span>Persistent volumes (optional)</span>
+            <Textarea
+              id={`${formId}-volumes`}
+              rows={3}
+              value={draft.volumes}
+              disabled={!!service && !!service?.currentDeployment}
+              onChange={(e) => update("volumes", e.target.value)}
+              placeholder="data=/app/data"
+            />
+            <span className="block text-xs text-muted-foreground">
+              One name=/mount/path per line, up to four. Volume paths become
+              fixed after deployment. Data is owned by the application's user.
+              Deployments and backups stop the application; failed deployments
+              retain data and require recovery.
             </span>
           </label>
           <Collapsible className="rounded-lg border p-3">
@@ -669,6 +764,14 @@ export function ServiceForm({
       )}
       {step === 2 && (
         <div className="space-y-4">
+          {fixedSource && (
+            <h2
+              tabIndex={-1}
+              className="text-xl font-semibold tracking-tight outline-none"
+            >
+              Review deployment
+            </h2>
+          )}
           <div className="rounded-xl border bg-card p-4 text-sm">
             <p className="font-medium">{draft.name}</p>
             <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2">
@@ -719,7 +822,8 @@ export function ServiceForm({
           <p className="text-xs text-muted-foreground">
             The app must listen on 0.0.0.0 at the configured port. It runs
             without root access, with a read-only filesystem and writable /tmp.
-            Use an external database or object storage for persistent data.
+            Configured volumes retain data; other paths remain read-only.
+            Persistent services use stop/start deployments with downtime.
           </p>
         </div>
       )}
@@ -728,38 +832,40 @@ export function ServiceForm({
           {error}
         </p>
       )}
-      <div className="flex justify-between gap-3">
-        {step > 0 ? (
+      {!(step === 0 && draft.type === "github") && (
+        <div className="flex justify-between gap-3">
+          {step > 0 ? (
+            <Button
+              type="button"
+              variant="subtle-outline"
+              size="action"
+              disabled={busy}
+              onClick={() => setStep(step - 1)}
+            >
+              Back
+            </Button>
+          ) : (
+            <span />
+          )}
           <Button
-            type="button"
-            variant="subtle-outline"
+            type="submit"
+            variant="gradient"
             size="action"
-            disabled={busy}
-            onClick={() => setStep(step - 1)}
+            disabled={
+              busy ||
+              (step === 0 && draft.type === "github" && !draft.repositoryId)
+            }
           >
-            Back
+            {busy
+              ? "Saving…"
+              : step < 2
+                ? "Continue"
+                : service
+                  ? "Save settings"
+                  : "Deploy service"}
           </Button>
-        ) : (
-          <span />
-        )}
-        <Button
-          type="submit"
-          variant="gradient"
-          size="action"
-          disabled={
-            busy ||
-            (step === 0 && draft.type === "github" && !draft.repositoryId)
-          }
-        >
-          {busy
-            ? "Saving…"
-            : step < 2
-              ? "Continue"
-              : service
-                ? "Save settings"
-                : "Deploy service"}
-        </Button>
-      </div>
+        </div>
+      )}
     </form>
   );
 }

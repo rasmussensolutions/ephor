@@ -1,4 +1,7 @@
 import type { MetricsHistory } from "@ephor/api/services";
+import { CpuIcon } from "@phosphor-icons/react/dist/csr/Cpu";
+import { MemoryIcon } from "@phosphor-icons/react/dist/csr/Memory";
+import { NetworkIcon } from "@phosphor-icons/react/dist/csr/Network";
 import { useEffect, useState } from "react";
 import { MetricChart } from "@/components/metric-chart";
 import type { ChartConfig } from "@/components/ui/chart";
@@ -73,23 +76,29 @@ export function ServiceCharts({
       )}
       <div className="grid gap-4 xl:grid-cols-2">
         <MetricChart
+          layered
           config={config}
           title="CPU"
+          icon={CpuIcon}
           fields={["cpuPercent"]}
           history={history}
           format={(v) => `${v.toFixed(1)}%`}
         />
         <MetricChart
+          layered
           config={config}
           title="Memory"
+          icon={MemoryIcon}
           fields={["memoryBytes"]}
           history={history}
           format={bytes}
         />
         <div className="xl:col-span-2">
           <MetricChart
+            layered
             config={config}
             title="Network"
+            icon={NetworkIcon}
             fields={["networkRxBytesPerSecond", "networkTxBytesPerSecond"]}
             history={history}
             format={(v) => `${bytes(v)}/s`}

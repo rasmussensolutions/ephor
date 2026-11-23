@@ -20,12 +20,18 @@ for (const arch of ["x86_64", "aarch64"]) {
       buildId: manifest.buildId,
       updaterProtocol: manifest.updaterProtocol,
       serviceProtocol: manifest.serviceProtocol,
+      securityProtocol: manifest.securityProtocol,
+      protectionProtocol: manifest.protectionProtocol,
+      managedUpdatesProtocol: manifest.managedUpdatesProtocol,
     };
   if (
     merged.version !== manifest.version ||
     merged.buildId !== manifest.buildId ||
     merged.updaterProtocol !== manifest.updaterProtocol ||
-    merged.serviceProtocol !== manifest.serviceProtocol
+    merged.serviceProtocol !== manifest.serviceProtocol ||
+    merged.protectionProtocol !== manifest.protectionProtocol ||
+    merged.managedUpdatesProtocol !== manifest.managedUpdatesProtocol ||
+    merged.securityProtocol !== manifest.securityProtocol
   )
     throw new Error(
       "Architecture builds must come from identical source inputs.",

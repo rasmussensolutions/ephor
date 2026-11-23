@@ -23,6 +23,7 @@ interface Repository {
   default_branch: string;
   private: boolean;
   archived: boolean;
+  pushed_at?: string | null;
 }
 const encoder = new TextEncoder();
 export class Integrations {
@@ -88,12 +89,26 @@ export class GitHubApp {
     secret: string,
     readonly origin: string,
     readonly request: typeof fetch = fetch,
+    readonly purpose: "services" | "panel" = "services",
   ) {
     this.integrations = new Integrations(sql, secret);
   }
-  async api<T>(path: string, token?: string, body?: unknown): Promise<T> {
+  get configKey() {
+    return this.purpose === "panel" ? "panel-github" : "github";
+  }
+  get installationTable() {
+    return this.purpose === "panel"
+      ? "ephor_panel_github_installation"
+      : "ephor_github_installation";
+  }
+  async api<T>(
+    path: string,
+    token?: string,
+    body?: unknown,
+    method?: "PUT",
+  ): Promise<T> {
     const response = await this.request(`https://api.github.com${path}`, {
-      method: body === undefined ? "GET" : "POST",
+      method: method ?? (body === undefined ? "GET" : "POST"),
       redirect: "error",
       signal: AbortSignal.timeout(10000),
       headers: {
@@ -112,10 +127,12 @@ export class GitHubApp {
           : "GITHUB_REPOSITORY_UNAVAILABLE",
         400,
       );
-    return response.json() as Promise<T>;
+    return response.status === 204
+      ? (undefined as T)
+      : (response.json() as Promise<T>);
   }
   async config() {
-    const config = await this.integrations.get<AppConfig>("github");
+    const config = await this.integrations.get<AppConfig>(this.configKey);
     if (!config) throw new AuthError("GITHUB_NOT_CONNECTED", 409);
     return config;
   }
@@ -129,16 +146,87 @@ export class GitHubApp {
       .sign(await importPKCS8(privateKey(app.pem), "RS256"));
   }
   async status() {
-    const app = await this.integrations.get<AppConfig>("github");
+    const app = await this.integrations.get<AppConfig>(this.configKey);
     return {
       configured: !!app,
       slug: app?.slug,
       installations: await this.sql.query<{ id: string; account: string }>(
-        "SELECT id,account FROM ephor_github_installation ORDER BY account",
+        `SELECT id,account FROM ${this.installationTable} ORDER BY account`,
       ),
     };
   }
+  async avatar(installationId: string): Promise<Response | null> {
+    const id = numericId(installationId);
+    const [connected] = await this.sql.query<{ id: string }>(
+      `SELECT id FROM ${this.installationTable} WHERE id=$1`,
+      [id],
+    );
+    if (!connected) return null;
+    try {
+      const config = await this.config();
+      const installation = await this.api<{
+        app_id: number;
+        suspended_at: string | null;
+        account: { avatar_url?: string };
+      }>(`/app/installations/${id}`, await this.jwt());
+      if (
+        installation.app_id !== config.id ||
+        installation.suspended_at ||
+        !installation.account.avatar_url
+      )
+        return null;
+      const url = new URL(installation.account.avatar_url);
+      if (
+        url.origin !== "https://avatars.githubusercontent.com" ||
+        url.username ||
+        url.password
+      )
+        return null;
+      url.searchParams.set("s", "64");
+      // The avatar is fetched separately, without forwarding any GitHub App credentials.
+      const response = await this.request(url, {
+        redirect: "error",
+        signal: AbortSignal.timeout(5000),
+        cache: "no-store",
+        headers: {
+          Accept: "image/avif,image/webp,image/png,image/jpeg,image/gif",
+          "Cache-Control": "no-cache",
+        },
+      });
+      const type = response.headers
+        .get("Content-Type")
+        ?.split(";")[0]
+        ?.trim()
+        .toLowerCase();
+      if (
+        !response.ok ||
+        !type ||
+        ![
+          "image/avif",
+          "image/webp",
+          "image/png",
+          "image/jpeg",
+          "image/gif",
+        ].includes(type) ||
+        Number(response.headers.get("Content-Length")) > 128 * 1024
+      )
+        return null;
+      const bytes = await response.arrayBuffer();
+      if (!bytes.byteLength || bytes.byteLength > 128 * 1024) return null;
+      return new Response(bytes, {
+        headers: {
+          "Content-Type": type,
+          "Cache-Control": "no-store",
+          "X-Content-Type-Options": "nosniff",
+        },
+      });
+    } catch {
+      // A missing or temporarily unavailable avatar should never block deployment.
+      return null;
+    }
+  }
   async state(kind: string) {
+    kind = `${this.purpose}:${kind}`;
     await this.sql.query("DELETE FROM ephor_github_state WHERE expires < $1", [
       Date.now(),
     ]);
@@ -151,6 +239,7 @@ export class GitHubApp {
     return state;
   }
   async consume(state: unknown, kind: string) {
+    kind = `${this.purpose}:${kind}`;
     if (typeof state !== "string" || !/^[a-f0-9]{64}$/.test(state))
       throw new AuthError("GITHUB_STATE_EXPIRED", 403);
     const { state: auth } = await new AuthStore(this.sql).read();
@@ -163,7 +252,7 @@ export class GitHubApp {
   async start() {
     if (!this.origin.startsWith("https://"))
       throw new AuthError("HTTPS_REQUIRED", 409);
-    const existing = await this.integrations.get<AppConfig>("github");
+    const existing = await this.integrations.get<AppConfig>(this.configKey);
     const state = await this.state(existing ? "install" : "register");
     if (existing)
       return {
@@ -174,17 +263,27 @@ export class GitHubApp {
       url: `https://github.com/settings/apps/new?state=${state}`,
       state,
       manifest: {
-        name: `Ephor-${crypto.randomUUID().slice(0, 8)}`,
+        name: `Ephor-${this.purpose === "panel" ? "Updates-" : ""}${crypto.randomUUID().slice(0, 8)}`,
         url: this.origin,
-        redirect_url: `${this.origin}/settings/integrations?github=register`,
-        setup_url: `${this.origin}/settings/integrations?github=install`,
+        redirect_url: `${this.origin}/${this.purpose === "panel" ? "updates" : "settings/integrations"}?github=register`,
+        setup_url: `${this.origin}/${this.purpose === "panel" ? "updates" : "settings/integrations"}?github=install`,
         public: true,
         hook_attributes: {
           url: `${this.origin}/api/integrations/github/webhook`,
-          active: true,
+          active: this.purpose !== "panel",
         },
-        default_permissions: { contents: "read", metadata: "read" },
-        default_events: ["push"],
+        default_permissions:
+          this.purpose === "panel"
+            ? {
+                contents: "write",
+                metadata: "read",
+                actions: "write",
+                pull_requests: "write",
+                checks: "read",
+                statuses: "read",
+              }
+            : { contents: "read", metadata: "read" },
+        default_events: this.purpose === "panel" ? [] : ["push"],
         setup_on_update: true,
       },
     };
@@ -193,7 +292,7 @@ export class GitHubApp {
     const b = object(body);
     if (b.kind === "register") {
       await this.consume(b.state, "register");
-      if (await this.integrations.get("github"))
+      if (await this.integrations.get(this.configKey))
         throw new AuthError("GITHUB_ALREADY_CONFIGURED", 409);
       if (typeof b.code !== "string" || !/^[A-Za-z0-9_-]{1,200}$/.test(b.code))
         throw new AuthError("INVALID_GITHUB_CODE");
@@ -211,7 +310,7 @@ export class GitHubApp {
         !app.webhook_secret
       )
         throw new AuthError("INVALID_GITHUB_APP");
-      await this.integrations.set("github", {
+      await this.integrations.set(this.configKey, {
         id: app.id,
         slug: app.slug,
         pem: app.pem,
@@ -236,18 +335,25 @@ export class GitHubApp {
     )
       throw new AuthError("GITHUB_INSTALLATION_UNAVAILABLE");
     await this.sql.query(
-      "INSERT INTO ephor_github_installation (id,account) VALUES ($1,$2) ON CONFLICT(id) DO UPDATE SET account=$2",
+      `INSERT INTO ${this.installationTable} (id,account) VALUES ($1,$2) ON CONFLICT(id) DO UPDATE SET account=$2`,
       [id, installation.account.login],
     );
     await new AuthStore(this.sql).audit("github.installation_connected", id);
     return { connected: true };
   }
-  async token(installationId: string, repositoryId?: string) {
+  async token(
+    installationId: string,
+    repositoryId?: string,
+    permissions: Record<string, string> = {
+      contents: "read",
+      metadata: "read",
+    },
+  ) {
     const id = numericId(installationId);
     if (
       !(
         await this.sql.query(
-          "SELECT id FROM ephor_github_installation WHERE id=$1",
+          `SELECT id FROM ${this.installationTable} WHERE id=$1`,
           [id],
         )
       ).length
@@ -257,7 +363,7 @@ export class GitHubApp {
       `/app/installations/${id}/access_tokens`,
       await this.jwt(),
       {
-        permissions: { contents: "read", metadata: "read" },
+        permissions,
         ...(repositoryId
           ? { repository_ids: [Number(numericId(repositoryId))] }
           : {}),
@@ -279,6 +385,7 @@ export class GitHubApp {
           name: r.full_name,
           branch: r.default_branch,
           private: r.private,
+          pushedAt: r.pushed_at ?? null,
         })),
       more: page * 100 < result.total_count,
     };
@@ -446,9 +553,17 @@ export class GitHubApp {
       throw new AuthError("INVALID_WEBHOOK", 401);
   }
   async disconnect() {
-    await this.sql.query("DELETE FROM ephor_github_installation");
-    await this.sql.query("DELETE FROM ephor_integration WHERE id='github'");
-    await this.sql.query("DELETE FROM ephor_github_state");
+    await this.sql.query(`DELETE FROM ${this.installationTable}`);
+    await this.sql.query("DELETE FROM ephor_integration WHERE id=$1", [
+      this.configKey,
+    ]);
+    await this.sql.query("DELETE FROM ephor_github_state WHERE kind LIKE $1", [
+      `${this.purpose}:%`,
+    ]);
+    if (this.purpose === "panel") {
+      await new AuthStore(this.sql).audit("panel.github_disconnected");
+      return;
+    }
     await this.sql.query(
       "UPDATE ephor_build SET status='cancelled',updated_at=$1 WHERE status IN ('queued','running','built')",
       [Date.now()],

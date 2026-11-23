@@ -79,7 +79,7 @@ function DashboardLayout() {
             className={
               projectPage
                 ? "relative h-full w-full"
-                : "mx-auto w-full max-w-7xl px-6 py-10 md:px-10 md:py-14"
+                : "mx-auto w-full max-w-6xl px-6 py-10 md:px-10 md:py-24"
             }
           >
             <SidebarTrigger

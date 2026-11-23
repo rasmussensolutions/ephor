@@ -8,6 +8,49 @@ export interface SessionInfo {
   recoveryCodesRemaining: number;
 }
 const messages: Record<string, string> = {
+  DEPLOYMENT_METADATA_CHANGED:
+    "Deployment details changed or the host is no longer active. Refresh and try again.",
+  INVALID_DEPLOYMENT_METADATA:
+    "Enter a provider name and select the deployment details from the available options.",
+  WORKER_HAS_NO_HOST_MACHINE:
+    "Cloudflare Workers run on provider-managed infrastructure, not one of your machines.",
+  INVALID_UPDATE_POLICY:
+    "Choose at least one day and valid UTC update and reboot times.",
+  PROTECTION_HELPER_UPGRADE_REQUIRED:
+    "Repair the protection management helper to enable automatic-update management.",
+  UPDATE_POLICY_CONFLICT:
+    "The managed update policy changed locally. Review the machine configuration before retrying.",
+  PROTECTION_BUILD_REQUIRED:
+    "Build the updated daemon bundle before connecting protection management.",
+  PROTECTION_HELPER_REQUIRED:
+    "Connect the protection management helper and wait for its next report.",
+  PROTECTION_UNSUPPORTED:
+    "This host is unsupported or has an externally managed CrowdSec installation.",
+  PROTECTION_STATE_CHANGED:
+    "The machine configuration changed. Refresh and review a new plan.",
+  PROTECTION_NOT_READY:
+    "Verify that CrowdSec and its SSH journal source are ready before enabling blocking.",
+  PROTECTION_TRIAL_EXPIRED:
+    "The blocking trial expired. Start a new trial after reviewing connectivity.",
+  PROTECTION_JOB_ACTIVE:
+    "Another protection job is active. Wait for its result before approving a new one.",
+  PROTECTION_PLAN_EXPIRED: "This plan expired. Review the change again.",
+  INVALID_PROTECTION_IP:
+    "Enter individual IPv4 or IPv6 addresses, without ranges or hostnames.",
+  TRUSTED_IP_REQUIRED:
+    "Enter at least one trusted administrator IP address before enabling blocking.",
+  SECURITY_BUILD_REQUIRED:
+    "Publish a current Ephor daemon bundle before enabling security collection. See docs/security.md.",
+  SECURITY_COLLECTOR_REQUIRED:
+    "Enable the security helper on this machine before requesting a scan.",
+  ACTIVE_MACHINE_REQUIRED:
+    "Security collection requires an active, enrolled machine.",
+  FINDING_NOT_OPEN:
+    "This finding has already been resolved or removed. Refresh to see its current status.",
+  INVALID_RISK_EXPIRY:
+    "Choose a future expiry date within the next year, or leave it empty.",
+  INVALID_FINDING_STATUS: "Choose an available finding status.",
+  INVALID_SECURITY_RETENTION: "Choose one of the available retention periods.",
   AI_AUTH_FAILED:
     "OpenRouter rejected this API key. Check the key and its permissions in AI settings.",
   AI_CREDITS_REQUIRED:
@@ -31,7 +74,17 @@ const messages: Record<string, string> = {
   INVALID_VARIABLE_REFERENCE:
     "Choose a supported service connection. References must fill the entire value.",
   CONNECTION_SOURCE_UNAVAILABLE:
-    "This connection is no longer available. Choose a PostgreSQL or Redis catalog service on the same machine.",
+    "This connection is no longer available. Choose a PostgreSQL, Redis or Qdrant catalog service on the same machine.",
+  STATEFUL_WORKER_REQUIRED:
+    "Upgrade this machine’s deployment worker to support persistent services and database resources.",
+  VOLUME_LAYOUT_LOCKED:
+    "Volume names and paths cannot change after a deployment is queued. Create a new service and migrate data to change storage layout.",
+  INVALID_VOLUMES:
+    "Use up to four named volumes with distinct absolute mount paths, outside system directories.",
+  INVALID_DATABASE_RESOURCES:
+    "Choose valid CPU/memory limits. Redis data memory must be at most 75% of container memory.",
+  STATEFUL_ROLLBACK_BLOCKED:
+    "Persistent services require explicit data recovery. Restore a backup into a separate service.",
   CONNECTION_WORKER_REQUIRED:
     "Update the deployment worker in machine settings to enable service connections.",
   INVALID_DISPLAY_NAME:
@@ -204,6 +257,32 @@ const messages: Record<string, string> = {
   REAUTH_REQUIRED: "Verify your identity with a passkey, then try again.",
   TOO_MANY_ATTEMPTS: "Too many attempts. Wait a minute, then try again.",
   PASSKEY_LIMIT: "You can register up to ten passkeys.",
+  PANEL_INVALID_VERSION:
+    "This repository has no valid recorded Ephor version. Follow the panel update setup guide.",
+  PANEL_INVALID_CONFIG:
+    "Choose your host and deployment method, then confirm the setup.",
+  PANEL_UPDATE_BUSY:
+    "Another update operation is in progress. Wait for it to finish or clear the current attempt.",
+  PANEL_REPOSITORY_CHANGED:
+    "The repository identity or production branch changed. Reconnect panel updates.",
+  PANEL_USE_DEPLOYMENT_COPY:
+    "Select your own Ephor deployment repository, not the official source repository.",
+  PANEL_NOT_CONFIGURED: "Connect your panel deployment repository first.",
+  PANEL_DEPLOYMENT_PENDING:
+    "The previous update is not running yet. Check your host’s deployment before preparing another update.",
+  PANEL_ALREADY_CURRENT:
+    "Your repository already contains the latest tested version. Check deployment status if the panel is older.",
+  PANEL_WORKFLOW_UPGRADE:
+    "Your repository needs the latest Update Ephor workflow. Follow the older-installation instructions in the panel update guide.",
+  PANEL_NOT_PREPARED:
+    "The update is still being prepared or preparation failed. Check the workflow status.",
+  PANEL_REVIEW_CHANGED:
+    "The reviewed changes or production branch changed. Clear this attempt and prepare a new update. Repository rules may also require review in GitHub.",
+  PANEL_MANUAL_REVIEW:
+    "This update changes protected configuration or is too large for automatic review. Review it in GitHub.",
+  PANEL_CHECKS_PENDING: "The update checks have not all passed yet.",
+  PANEL_MERGE_BLOCKED:
+    "GitHub blocked the merge. Resolve required checks or reviews, then retry.",
   UNAUTHORIZED: "Your session has ended. Please sign in again.",
 };
 export function errorMessage(code: string) {
@@ -227,6 +306,7 @@ export async function api<T>(path: string, body?: unknown): Promise<T> {
         path.startsWith("/machines") ||
         path.startsWith("/services") ||
         path.startsWith("/integrations") ||
+        path.startsWith("/panel") ||
         path.startsWith("/backups") ||
         path === "/session")
     ) {

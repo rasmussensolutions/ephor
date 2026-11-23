@@ -31,7 +31,8 @@ Domain changes apply on the next deployment. Reservations are kept even after re
 
 Open the app's **Variables** tab. **Connect a service** suggests `DATABASE_URL`
 for standalone PostgreSQL catalog services and `REDIS_URL` for Redis on the same
-machine. Select **Add**, save the variables, then deploy the app. Deploy the
+machine. Qdrant offers `QDRANT_URL`, `QDRANT_GRPC_URL` and `QDRANT_API_KEY`.
+Select **Add**, save the variables, then deploy the app. Deploy the
 database first. If the suggested variable name already exists, choose another
 name; suggestions never silently replace existing values. The variable editor
 also lets you select a service connection for an existing variable.
@@ -55,7 +56,8 @@ DNS](https://docs.docker.com/engine/network/drivers/bridge/); database ports rem
 bound to loopback on the host.
 
 Update the machine's deployment worker to protocol **5** before deploying an app
-with connections. Older workers cannot claim these deployments. Removing a link
+with PostgreSQL/Redis connections, or **6** for Qdrant connections and custom
+persistent services. Older workers cannot claim these deployments. Removing a link
 and deploying removes that network attachment from the new app container. Saved
 changes do not restart running services. Rollbacks retain their original resolved
 credentials and connections; future deployments resolve the current source
@@ -97,7 +99,35 @@ The worker persists a root-only journal before changes. On an interrupted operat
 
 Containers restart independently of the panel or worker. Panel/tunnel outages therefore do not stop services. Container restarts, host outages, and long-lived WebSocket/stream connections can still interrupt requests. This is single-machine deployment, not multi-node high availability. A later readiness failure is reported as unhealthy; it does not automatically roll back potentially legitimate application state changes. Docker restart policy restarts exited processes.
 
-Reviewed catalog apps support persistent volumes, private databases, and multi-container startup. Arbitrary persistent mounts on custom image/repository services, arbitrary background workers, one-off migrations, and automatic database rollback remain outside this implementation. Use external storage for custom services and backward-compatible migrations. Rolling back application code cannot undo a schema/data change.
+Reviewed catalog apps support persistent volumes, private databases, and multi-container startup. Custom image/repository services can also use managed persistent volumes (below). Arbitrary background workers, one-off migrations, and automatic database rollback remain outside this implementation. Use backward-compatible migrations. Rolling back application code cannot undo a schema/data change.
+
+### Custom persistent services
+
+In service creation, enter up to four named mounts, one per line, for example
+`data=/data`. The worker creates owned Docker volumes; host bind mounts, Docker
+sockets, system paths, overlapping paths and driver options are rejected. Mount
+layouts become immutable once a deployment is queued. Create a separate service
+and migrate data to change a layout or convert an already deployed stateless app.
+Containers run as UID/GID 65532 with a read-only root filesystem, writable `/tmp`,
+and owned data directories; images must work with these restrictions and expose
+an HTTP readiness endpoint. Configure `PORT` or the image's native settings as
+needed. Arbitrary entrypoint/command and user overrides are not supported.
+
+These services require protocol 6 and use stop/start maintenance windows. Each
+redeploy stops the existing writer cleanly and snapshots its data before starting
+the new image on the same volumes. There are never intentionally two application
+writers. Failed/interrupted operations retain data and require explicit recovery;
+missing provisioned volumes are never silently recreated. Ordinary stateless apps
+keep rolling deployments. Do not enable automatic deployments if you cannot accept
+these maintenance windows or application-owned schema migrations.
+
+**Setup & data** exposes stop/start, cold recovery points and restore. Code-only
+rollback is blocked. A local recovery point can be restored only with its matching
+image and environment; after changing either, use a compatible offsite backup to
+restore a separate service. Data restore uses new volumes and keeps the originals.
+Monitor disk space: retained recovery points and original volumes consume storage.
+For encrypted scheduled backups and source-machine-loss recovery see
+[Off-site backups](backups.md).
 
 ## Secrets and isolation
 
@@ -122,7 +152,15 @@ The helper is pinned separately at `/usr/local/libexec/ephor-services`; ordinary
 
 ## Development and validation
 
-Run `bun run auth:admin migrate` with the server environment loaded (the `dev:tunnel` launcher applies migrations). Workers deployments apply the SQLite migrations through Wrangler. Build/bundle the daemon with `bun run bundle:daemon x86_64` or `aarch64` before offering setup commands; the manifest must contain `serviceProtocol: 3`. A published monitor-only 0.1.2 build cannot execute service commands.
+Run `bun run auth:admin migrate` with the server environment loaded (the `dev:tunnel` launcher applies migrations). Apply `0024_persistent_workloads.sql` on PostgreSQL or SQLite/D1 before using persistent backup jobs. Workers deployments apply the SQLite migrations through Wrangler. Build both architectures with `bun run bundle:daemon` before building/deploying the panel; the manifest must contain `serviceProtocol: 6` for the new features. Upgrade each machine's deployment helper from Settings → Deployments. Monitoring-daemon updates alone do not replace it. Older workers remain usable for compatible existing jobs and cannot claim protocol-6 deployments or backups.
+
+For a source-built Cloudflare panel, run `EPHOR_DAEMON_LOCAL=1 bun run build:cloudflare`
+after bundling. This validates both local architecture checksums and protocol 6,
+instead of overwriting them with the currently pinned public release. Without that
+flag the template build intentionally uses the published release pin in
+`scripts/download-daemon.ts`; new-feature upgrade commands fail closed if that
+release is too old. Publishing a new immutable public daemon release and updating
+that pin is a separate release operation. Local compilation does not publish it.
 
 `bun test packages/api/test/services.test.ts packages/api/test/github-app.test.ts` covers browser/worker authorization, encrypted snapshots, per-machine isolation, queue transitions, cancellation, domain reservations, rollback, and GitHub OIDC signature/claims, App setup state, signed webhooks, scoped repository access, local/remote build credential separation, cancellation, supersession, and root/alias domain reservations. Repeat with `TEST_DATABASE_URL` for PostgreSQL. `cargo test --workspace` covers worker validation/config generation. The real Linux lifecycle test runs an isolated Docker-in-Docker engine, never the developer's Docker socket. Run `bun run test:services:linux`; it builds its fixture, exercises multiple services, TLS routing, failed readiness checks, restart-stable ports, crash recovery, uninterrupted requests during deployment/rollback, and stop. It also builds real Dockerfile and Railpack Node applications and runs them under production container restrictions, then removes the disposable engine. Real GitHub installation consent and public DNS/ACME issuance still require operator setup; fixtures do not grant third-party access.
 

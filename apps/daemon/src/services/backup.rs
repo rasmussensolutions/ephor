@@ -126,7 +126,7 @@ fn validate_task(t: &Task) -> Result<()> {
         );
         ensure!(
             job.id == t.id
-                && job.spec.catalog.is_some()
+                && job.spec.stateful()
                 && job.action
                     == if t.action == "backup" {
                         "backup"
@@ -160,6 +160,7 @@ fn staging(t: &Task) -> String {
 }
 fn pull_restic() -> Result<()> {
     let spec = Spec {
+        volumes: Vec::new(),
         connections: Vec::new(),
         catalog: None,
         image: RESTIC.into(),
@@ -257,6 +258,123 @@ fn snapshot_id(output: &str) -> Result<String> {
     );
     Ok(id.into())
 }
+// Local repository builds have no registry to pull from on a replacement host.
+// Preserve their immutable image inside the encrypted backup, without a host mount.
+fn transfer_local_image(t: &Task, stage: &str, restore: bool) -> Result<()> {
+    let Some(job) = &t.job else {
+        return Ok(());
+    };
+    if !job.spec.image.starts_with("ephor.local/") {
+        return Ok(());
+    }
+    let (namespace, digest) = job
+        .spec
+        .image
+        .split_once('@')
+        .context("Invalid local image")?;
+    let name = format!("ephor-image-transfer-{}", t.id);
+    let path = Path::new(STATE).join(format!("image-{}.tar", t.id));
+    catalog::remove_owned(&name, owner(t))?;
+    catalog::api(
+        reqwest::Method::POST,
+        &format!("/containers/create?name={name}"),
+        json!({
+            "Image":RESTIC,"User":"0:0","Entrypoint":["/bin/sh"],"Cmd":["-c","sleep 7200"],
+            "Labels":{"ephor.managed":"1","ephor.service":owner(t)},
+            "HostConfig":{"NetworkMode":"none","ReadonlyRootfs":true,"CapDrop":["ALL"],"SecurityOpt":["no-new-privileges"],"Memory":67108864,"PidsLimit":32,"Mounts":[catalog::mount(stage,"/transfer",restore)],"LogConfig":{"Type":"none"}}
+        }),
+    )?;
+    let result = (|| -> Result<()> {
+        d(&["start", &name], 30)?;
+        if restore {
+            d(
+                &[
+                    "exec",
+                    &name,
+                    "sh",
+                    "-ec",
+                    "cd /transfer/data; sha256sum -c IMAGE_SHA256SUMS",
+                ],
+                1800,
+            )?;
+            d(
+                &[
+                    "cp",
+                    &format!("{name}:/transfer/data/image.tar"),
+                    path.to_str().context("Image path")?,
+                ],
+                1800,
+            )?;
+            d(
+                &["load", "--input", path.to_str().context("Image path")?],
+                1800,
+            )?;
+            ensure!(
+                inspect(digest)?["Id"] == digest,
+                "Restored image identity mismatch"
+            );
+            // Retain an ownership tag for every restored image revision. A shared
+            // :restored tag would orphan older revisions when a second backup is restored.
+            d(
+                &[
+                    "tag",
+                    digest,
+                    &format!(
+                        "{namespace}:restored-{}",
+                        digest.trim_start_matches("sha256:")
+                    ),
+                ],
+                30,
+            )?;
+        } else {
+            pull(&job.spec)?;
+            let size = inspect(digest)?["Size"].as_u64().context("Image size")?;
+            let available = d(&["exec", &name, "df", "-Pk", "/transfer"], 30)?;
+            let free = available
+                .lines()
+                .last()
+                .and_then(|l| l.split_whitespace().nth(3))
+                .and_then(|v| v.parse::<u64>().ok())
+                .context("Image capacity")?
+                * 1024;
+            ensure!(
+                free > size.saturating_mul(3) + 1024 * 1024 * 1024,
+                "INSUFFICIENT_CAPACITY"
+            );
+            d(
+                &[
+                    "save",
+                    "--output",
+                    path.to_str().context("Image path")?,
+                    digest,
+                ],
+                1800,
+            )?;
+            d(
+                &[
+                    "cp",
+                    path.to_str().context("Image path")?,
+                    &format!("{name}:/transfer/image.tar"),
+                ],
+                1800,
+            )?;
+            d(
+                &[
+                    "exec",
+                    &name,
+                    "sh",
+                    "-ec",
+                    "cd /transfer; sha256sum image.tar > IMAGE_SHA256SUMS; sync",
+                ],
+                1800,
+            )?;
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_file(path);
+    let cleanup = catalog::remove_owned(&name, owner(t));
+    result.and(cleanup)
+}
 fn execute(t: &Task, state: &mut State, settings: &Settings) -> Result<Option<String>> {
     validate_task(t)?;
     pull_restic().context("Pull pinned Restic image")?;
@@ -282,6 +400,7 @@ fn execute(t: &Task, state: &mut State, settings: &Settings) -> Result<Option<St
             None,
             None,
         )?;
+        transfer_local_image(t, &stage, true)?;
         catalog::import(state, settings, job, source, &manifest, &stage)?;
         return Ok(None);
     }
@@ -310,6 +429,7 @@ fn execute(t: &Task, state: &mut State, settings: &Settings) -> Result<Option<St
         Some(&prepare),
         Some(&manifest),
     )?;
+    transfer_local_image(t, &stage, false)?;
     mounts.insert(0, catalog::mount(&stage, "/data", true));
     run(
         t,
@@ -341,6 +461,8 @@ fn execute(t: &Task, state: &mut State, settings: &Settings) -> Result<Option<St
     Ok(Some(snapshot))
 }
 fn cleanup(t: &Task) -> Result<()> {
+    catalog::remove_owned(&format!("ephor-image-transfer-{}", t.id), owner(t))?;
+    let _ = fs::remove_file(Path::new(STATE).join(format!("image-{}.tar", t.id)));
     catalog::remove_owned(&helper_name(t), owner(t))?;
     let volume = staging(t);
     let r = docker_client()?
@@ -411,7 +533,12 @@ pub(super) fn resume(client: &Client, settings: &Settings, state: &mut State) ->
     Ok(true)
 }
 pub(super) fn poll(client: &Client, settings: &Settings, state: &mut State) -> Result<bool> {
-    let response = post(client, settings, "backup-next", json!({"protocol":5}))?;
+    let response = post(
+        client,
+        settings,
+        "backup-next",
+        json!({"protocol":PROTOCOL}),
+    )?;
     if response["job"].is_null() {
         return Ok(false);
     }
@@ -544,6 +671,14 @@ mod tests {
     #[test]
     #[ignore = "requires isolated Linux Docker engine and internet"]
     fn restic_s3_roundtrip_after_source_loss() {
+        roundtrip(false);
+    }
+    #[test]
+    #[ignore = "requires isolated Linux Docker engine and internet"]
+    fn custom_restic_image_and_data_survive_source_loss() {
+        roundtrip(true);
+    }
+    fn roundtrip(custom: bool) {
         root().unwrap();
         directory(Path::new(STATE)).unwrap();
         let uid = || format!("{:032x}0000", rand::random::<u128>());
@@ -638,12 +773,34 @@ mod tests {
             .iter()
             .map(|v| (v.as_str().unwrap().to_owned(), "a".repeat(64)))
             .collect();
+        if custom {
+            job = super::super::persistence_tests::custom_job();
+        }
         apply(&mut state, &settings, &job).unwrap();
         state.journal = None;
         save(&state).unwrap();
         let source = job.service_id.clone();
-        let container = format!("ephor-app-{source}-database");
-        d(&["exec",&container,"psql","-U","ephor","-d","app","-c","CREATE TABLE durable(value text); INSERT INTO durable VALUES ('offsite survives');"],30).unwrap();
+        let component = if custom { "web" } else { "database" };
+        let container = format!("ephor-app-{source}-{component}");
+        if custom {
+            d(
+                &[
+                    "exec",
+                    &container,
+                    "sh",
+                    "-ec",
+                    "echo 'offsite survives' > /data/index.html",
+                ],
+                30,
+            )
+            .unwrap();
+            // A different restored revision already owns the legacy tag. Restoring
+            // this backup must not steal it and make that older image unrecognizable.
+            let namespace = job.spec.image.split_once('@').unwrap().0;
+            d(&["tag", RESTIC, &format!("{namespace}:restored")], 30).unwrap();
+        } else {
+            d(&["exec",&container,"psql","-U","ephor","-d","app","-c","CREATE TABLE durable(value text); INSERT INTO durable VALUES ('offsite survives');"],30).unwrap();
+        }
         t.id = uid();
         job.id = t.id.clone();
         job.action = "backup".into();
@@ -685,6 +842,18 @@ mod tests {
         {
             d(&["volume", "rm", name], 30).unwrap();
         }
+        if custom {
+            d(
+                &[
+                    "image",
+                    "rm",
+                    "-f",
+                    job.spec.image.split_once('@').unwrap().1,
+                ],
+                30,
+            )
+            .unwrap();
+        }
         let mut fresh = State::default();
         save(&fresh).unwrap();
         t.id = uid();
@@ -696,23 +865,34 @@ mod tests {
         job.action = "deploy".into();
         t.job = Some(job.clone());
         execute(&t, &mut fresh, &settings).expect("Restore from S3 with no original machine state");
+        if custom {
+            let namespace = job.spec.image.split_once('@').unwrap().0;
+            assert_eq!(
+                inspect(&format!("{namespace}:restored")).unwrap()["Id"],
+                inspect(RESTIC).unwrap()["Id"]
+            );
+        }
         cleanup(&t).unwrap();
-        let target = format!("ephor-app-{}-database", job.service_id);
-        let rows = d(
-            &[
-                "exec",
-                &target,
-                "psql",
-                "-U",
-                "ephor",
-                "-d",
-                "app",
-                "-tAc",
-                "SELECT value FROM durable",
-            ],
-            30,
-        )
-        .unwrap();
+        let target = format!("ephor-app-{}-{component}", job.service_id);
+        let rows = if custom {
+            d(&["exec", &target, "cat", "/data/index.html"], 30).unwrap()
+        } else {
+            d(
+                &[
+                    "exec",
+                    &target,
+                    "psql",
+                    "-U",
+                    "ephor",
+                    "-d",
+                    "app",
+                    "-tAc",
+                    "SELECT value FROM durable",
+                ],
+                30,
+            )
+            .unwrap()
+        };
         assert_eq!(rows, "offsite survives");
         assert!(fresh.services[&job.service_id].active.is_some());
         // Lost panel responses must retry only the durable receipt, never restore again.

@@ -32,6 +32,7 @@ import { Route as AuthenticatedMachinesMachineIdRouteImport } from './routes/_au
 import { Route as AuthenticatedNotificationsSettingsRouteImport } from './routes/_authenticated.notifications_.settings'
 import { Route as AuthenticatedProjectsProjectIdRouteImport } from './routes/_authenticated.projects_.$projectId'
 import { Route as AuthenticatedServicesServiceIdRouteImport } from './routes/_authenticated.services_.$serviceId'
+import { Route as AuthenticatedServicesNewRouteImport } from './routes/_authenticated.services_.new'
 import { Route as AuthenticatedSettingsIndexRouteImport } from './routes/_authenticated.settings.index'
 import { Route as AuthenticatedSettingsBackupsRouteImport } from './routes/_authenticated.settings.backups'
 import { Route as AuthenticatedSettingsIntegrationsRouteImport } from './routes/_authenticated.settings.integrations'
@@ -157,6 +158,12 @@ const AuthenticatedServicesServiceIdRoute =
     path: '/services/$serviceId',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
+const AuthenticatedServicesNewRoute =
+  AuthenticatedServicesNewRouteImport.update({
+    id: '/services_/new',
+    path: '/services/new',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
 const AuthenticatedSettingsIndexRoute =
   AuthenticatedSettingsIndexRouteImport.update({
     id: '/',
@@ -211,6 +218,7 @@ export interface FileRoutesByFullPath {
   '/notifications/settings': typeof AuthenticatedNotificationsSettingsRoute
   '/projects/$projectId': typeof AuthenticatedProjectsProjectIdRoute
   '/services/$serviceId': typeof AuthenticatedServicesServiceIdRoute
+  '/services/new': typeof AuthenticatedServicesNewRoute
   '/settings/backups': typeof AuthenticatedSettingsBackupsRoute
   '/settings/integrations': typeof AuthenticatedSettingsIntegrationsRoute
   '/settings/notifications': typeof AuthenticatedSettingsNotificationsRoute
@@ -239,6 +247,7 @@ export interface FileRoutesByTo {
   '/notifications/settings': typeof AuthenticatedNotificationsSettingsRoute
   '/projects/$projectId': typeof AuthenticatedProjectsProjectIdRoute
   '/services/$serviceId': typeof AuthenticatedServicesServiceIdRoute
+  '/services/new': typeof AuthenticatedServicesNewRoute
   '/settings/backups': typeof AuthenticatedSettingsBackupsRoute
   '/settings/integrations': typeof AuthenticatedSettingsIntegrationsRoute
   '/settings/notifications': typeof AuthenticatedSettingsNotificationsRoute
@@ -270,6 +279,7 @@ export interface FileRoutesById {
   '/_authenticated/notifications_/settings': typeof AuthenticatedNotificationsSettingsRoute
   '/_authenticated/projects_/$projectId': typeof AuthenticatedProjectsProjectIdRoute
   '/_authenticated/services_/$serviceId': typeof AuthenticatedServicesServiceIdRoute
+  '/_authenticated/services_/new': typeof AuthenticatedServicesNewRoute
   '/_authenticated/settings/backups': typeof AuthenticatedSettingsBackupsRoute
   '/_authenticated/settings/integrations': typeof AuthenticatedSettingsIntegrationsRoute
   '/_authenticated/settings/notifications': typeof AuthenticatedSettingsNotificationsRoute
@@ -301,6 +311,7 @@ export interface FileRouteTypes {
     | '/notifications/settings'
     | '/projects/$projectId'
     | '/services/$serviceId'
+    | '/services/new'
     | '/settings/backups'
     | '/settings/integrations'
     | '/settings/notifications'
@@ -329,6 +340,7 @@ export interface FileRouteTypes {
     | '/notifications/settings'
     | '/projects/$projectId'
     | '/services/$serviceId'
+    | '/services/new'
     | '/settings/backups'
     | '/settings/integrations'
     | '/settings/notifications'
@@ -359,6 +371,7 @@ export interface FileRouteTypes {
     | '/_authenticated/notifications_/settings'
     | '/_authenticated/projects_/$projectId'
     | '/_authenticated/services_/$serviceId'
+    | '/_authenticated/services_/new'
     | '/_authenticated/settings/backups'
     | '/_authenticated/settings/integrations'
     | '/_authenticated/settings/notifications'
@@ -536,6 +549,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedServicesServiceIdRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
+    '/_authenticated/services_/new': {
+      id: '/_authenticated/services_/new'
+      path: '/services/new'
+      fullPath: '/services/new'
+      preLoaderRoute: typeof AuthenticatedServicesNewRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
     '/_authenticated/settings/': {
       id: '/_authenticated/settings/'
       path: '/'
@@ -617,6 +637,7 @@ interface AuthenticatedRouteChildren {
   AuthenticatedNotificationsSettingsRoute: typeof AuthenticatedNotificationsSettingsRoute
   AuthenticatedProjectsProjectIdRoute: typeof AuthenticatedProjectsProjectIdRoute
   AuthenticatedServicesServiceIdRoute: typeof AuthenticatedServicesServiceIdRoute
+  AuthenticatedServicesNewRoute: typeof AuthenticatedServicesNewRoute
 }
 
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
@@ -640,6 +661,7 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
     AuthenticatedNotificationsSettingsRoute,
   AuthenticatedProjectsProjectIdRoute: AuthenticatedProjectsProjectIdRoute,
   AuthenticatedServicesServiceIdRoute: AuthenticatedServicesServiceIdRoute,
+  AuthenticatedServicesNewRoute: AuthenticatedServicesNewRoute,
 }
 
 const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(

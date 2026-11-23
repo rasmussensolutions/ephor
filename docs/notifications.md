@@ -51,6 +51,16 @@ send a recovery notification. Storage checks, restores, and failed deployments
 produce one notification per completed operation. Turning an overdue plan to Manual
 closes its freshness incident without claiming a successful recovery.
 
+**Security findings digest** groups new high/critical findings across services and
+machines into at most one notification every 24 hours, using the same independent
+in-app/email preferences. Scans settle for five minutes before inclusion. New
+findings during the cooldown wait for the next digest; unchanged scans do not send
+reminders. Stopped/disconnected resources are excluded. Coverage-loss alerts remain
+separate. Old per-CVE alerts are marked read; queued legacy emails are cancelled
+and their credentials discarded. History is retained, and already-submitted mail
+cannot be recalled. This replacement does not disable backup, outage, deployment,
+or other notification types.
+
 ## Background execution and delivery
 
 The Node/Bun panel runs the processor on startup and every minute. Cloudflare uses

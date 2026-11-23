@@ -179,11 +179,12 @@ export class MachineStore {
     const id = crypto.randomUUID();
     const token = randomToken();
     const workerToken = randomToken();
+    const securityToken = randomToken();
     const expiresAt = Date.now() + ENROLLMENT_MS;
     // Bound ordinary growth, including abandoned enrollments. Concurrent inserts may slightly exceed this soft cap.
     const rows = await this.sql.query(
-      `INSERT INTO ephor_machine (id, name, state, enrollment_hash, enrollment_expires, created_at, worker_enrollment_hash)
-       SELECT $1, $2, 'pending', $3, $4, $5, $6 WHERE (SELECT COUNT(*) FROM ephor_machine) < 1000 RETURNING id`,
+      `INSERT INTO ephor_machine (id, name, state, enrollment_hash, enrollment_expires, created_at, worker_enrollment_hash, security_enrollment_hash)
+       SELECT $1, $2, 'pending', $3, $4, $5, $6, $7 WHERE (SELECT COUNT(*) FROM ephor_machine) < 1000 RETURNING id`,
       [
         id,
         validatedName,
@@ -191,10 +192,11 @@ export class MachineStore {
         expiresAt,
         Date.now(),
         await hash(workerToken),
+        await hash(securityToken),
       ],
     );
     if (!rows.length) throw new AuthError("MACHINE_LIMIT", 409);
-    return { id, token, workerToken, expiresAt };
+    return { id, token, workerToken, securityToken, expiresAt };
   }
 
   async regenerateEnrollment(id: unknown) {
@@ -202,14 +204,21 @@ export class MachineStore {
       throw new AuthError("INVALID_ID");
     const token = randomToken();
     const workerToken = randomToken();
+    const securityToken = randomToken();
     const expiresAt = Date.now() + ENROLLMENT_MS;
     const rows = await this.sql.query(
-      `UPDATE ephor_machine SET enrollment_hash = $1, enrollment_expires = $2, worker_enrollment_hash = $4
+      `UPDATE ephor_machine SET enrollment_hash = $1, enrollment_expires = $2, worker_enrollment_hash = $4, security_enrollment_hash = $5
        WHERE id = $3 AND state = 'pending' RETURNING id`,
-      [await hash(token), expiresAt, id, await hash(workerToken)],
+      [
+        await hash(token),
+        expiresAt,
+        id,
+        await hash(workerToken),
+        await hash(securityToken),
+      ],
     );
     if (!rows.length) throw new AuthError("ENROLLMENT_NOT_PENDING", 409);
-    return { id, token, workerToken, expiresAt };
+    return { id, token, workerToken, securityToken, expiresAt };
   }
 
   async enroll(token: string, credential: unknown) {
@@ -377,6 +386,7 @@ export interface MachineList {
     architectures: string[];
     https: boolean;
     deployments: boolean;
+    security: boolean;
   };
 }
 

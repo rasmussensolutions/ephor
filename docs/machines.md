@@ -62,7 +62,9 @@ The command downloads the installer to a temporary file. The installer downloads
 the binary from **your panel**, verifies the pinned SHA-256 hash, creates the
 `ephord` system user, enrolls as that user, and installs/enables `ephord.service`.
 It also installs Docker Engine 28+, Buildx, Git, checksummed Railpack, and the
-separate `ephor-services.service` deployment worker. Dependency installation is
+separate `ephor-services.service` deployment worker. It installs the checksummed
+Trivy scanner and enables `ephor-security.service` with its own credential and
+root-owned state directory. Dependency installation is
 automatic on Ubuntu and Debian using Docker's official apt repository. Other
 Linux distributions need Docker, Buildx, and Git preinstalled. Existing Docker
 installations are validated, not replaced; conflicting runtime packages require
@@ -70,10 +72,12 @@ manual setup. [Docker installation reference](https://docs.docker.com/engine/ins
 
 The machine appears as pending, then connecting, then online once its first
 sample arrives. Let the command finish: monitoring can appear before deployments
-are ready. Machine Settings shows deployment readiness and provides a repair
-command if worker setup fails after monitoring has connected.
+and Security are ready. Machine Settings shows deployment readiness and provides
+a repair command if worker setup fails. The Security tab shows collector status
+and provides its own setup/repair command. A failed helper does not prevent the
+other helper from being attempted or remove successful monitoring enrollment.
 
-The enrollment command contains separate monitoring and deployment enrollment secrets. It is shown once, not stored in browser
+The enrollment command contains separate monitoring, deployment and Security enrollment secrets. It is shown once, not stored in browser
 storage, and may remain in your clipboard or shell history. It expires in ten
 minutes, can claim only one machine, and can be cancelled with Disconnect. Closing
 the add dialog preserves the command until you leave the page; losing it means
@@ -323,3 +327,15 @@ invalidates both. The worker can claim its grant only after monitoring enrollmen
 activates the machine; monitoring credentials cannot claim it. Owner-issued repair
 grants take precedence over the original bootstrap grant. Apply this migration to
 PostgreSQL or D1 before running the updated API.
+
+## Automatic Security enrollment
+
+Migration `0021_machine_security_enrollment.sql` adds an independent hashed
+Security grant to initial enrollment. New commands include three tickets with
+the same ten-minute expiry. The Security ticket becomes claimable only after
+monitoring activates the machine. It cannot be used for monitoring or deployments.
+The collector still uses `ephor-security.service` and its own credentials under
+`/var/lib/ephor-security`; monitoring stays unprivileged. Explicit collector repair
+or revocation supersedes the initial grant. Regenerate any pending command issued
+before this change. Already enrolled machines can enable Security from their
+Security tab. See [Security](security.md) for collection scope and repair details.

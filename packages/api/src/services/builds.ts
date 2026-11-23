@@ -5,6 +5,7 @@ import type { GitHubApp } from "./github-app";
 import {
   IMAGE,
   object,
+  requiredProtocol,
   type ServiceSource,
   type ServiceSpec,
   serviceId,
@@ -142,12 +143,19 @@ export class Builds {
       this.services.secrets,
     ).resolve(row, config);
     if (
-      config.connections?.length &&
+      requiredProtocol(config) >= 5 &&
       !workers.some(
-        (w) => w.machine_id === row.machine_id && Number(w.version) >= 5,
+        (w) =>
+          w.machine_id === row.machine_id &&
+          Number(w.version) >= requiredProtocol(config),
       )
     )
-      throw new AuthError("CONNECTION_WORKER_REQUIRED", 409);
+      throw new AuthError(
+        requiredProtocol(config) >= 6
+          ? "STATEFUL_WORKER_REQUIRED"
+          : "CONNECTION_WORKER_REQUIRED",
+        409,
+      );
     let registry: ServiceSpec["registry"] | undefined;
     const buildId = crypto.randomUUID();
     let image = `ephor.local/${row.id}:${buildId}`;
@@ -434,7 +442,7 @@ export class Builds {
         Date.now(),
         source.sha,
         build.domains,
-        config.connections?.length ? 5 : 2,
+        requiredProtocol(config),
       ],
     );
     await this.sql.query(

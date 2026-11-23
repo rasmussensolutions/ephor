@@ -8,6 +8,7 @@ export interface CatalogSpec {
   template: string;
   version: number;
   protected: boolean;
+  resources?: { memoryMb: number; cpus: number; redisMaxmemoryMb?: number };
 }
 export interface CatalogRuntime {
   components: {
@@ -88,6 +89,32 @@ export function validateCatalog(config: ServiceSpec) {
     t = template(c.template, c.version),
     main = t.components.at(-1);
   if (!main) throw new AuthError("INVALID_CATALOG_TEMPLATE");
+  if (c.resources !== undefined) {
+    const r = c.resources;
+    if (
+      !r ||
+      typeof r !== "object" ||
+      Array.isArray(r) ||
+      !["postgres", "redis", "qdrant"].includes(c.template) ||
+      Object.keys(r).some(
+        (k) => !["memoryMb", "cpus", "redisMaxmemoryMb"].includes(k),
+      ) ||
+      !Number.isInteger(r.memoryMb) ||
+      r.memoryMb < 128 ||
+      r.memoryMb > 65536 ||
+      !Number.isFinite(r.cpus) ||
+      r.cpus < 0.1 ||
+      r.cpus > 32 ||
+      (c.template === "redis"
+        ? !Number.isInteger(r.redisMaxmemoryMb) ||
+          (r.redisMaxmemoryMb ?? 0) < 16 ||
+          (r.redisMaxmemoryMb ?? 0) > Math.floor(r.memoryMb * 0.75)
+        : r.redisMaxmemoryMb !== undefined)
+    )
+      throw new AuthError("INVALID_DATABASE_RESOURCES");
+    config.memoryMb = r.memoryMb;
+    config.cpus = r.cpus;
+  }
   if (
     c.version !== t.version ||
     typeof c.protected !== "boolean" ||

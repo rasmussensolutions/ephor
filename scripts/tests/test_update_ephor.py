@@ -87,6 +87,13 @@ class UpdateTests(unittest.TestCase):
             updater.prepare(self.changed_target("wrangler.jsonc"))
         self.assertEqual(self.git("status", "--porcelain"), "")
 
+    def test_vps_and_railway_configuration_changes_require_manual_migration(self):
+        for path in ("deploy/docker/compose.yaml", "railway.json", "railway.toml"):
+            with self.subTest(path=path):
+                with self.assertRaisesRegex(ValueError, "configuration migration"):
+                    updater.prepare(self.changed_target(path))
+                self.assertEqual(self.git("status", "--porcelain"), "")
+
     def test_existing_migrations_cannot_be_rewritten(self):
         with self.assertRaisesRegex(ValueError, "Existing migration"):
             updater.prepare(self.changed_target("packages/api/migrations/0001.sql"))

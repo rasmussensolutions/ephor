@@ -22,7 +22,13 @@ import {
 } from "./auth/store";
 import { machineMetricsHistory } from "./machines/metrics";
 import { notificationOwnerRoutes } from "./notifications/routes";
+import { panelOwnerRoutes } from "./panel/routes";
 import { projectOwnerRoutes } from "./projects/routes";
+import {
+  protectionOwnerRoutes,
+  protectionPublicRoutes,
+} from "./protections/routes";
+import { securityOwnerRoutes, securityPublicRoutes } from "./security/routes";
 
 export { processNotifications } from "./notifications/store";
 
@@ -113,6 +119,13 @@ export function createApi(
           "/api/agent/services/build-report",
           "/api/agent/services/backup-next",
           "/api/agent/services/backup-report",
+          "/api/agent/protections/enroll",
+          "/api/agent/protections/next",
+          "/api/agent/protections/report",
+          "/api/agent/security/enroll",
+          "/api/agent/security/next",
+          "/api/agent/security/report",
+          "/api/agent/security/events",
           "/api/integrations/github/webhook",
         ].includes(c.req.path) ||
         /^\/api\/deploy\/github\/[a-f0-9-]{36}(?:\/status)?$/.test(c.req.path);
@@ -131,7 +144,9 @@ export function createApi(
       maxSize:
         c.req.path === "/api/integrations/github/webhook"
           ? 2 * 1024 * 1024
-          : 32 * 1024,
+          : c.req.path === "/api/agent/security/report"
+            ? 512 * 1024
+            : 32 * 1024,
       onError: (c) => c.json({ code: "BODY_TOO_LARGE" }, 413),
     })(c, next),
   );
@@ -141,6 +156,8 @@ export function createApi(
     if (
       c.req.path === "/api/agent/telemetry" ||
       c.req.path.startsWith("/api/agent/updates/") ||
+      c.req.path.startsWith("/api/agent/protections/") ||
+      c.req.path.startsWith("/api/agent/security/") ||
       c.req.path.startsWith("/api/agent/services/")
     )
       return next();
@@ -370,6 +387,8 @@ export function createApi(
 
   servicePublicRoutes(app, env, clientIP);
   integrationPublicRoutes(app, env);
+  securityPublicRoutes(app, env, clientIP);
+  protectionPublicRoutes(app, env, clientIP);
 
   // All future machine/service routes belong under this authenticated boundary.
   app.use("/api/*", async (c, next) => {
@@ -388,7 +407,10 @@ export function createApi(
   backupOwnerRoutes(app, env);
   notificationOwnerRoutes(app, env);
   integrationOwnerRoutes(app, env);
+  panelOwnerRoutes(app, env);
   aiOwnerRoutes(app, env);
+  securityOwnerRoutes(app, env);
+  protectionOwnerRoutes(app, env);
   app.post("/api/machines/updates/check", async (c) => {
     await store.limit("release-check", 2);
     await releases.check(true);
@@ -409,12 +431,12 @@ export function createApi(
     const { envelope: _envelope, ...releaseInfo } = await releases.read();
     let architectures: string[] = [];
     let deployments = false;
+    let security = false;
     try {
       const release = await daemonRelease();
       deployments = Number(release.serviceProtocol) >= 2;
-      architectures = Object.keys(release).filter(
-        (key) => key !== "updaterProtocol" && key !== "serviceProtocol",
-      );
+      security = release.securityProtocol === 1;
+      architectures = ["x86_64", "aarch64"].filter((key) => key in release);
     } catch {
       /* Deployment has not bundled a daemon yet. */
     }
@@ -433,9 +455,11 @@ export function createApi(
       installer: {
         available:
           deployments &&
+          security &&
           architectures.length > 0 &&
           env.origin.startsWith("https:"),
         deployments,
+        security,
         architectures,
         https: env.origin.startsWith("https:"),
       },
@@ -482,6 +506,8 @@ export function createApi(
       enrollmentRelease.serviceProtocol < 2
     )
       throw new AuthError("SERVICE_BUILD_REQUIRED", 409);
+    if (enrollmentRelease.securityProtocol !== 1)
+      throw new AuthError("SECURITY_BUILD_REQUIRED", 409);
     await store.limit("machine-enrollment:issue", 10);
     const body = await c.req.json<{ name?: unknown; id?: unknown }>();
     const result =
@@ -492,7 +518,12 @@ export function createApi(
     return c.json({
       id: result.id,
       expiresAt: result.expiresAt,
-      command: installCommand(env.origin, result.token, result.workerToken),
+      command: installCommand(
+        env.origin,
+        result.token,
+        result.workerToken,
+        result.securityToken,
+      ),
     });
   });
   app.post("/api/machines/enrollments/cancel", async (c) => {

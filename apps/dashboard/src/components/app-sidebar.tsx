@@ -1,3 +1,4 @@
+import { CubeIcon, FolderOpenIcon, GridFourIcon } from "@phosphor-icons/react";
 import { ArchiveIcon } from "@phosphor-icons/react/dist/csr/Archive";
 import { ArrowCircleUpIcon } from "@phosphor-icons/react/dist/csr/ArrowCircleUp";
 import { ArrowLeftIcon } from "@phosphor-icons/react/dist/csr/ArrowLeft";
@@ -6,7 +7,6 @@ import { ChatCircleDotsIcon } from "@phosphor-icons/react/dist/csr/ChatCircleDot
 import { ClockCounterClockwiseIcon } from "@phosphor-icons/react/dist/csr/ClockCounterClockwise";
 import { FlowArrowIcon } from "@phosphor-icons/react/dist/csr/FlowArrow";
 import { GearSixIcon } from "@phosphor-icons/react/dist/csr/GearSix";
-import { HardDrivesIcon } from "@phosphor-icons/react/dist/csr/HardDrives";
 import { HouseIcon } from "@phosphor-icons/react/dist/csr/House";
 import { MagicWandIcon } from "@phosphor-icons/react/dist/csr/MagicWand";
 import { MoonIcon } from "@phosphor-icons/react/dist/csr/Moon";
@@ -14,9 +14,8 @@ import { PlugsIcon } from "@phosphor-icons/react/dist/csr/Plugs";
 import { PulseIcon } from "@phosphor-icons/react/dist/csr/Pulse";
 import { ScrollIcon } from "@phosphor-icons/react/dist/csr/Scroll";
 import { ShieldCheckIcon } from "@phosphor-icons/react/dist/csr/ShieldCheck";
+import { SidebarSimpleIcon } from "@phosphor-icons/react/dist/csr/SidebarSimple";
 import { SignOutIcon } from "@phosphor-icons/react/dist/csr/SignOut";
-import { SquaresFourIcon } from "@phosphor-icons/react/dist/csr/SquaresFour";
-import { StackIcon } from "@phosphor-icons/react/dist/csr/Stack";
 import { Link, useRouterState } from "@tanstack/react-router";
 import { useState } from "react";
 import {
@@ -31,7 +30,6 @@ import {
   SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarRail,
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
@@ -51,15 +49,16 @@ const navigationGroups = [
   {
     label: "Servers",
     items: [
-      { title: "Machines", to: "/machines", icon: HardDrivesIcon },
-      { title: "Services", to: "/services", icon: StackIcon },
-      { title: "Projects", to: "/projects", icon: SquaresFourIcon },
+      { title: "Machines", to: "/machines", icon: CubeIcon },
+      { title: "Services", to: "/services", icon: GridFourIcon },
+      { title: "Projects", to: "/projects", icon: FolderOpenIcon },
       { title: "Updates", to: "/updates", icon: ArrowCircleUpIcon },
     ],
   },
   {
     label: "Operations",
     items: [
+      { title: "Security", to: "/security", icon: ShieldCheckIcon },
       { title: "Monitors", to: "/monitors", icon: PulseIcon },
       { title: "Logs", to: "/logs", icon: ScrollIcon },
       { title: "Workflows", to: "/workflows", icon: FlowArrowIcon },
@@ -84,6 +83,16 @@ const settingsNavigationGroups = [
   },
 ] as const;
 
+const sidebarLogo = (
+  <img
+    src="/logo.png"
+    alt=""
+    width={22}
+    height={22}
+    className="size-5.5 pointer-events-none max-w-none shrink-0 object-contain dark:invert"
+  />
+);
+
 export function AppSidebar({
   signingOut,
   onSignOut,
@@ -98,6 +107,7 @@ export function AppSidebar({
     pathname === "/settings" || pathname.startsWith("/settings/");
   const groups = inSettings ? settingsNavigationGroups : navigationGroups;
   const { isMobile, open, setOpenMobile } = useSidebar();
+  const collapsed = !isMobile && !open;
   const unread = useUnreadNotifications();
   const [darkMode, setDarkMode] = useState(
     () =>
@@ -119,21 +129,17 @@ export function AppSidebar({
   return (
     <Sidebar collapsible="icon" variant="inset">
       <SidebarHeader>
-        <div className="flex items-center gap-2 group-data-[collapsible=icon]:flex-col">
-          <SidebarMenu>
-            <SidebarMenuItem className="flex flex-row items-center gap-2 px-2">
-              <img
-                src="/logo.png"
-                alt=""
-                width={32}
-                height={32}
-                className="size-5.5 dark:invert"
-              />
-              <span className="text-xl font-medium tracking-tight">Ephor</span>
-            </SidebarMenuItem>
-          </SidebarMenu>
+        <div className="flex h-8 items-center gap-2">
+          {!collapsed && (
+            <div className="flex min-w-0 flex-1 items-center gap-2 pl-2 select-none">
+              {sidebarLogo}
+              <span className="truncate text-lg font-medium tracking-tight">
+                Ephor
+              </span>
+            </div>
+          )}
           <SidebarTrigger
-            className="shrink-0"
+            className={collapsed ? "size-8 cursor-pointer" : undefined}
             aria-label={
               isMobile
                 ? "Close navigation"
@@ -141,7 +147,16 @@ export function AppSidebar({
                   ? "Collapse sidebar"
                   : "Expand sidebar"
             }
-          />
+          >
+            {collapsed ? (
+              <span aria-hidden="true" className="grid place-items-center">
+                <span className="col-start-1 row-start-1 group-hover/button:invisible group-focus-visible/button:invisible">
+                  {sidebarLogo}
+                </span>
+                <SidebarSimpleIcon className="invisible col-start-1 row-start-1 group-hover/button:visible group-focus-visible/button:visible" />
+              </span>
+            ) : null}
+          </SidebarTrigger>
         </div>
       </SidebarHeader>
       <SidebarContent>
@@ -204,7 +219,10 @@ export function AppSidebar({
                         </SidebarMenuButton>
                         {hasUnread && (
                           <>
-                            <SidebarMenuBadge aria-hidden="true">
+                            <SidebarMenuBadge
+                              className="bg-sidebar-accent"
+                              aria-hidden="true"
+                            >
                               {unread > 99 ? "99+" : unread}
                             </SidebarMenuBadge>
                             <span
@@ -268,7 +286,6 @@ export function AppSidebar({
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarFooter>
-      <SidebarRail />
     </Sidebar>
   );
 }

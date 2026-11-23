@@ -266,6 +266,44 @@
       ],
       "secrets": ["DB_PASSWORD", "APP_SECRET", "ACCESS_PASSWORD"],
       "notes": "Behind setup protection, sign in as admin with password umami and immediately change that password before publishing."
+    },
+    {
+      "id": "qdrant",
+      "version": 1,
+      "name": "Qdrant",
+      "category": "Databases",
+      "description": "Private Qdrant 1.19 with authenticated HTTP/gRPC and persistent storage.",
+      "technology": null,
+      "web": false,
+      "components": [
+        {
+          "id": "qdrant",
+          "image": "docker.io/qdrant/qdrant@sha256:057ee3a8da769fe7310dd3537b4dc7583bf87a95ce8ac43c0af5a46bc580d1fc",
+          "port": 6333,
+          "memoryMb": 1024,
+          "cpus": 1,
+          "user": "1000:1000",
+          "environment": {
+            "QDRANT__SERVICE__API_KEY": "${API_KEY}",
+            "QDRANT__TELEMETRY_DISABLED": "true",
+            "QDRANT__STORAGE__SNAPSHOTS_PATH": "/qdrant/storage/snapshots"
+          },
+          "volumes": [
+            {
+              "key": "storage",
+              "target": "/qdrant/storage",
+              "uid": 1000
+            }
+          ],
+          "health": ["NONE"],
+          "command": [],
+          "capabilities": [],
+          "tmpfs": {},
+          "internal": false
+        }
+      ],
+      "secrets": ["API_KEY"],
+      "notes": "HTTP port 6333 and gRPC port 6334 are available on the private service network. Send API_KEY as the api-key header. Backups stop the database."
     }
   ]
 }

@@ -3,7 +3,10 @@ import { deploymentDependencies } from "../services/dependencies";
 import { HEX_KEY } from "./releases";
 
 export interface DaemonRelease {
-  serviceProtocol?: 1 | 2 | 3 | 4 | 5;
+  securityProtocol?: 1;
+  protectionProtocol?: 1;
+  managedUpdatesProtocol?: 1 | 2;
+  serviceProtocol?: 1 | 2 | 3 | 4 | 5 | 6;
   updaterProtocol?: 1;
   x86_64?: string;
   aarch64?: string;
@@ -13,6 +16,13 @@ export function releaseManifest(value: unknown): DaemonRelease {
     throw new AuthError("DAEMON_NOT_AVAILABLE", 503);
   const manifest = value as Record<string, unknown>;
   const result: DaemonRelease = {};
+  if (
+    manifest.managedUpdatesProtocol === 1 ||
+    manifest.managedUpdatesProtocol === 2
+  )
+    result.managedUpdatesProtocol = manifest.managedUpdatesProtocol;
+  if (manifest.protectionProtocol === 1) result.protectionProtocol = 1;
+  if (manifest.securityProtocol === 1) result.securityProtocol = 1;
   for (const arch of ["x86_64", "aarch64"] as const) {
     const digest = manifest[arch];
     if (typeof digest === "string" && /^[a-f0-9]{64}$/.test(digest))
@@ -26,7 +36,8 @@ export function releaseManifest(value: unknown): DaemonRelease {
     manifest.serviceProtocol === 2 ||
     manifest.serviceProtocol === 3 ||
     manifest.serviceProtocol === 4 ||
-    manifest.serviceProtocol === 5
+    manifest.serviceProtocol === 5 ||
+    manifest.serviceProtocol === 6
   )
     result.serviceProtocol = manifest.serviceProtocol;
   return result;
@@ -38,9 +49,10 @@ export function installCommand(
   origin: string,
   token: string,
   workerToken: string,
+  securityToken: string,
 ) {
   // sudo authenticates before the pipe, so it cannot consume the enrollment token as a password.
-  return String.raw`(set -eu; installer=$(mktemp); trap 'rm -f "$installer"' EXIT; curl --fail --silent --show-error --proto '=https' ${shellQuote(`${origin}/api/agent/install.sh`)} -o "$installer"; token=${shellQuote(token)}; worker_token=${shellQuote(workerToken)}; if [ "$(id -u)" = 0 ]; then printf '%s\n' "$token" "$worker_token" | sh "$installer"; else sudo -v; printf '%s\n' "$token" "$worker_token" | sudo sh "$installer"; fi)`;
+  return String.raw`(set -eu; installer=$(mktemp); trap 'rm -f "$installer"' EXIT; curl --fail --silent --show-error --proto '=https' ${shellQuote(`${origin}/api/agent/install.sh`)} -o "$installer"; token=${shellQuote(token)}; worker_token=${shellQuote(workerToken)}; security_token=${shellQuote(securityToken)}; if [ "$(id -u)" = 0 ]; then printf '%s\n' "$token" "$worker_token" "$security_token" | sh "$installer"; else sudo -v; printf '%s\n' "$token" "$worker_token" "$security_token" | sudo sh "$installer"; fi)`;
 }
 
 export function installer(
@@ -50,6 +62,8 @@ export function installer(
 ) {
   if (!origin.startsWith("https://"))
     throw new AuthError("HTTPS_REQUIRED", 409);
+  if (release.securityProtocol !== 1)
+    throw new AuthError("SECURITY_BUILD_REQUIRED", 409);
   return `#!/bin/sh
 set -eu
 umask 077
@@ -74,6 +88,9 @@ case "$token" in *[!a-f0-9]*) echo 'Invalid enrollment token.' >&2; exit 1 ;; es
 IFS= read -r worker_token || { echo 'Generate a new enrollment command in Ephor.' >&2; exit 1; }
 [ "$(printf %s "$worker_token" | wc -c)" -eq 64 ] || { echo 'Invalid deployment enrollment token.' >&2; exit 1; }
 case "$worker_token" in *[!a-f0-9]*) echo 'Invalid deployment enrollment token.' >&2; exit 1 ;; esac
+IFS= read -r security_token || { echo 'Generate a new enrollment command in Ephor to include Security.' >&2; exit 1; }
+[ "$(printf %s "$security_token" | wc -c)" -eq 64 ] || { echo 'Invalid security enrollment token.' >&2; exit 1; }
+case "$security_token" in *[!a-f0-9]*) echo 'Invalid security enrollment token.' >&2; exit 1 ;; esac
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 curl --fail --silent --show-error --proto '=https' --connect-timeout 15 --max-time 300 ${shellQuote(`${origin}/daemon/`)}"ephord-linux-$arch" -o "$tmp/ephord"
@@ -83,6 +100,7 @@ if id ephord >/dev/null 2>&1; then
   echo 'The ephord account already exists. Follow the documented reinstall procedure.' >&2; exit 1
 fi
 curl --fail --silent --show-error --proto '=https' --connect-timeout 15 --max-time 300 ${shellQuote(`${origin}/api/agent/services/install.sh`)} -o "$tmp/services.sh"
+curl --fail --silent --show-error --proto '=https' --connect-timeout 15 --max-time 300 ${shellQuote(`${origin}/api/agent/security/install.sh`)} -o "$tmp/security.sh"
 ${deploymentDependencies()}
 useradd --system --user-group --home-dir /var/lib/ephord --shell /usr/sbin/nologin ephord
 install -d -o ephord -g ephord -m 0700 /var/lib/ephord
@@ -123,13 +141,20 @@ UNIT
 chmod 0644 /etc/systemd/system/ephord.service
 systemctl daemon-reload
 systemctl enable --now ephord.service
+setup_failed=0
+if ! printf '%s\\n' "$security_token" | sh "$tmp/security.sh"; then
+  echo 'Monitoring connected, but Security setup failed. Open this machine’s Security tab in Ephor and get a setup or repair command.' >&2
+  setup_failed=1
+fi
+unset security_token
 if ! printf '%s\\n' "$worker_token" | sh "$tmp/services.sh"; then
   echo 'Monitoring connected, but deployment setup failed. Open this machine’s Settings in Ephor and get a deployment repair command.' >&2
-  exit 1
+  setup_failed=1
 fi
 unset worker_token
 ${publicKey && release.updaterProtocol === 1 ? updaterSetup(origin, publicKey, "/usr/local/bin/ephord") : ""}
-echo 'Ephor connected and ready for deployments. Metrics will appear shortly.'
+[ "$setup_failed" -eq 0 ] || exit 1
+echo 'Ephor connected. Monitoring, deployments and Security are enabled. Reports will appear shortly.'
 `;
 }
 

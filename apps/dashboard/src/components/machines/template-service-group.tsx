@@ -2,6 +2,7 @@ import { SquaresFourIcon } from "@phosphor-icons/react/dist/csr/SquaresFour";
 import { ServiceIcon } from "@/components/services/service-icon";
 import { ServiceStatus } from "@/components/services/service-status";
 import { groupGridOffset } from "@/lib/map-grid";
+import type { Project } from "@/lib/projects";
 import {
   componentCardHeight,
   componentLabel,
@@ -24,10 +25,12 @@ import {
 import { MapDraggable } from "./map-draggable";
 import { ServiceCardUsage } from "./service-card-usage";
 import { ServiceGroupEditor } from "./service-group-editor";
+import { ServiceProjectBadge } from "./service-project-badge";
 
 export function TemplateServiceGroup({
   service,
   data,
+  project,
   onOpen,
   zoom,
   onMove,
@@ -36,6 +39,7 @@ export function TemplateServiceGroup({
 }: {
   service: Service;
   data: ServiceList;
+  project?: Project;
   zoom: number;
   onMove: (component: string, point: MapPoint) => void;
   onCommit: (component: string, point: MapPoint) => void;
@@ -91,6 +95,7 @@ export function TemplateServiceGroup({
               {groupName}
             </span>
           </button>
+          <ServiceProjectBadge project={project} />
           <span className="text-[11px] text-muted-foreground">
             {appStatus !== "Running" ? (
               <ServiceStatus status={appStatus} />
@@ -198,9 +203,12 @@ export function TemplateServiceGroup({
                     )}
                   </span>
                 </span>
-                <ServiceStatus
-                  status={componentStatus(service, component.name)}
-                />
+                <div className="flex min-w-0 items-center justify-between gap-2">
+                  <ServiceStatus
+                    status={componentStatus(service, component.name)}
+                  />
+                  {!grouped && <ServiceProjectBadge project={project} />}
+                </div>
               </div>
               {!(isPrimary && primaryHasDomains(service)) && (
                 <span

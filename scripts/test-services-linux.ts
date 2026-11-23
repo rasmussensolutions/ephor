@@ -15,6 +15,19 @@ await run([
   "deploy/daemon/services-test.Dockerfile",
   ".",
 ]);
+const security = process.argv[2] === "security::";
+if (security)
+  await run([
+    "docker",
+    "buildx",
+    "build",
+    "--load",
+    "-t",
+    "ephor-security-test",
+    "-f",
+    "deploy/daemon/security-test.Dockerfile",
+    ".",
+  ]);
 try {
   await run([
     "docker",
@@ -25,7 +38,7 @@ try {
     name,
     "--env",
     "DOCKER_TLS_CERTDIR=",
-    "ephor-services-test",
+    security ? "ephor-security-test" : "ephor-services-test",
     "dockerd",
     "--host=unix:///var/run/docker.sock",
   ]);

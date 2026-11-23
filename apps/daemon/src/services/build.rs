@@ -533,7 +533,7 @@ pub(super) fn poll(client: &Client, settings: &Settings) -> Result<()> {
         )?;
         fs::remove_file(&pending)?;
     }
-    let response = post(client, settings, "build-next", json!({"protocol":5}))?;
+    let response = post(client, settings, "build-next", json!({"protocol":PROTOCOL}))?;
     if response["job"].is_null() {
         return Ok(());
     }
@@ -733,6 +733,7 @@ mod tests {
                 domains: None,
                 action: "deploy".into(),
                 spec: Spec {
+                    volumes: Vec::new(),
                     connections: Vec::new(),
                     catalog: None,
                     image: digest.clone(),

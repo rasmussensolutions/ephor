@@ -42,6 +42,11 @@ export function integrationOwnerRoutes(app: Hono, env: AuthEnvironment) {
   app.get("/api/integrations/github", async (c) =>
     c.json(await github.status()),
   );
+  app.get(
+    "/api/integrations/github/avatar",
+    async (c) =>
+      (await github.avatar(c.req.query("installation") ?? "")) ?? c.notFound(),
+  );
   app.post("/api/integrations/github/start", async (c) =>
     c.json(await github.start()),
   );

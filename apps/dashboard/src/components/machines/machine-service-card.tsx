@@ -3,6 +3,7 @@ import { SidebarSimpleIcon } from "@phosphor-icons/react/dist/csr/SidebarSimple"
 import { Link } from "@tanstack/react-router";
 import { ServiceIcon } from "@/components/services/service-icon";
 import { ServiceStatus } from "@/components/services/service-status";
+import type { Project } from "@/lib/projects";
 import {
   currentMetrics,
   type Service,
@@ -10,14 +11,17 @@ import {
   serviceStatus,
 } from "@/lib/services";
 import { ServiceCardUsage } from "./service-card-usage";
+import { ServiceProjectBadge } from "./service-project-badge";
 
 export function MachineServiceCard({
   service,
   data,
+  project,
   onOpen,
 }: {
   service: Service;
   data: ServiceList;
+  project?: Project;
   onOpen?: (service: Service, trigger: HTMLElement) => void;
 }) {
   const metrics = currentMetrics(service);
@@ -76,7 +80,10 @@ export function MachineServiceCard({
             />
           )}
         </div>
-        <ServiceStatus status={serviceStatus(service, data)} />
+        <div className="flex min-w-0 items-center justify-between gap-2">
+          <ServiceStatus status={serviceStatus(service, data)} />
+          <ServiceProjectBadge project={project} />
+        </div>
       </div>
       <ServiceCardUsage metrics={metrics} />
     </Link>

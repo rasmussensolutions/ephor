@@ -47,7 +47,10 @@ if (manifest.buildId !== buildId) manifest = {};
 manifest.version = version ?? "invalid";
 manifest.buildId = buildId;
 manifest.updaterProtocol = 1;
-manifest.serviceProtocol = 5;
+manifest.serviceProtocol = 6;
+manifest.securityProtocol = 1;
+manifest.protectionProtocol = 1;
+manifest.managedUpdatesProtocol = 2;
 for (const arch of arches) {
   const platform = arch === "x86_64" ? "linux/amd64" : "linux/arm64";
   const output = resolve("target", `daemon-${arch}`);

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { verifyLocalDaemon } from "./daemon-artifacts";
 
 // Pin the immutable release manifest so template builds remain reproducible even
 // after newer daemon releases are published. Update this pin with each release.
@@ -9,6 +10,11 @@ const base =
 const manifestHash =
   "8981541ce24da22c6727d0d955bfaf43176ade17676d42cb35d122bdae9174cc";
 const directory = resolve("apps/dashboard/public/daemon");
+if (process.env.EPHOR_DAEMON_LOCAL === "1") {
+  const local = await verifyLocalDaemon(directory);
+  console.info(`Using verified local daemon build ${local.buildId}.`);
+  process.exit(0);
+}
 const digest = (bytes: Uint8Array) =>
   createHash("sha256").update(bytes).digest("hex");
 

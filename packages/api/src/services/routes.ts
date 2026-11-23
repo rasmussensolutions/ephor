@@ -10,7 +10,7 @@ import { githubIdentity, workflow } from "./github";
 import { GitHubApp } from "./github-app";
 import { serviceCommand, serviceInstaller } from "./installer";
 import { metricsHistory } from "./metrics";
-import { updatePresentation } from "./presentation";
+import { updateMapPositions, updatePresentation } from "./presentation";
 import { object } from "./spec";
 import { Services } from "./store";
 import { ServiceVariables } from "./variables";
@@ -85,10 +85,16 @@ export function servicePublicRoutes(
           body.protocol !== 2 &&
           body.protocol !== 3 &&
           body.protocol !== 4 &&
-          body.protocol !== 5
+          body.protocol !== 5 &&
+          body.protocol !== 6
         )
           throw new AuthError("BUILD_WORKER_REQUIRED", 409);
-        await services.heartbeat(id, Number(body.protocol));
+        // Build polling proves liveness, not deployment capabilities. Some upgraded
+        // workers still send an older build protocol; next/heartbeat are authoritative.
+        await env.sql.query(
+          "UPDATE ephor_service_worker SET last_seen=$1 WHERE machine_id=$2",
+          [Date.now(), id],
+        );
         return c.json({ job: await builds.next(id) });
       }
       if (action === "build-progress")
@@ -102,15 +108,17 @@ export function servicePublicRoutes(
       else
         await services.heartbeat(
           id,
-          body.protocol === 5
-            ? 5
-            : body.protocol === 4
-              ? 4
-              : body.protocol === 3
-                ? 3
-                : body.protocol === 2
-                  ? 2
-                  : 1,
+          body.protocol === 6
+            ? 6
+            : body.protocol === 5
+              ? 5
+              : body.protocol === 4
+                ? 4
+                : body.protocol === 3
+                  ? 3
+                  : body.protocol === 2
+                    ? 2
+                    : 1,
         );
       return c.json({ ok: true });
     });
@@ -217,6 +225,9 @@ export function serviceOwnerRoutes(app: Hono, env: AuthEnvironment) {
   });
   // Owner authentication and same-origin checks already apply. Cosmetic edits
   // do not require the fresh passkey used for infrastructure mutations below.
+  app.post("/api/services/map-positions", async (c) =>
+    c.json(await updateMapPositions(env.sql, await c.req.json())),
+  );
   app.post("/api/services/:id/presentation", async (c) =>
     c.json(
       await updatePresentation(
@@ -280,6 +291,10 @@ export function serviceOwnerRoutes(app: Hono, env: AuthEnvironment) {
   app.post("/api/services/:id/variables", async (c) =>
     c.json(await variables.update(c.req.param("id"), await c.req.json())),
   );
+  app.post("/api/services/:id/resources", async (c) => {
+    await services.resources(c.req.param("id"), await c.req.json());
+    return c.json({ ok: true });
+  });
   app.post("/api/services/:id/catalog-access", async (c) => {
     const b = object(await c.req.json());
     c.header("Cache-Control", "no-store");
@@ -313,7 +328,8 @@ export function serviceOwnerRoutes(app: Hono, env: AuthEnvironment) {
   app.post("/api/services/worker", async (c) => {
     const body = object(await c.req.json());
     const manifest = releaseManifest(await env.loadDaemonRelease?.());
-    if (!manifest.serviceProtocol || manifest.serviceProtocol < 2)
+    const minimum = body.minimumProtocol === 6 ? 6 : 2;
+    if (!manifest.serviceProtocol || manifest.serviceProtocol < minimum)
       throw new AuthError("SERVICE_BUILD_REQUIRED", 409);
     const token = await services.issueWorker(body.machineId);
     await store.audit(

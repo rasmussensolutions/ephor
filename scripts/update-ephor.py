@@ -10,7 +10,7 @@ import tempfile
 STATE = ".ephor-upstream.json"
 # Configuration is deliberately immutable in automatic updates. Upstream changes
 # to these files require a manual migration instead of guessing operator intent.
-CONFIGS = ("wrangler.jsonc", "apps/worker/wrangler.jsonc")
+CONFIGS = ("wrangler.jsonc", "apps/worker/wrangler.jsonc", "deploy/docker/compose.yaml", "railway.json", "railway.toml")
 
 
 def git(*args, check=True):

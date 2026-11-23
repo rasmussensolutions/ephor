@@ -146,9 +146,11 @@ must be chosen before that release.
 
 ## Panel updates
 
-Cloudflare hosters can update from GitHub using **Actions → Update Ephor**.
-Review and merge the generated pull request to deploy while preserving installation
-settings. See [browser-only panel updates](docs/panel-updates.md).
+Use the panel’s **Updates** page to connect your hosting repository, prepare an
+update, review changes and checks, and install it. Cloudflare/Railway Git deployments
+and VPS deployment pipelines deploy the merge; manual hosts get explicit deployment
+instructions. The panel verifies the running version separately. The GitHub
+**Actions → Update Ephor** workflow remains available. See [panel updates](docs/panel-updates.md).
 
 ## Daemon releases and updates
 

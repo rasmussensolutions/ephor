@@ -22,6 +22,8 @@ export interface Service {
   currentDeployment: string | null;
   variableConnections?: { serviceId: string; variables: string[] }[];
   variablesPending?: boolean;
+  resourcesPending?: boolean;
+  requiredWorkerProtocol?: number;
   runtime: ServiceRuntime | null;
   runtimeAt: number;
   topology?: ServiceTopology;

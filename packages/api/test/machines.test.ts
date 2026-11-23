@@ -352,6 +352,7 @@ describe("machine enrollment and telemetry", () => {
       loadDaemonRelease: async () => ({
         x86_64: "a".repeat(64),
         serviceProtocol: 4,
+        securityProtocol: 1,
       }),
     });
     const browser = new Browser(secure);
@@ -365,6 +366,17 @@ describe("machine enrollment and telemetry", () => {
     expect(issued.status).toBe(200);
     const { id, command } = await issued.json();
     expect(command).toContain("https://localhost:3100/api/agent/install.sh");
+    const issuedTokens = ["token", "worker_token", "security_token"].map(
+      (name) => new RegExp(`(?:; )${name}='([a-f0-9]{64})'`).exec(command)?.[1],
+    );
+    expect(issuedTokens.every(Boolean)).toBe(true);
+    expect(new Set(issuedTokens).size).toBe(3);
+    const metadata = await (await request("/machines")).json();
+    expect(metadata.installer).toMatchObject({
+      available: true,
+      security: true,
+      architectures: ["x86_64"],
+    });
     const regenerated = await request("/machines/enrollments", { id });
     expect(regenerated.status).toBe(200);
     const replacement = await regenerated.json();
@@ -439,10 +451,11 @@ describe("machine enrollment and telemetry", () => {
       id,
     ]);
   });
-  test("generated install command pipes separate monitoring and deployment tokens through sudo", async () => {
+  test("generated install command pipes separate monitoring, deployment and security tokens through sudo", async () => {
     const directory = await mkdtemp(join(tmpdir(), "ephor-installer-test-"));
     const token = randomToken();
     const workerToken = randomToken();
+    const securityToken = randomToken();
     try {
       // Stub downloads and privilege elevation; exercise the actual generated shell command.
       await writeFile(
@@ -459,6 +472,8 @@ IFS= read -r token
 [ "$token" = '${token}' ]
 IFS= read -r worker_token
 [ "$worker_token" = '${workerToken}' ]
+IFS= read -r security_token
+[ "$security_token" = '${securityToken}' ]
 if IFS= read -r extra; then exit 1; fi
 printf success
 SCRIPT
@@ -473,21 +488,88 @@ SCRIPT
       await writeFile(join(directory, "id"), "#!/bin/sh\necho 1000\n", {
         mode: 0o755,
       });
-      const child = Bun.spawn(
-        [
-          "sh",
-          "-c",
-          installCommand("https://panel.example.com", token, workerToken),
-        ],
-        {
-          env: { ...process.env, PATH: `${directory}:${process.env.PATH}` },
+      for (const uid of ["1000", "0"]) {
+        await writeFile(join(directory, "id"), `#!/bin/sh\necho ${uid}\n`, {
+          mode: 0o755,
+        });
+        const child = Bun.spawn(
+          [
+            "sh",
+            "-c",
+            installCommand(
+              "https://panel.example.com",
+              token,
+              workerToken,
+              securityToken,
+            ),
+          ],
+          {
+            env: { ...process.env, PATH: `${directory}:${process.env.PATH}` },
+            stdout: "pipe",
+            stderr: "pipe",
+          },
+        );
+        const output = await new Response(child.stdout).text();
+        expect(await child.exited).toBe(0);
+        expect(output).toBe("success");
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+  test("helper setup is independent and reports partial failure without claiming success", async () => {
+    const script = installer("https://panel.example.com", {
+      x86_64: "a".repeat(64),
+      securityProtocol: 1,
+    });
+    const start = script.indexOf("setup_failed=0\n");
+    expect(start).toBeGreaterThan(0);
+    // Execute the exact generated post-monitoring sequence, with inert helper scripts.
+    const fragment = script.slice(start),
+      securityToken = randomToken(),
+      workerToken = randomToken();
+    const directory = await mkdtemp(join(tmpdir(), "ephor-helper-setup-"));
+    try {
+      for (const [securityFailure, deploymentFailure] of [
+        [0, 0],
+        [1, 0],
+        [0, 1],
+        [1, 1],
+      ]) {
+        for (const [name, token, failure] of [
+          ["security", securityToken, securityFailure],
+          ["services", workerToken, deploymentFailure],
+        ])
+          await writeFile(
+            join(directory, `${name}.sh`),
+            `#!/bin/sh\nset -eu\nIFS= read -r token\n[ "$token" = '${token}' ] || exit 20\nif IFS= read -r extra; then exit 21; fi\nprintf '${name} attempted\\n'\nexit ${failure}\n`,
+          );
+        const child = Bun.spawn(["sh", "-eu", "-c", fragment], {
+          env: {
+            ...process.env,
+            tmp: directory,
+            security_token: securityToken,
+            worker_token: workerToken,
+          },
           stdout: "pipe",
           stderr: "pipe",
-        },
-      );
-      const output = await new Response(child.stdout).text();
-      expect(await child.exited).toBe(0);
-      expect(output).toBe("success");
+        });
+        const [out, err, code] = await Promise.all([
+          new Response(child.stdout).text(),
+          new Response(child.stderr).text(),
+          child.exited,
+        ]);
+        expect(out).toContain("security attempted");
+        expect(out).toContain("services attempted");
+        expect(code).toBe(securityFailure || deploymentFailure ? 1 : 0);
+        expect(out.includes("Security are enabled")).toBe(
+          !securityFailure && !deploymentFailure,
+        );
+        expect(err.includes("Security setup failed")).toBe(!!securityFailure);
+        expect(err.includes("deployment setup failed")).toBe(
+          !!deploymentFailure,
+        );
+      }
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -497,9 +579,13 @@ SCRIPT
     expect((await f.app.request("/api/agent/install.sh")).status).toBe(503);
     expect(() => releaseManifest({ x86_64: "injected; command" })).toThrow();
     expect(() =>
+      installer("https://panel.example.com", { x86_64: "a".repeat(64) }),
+    ).toThrow("SECURITY_BUILD_REQUIRED");
+    expect(() =>
       installer("http://localhost:3000", { x86_64: "a".repeat(64) }),
     ).toThrow();
     const script = installer("https://panel.example.com", {
+      securityProtocol: 1,
       x86_64: "a".repeat(64),
     });
     expect(script).toContain("sha256sum --check --status");
@@ -518,6 +604,7 @@ SCRIPT
       "https://panel.example.com",
       "a".repeat(64),
       "b".repeat(64),
+      "c".repeat(64),
     );
     expect(command).not.toContain("--token");
     expect(command).toContain("sudo -v");

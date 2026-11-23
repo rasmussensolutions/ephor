@@ -110,12 +110,7 @@ export function ComponentDetails({
             {error}
           </p>
         )}
-        {stale && runtime && (
-          <p role="status" className="text-sm text-muted-foreground">
-            The worker has not reported recently. Logs show the last received
-            report.
-          </p>
-        )}
+
         {tab === "Metrics" && (
           <div className="space-y-6">
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -144,11 +139,7 @@ export function ComponentDetails({
                 logs. App totals remain available in the app view.
               </p>
             )}
-            {!runtime && (
-              <p className="text-sm text-muted-foreground">
-                Waiting for the first component report.
-              </p>
-            )}
+
             <ServiceCharts id={id} component={name} />
             {dependencies.length > 0 && (
               <section className="space-y-2">
@@ -189,7 +180,9 @@ export function ComponentDetails({
             <div className="flex items-center justify-between gap-3">
               <h2 className="text-sm font-medium">{name} logs</h2>
               <span className="text-xs text-muted-foreground">
-                Recent output · refreshes every 10s
+                {stale && runtime
+                  ? "Last received output"
+                  : "Recent output · refreshes every 10s"}
               </span>
             </div>
             {runtime?.logs === undefined ? (

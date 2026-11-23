@@ -9,7 +9,6 @@ import { DeploymentSettings } from "./deployment-settings";
 export function MachineSettings({
   machine,
   busy,
-  revoke,
   update,
   releaseInfo,
   job,
@@ -17,7 +16,6 @@ export function MachineSettings({
 }: {
   machine: Machine;
   busy: boolean;
-  revoke: () => void;
   update: () => void;
   releaseInfo: MachineList["releaseInfo"];
   job: NonNullable<MachineList["updates"]>[number] | undefined;
@@ -136,17 +134,6 @@ export function MachineSettings({
             </div>
           )}
         </div>
-        {machine.status !== "revoked" && (
-          <Button
-            variant="outline"
-            size="sm"
-            aria-label={`Disconnect ${machine.name}`}
-            disabled={busy}
-            onClick={revoke}
-          >
-            Disconnect machine
-          </Button>
-        )}
       </div>
       <DeploymentSettings key={machine.id} machine={machine} />
     </div>

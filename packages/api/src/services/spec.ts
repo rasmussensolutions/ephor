@@ -7,8 +7,13 @@ export type { ServicePresentation } from "./presentation";
 export { imageTechnology, type ServiceTechnology } from "./technology";
 export type { ServiceTopology } from "./topology";
 export interface ServiceSpec {
+  /** Managed named volumes. Persistent services always use stop/start deployment. */
+  volumes?: { name: string; mountPath: string }[];
   /** Deployment-only network grants, derived from validated variable references. */
-  connections?: { serviceId: string; template: "postgres" | "redis" }[];
+  connections?: {
+    serviceId: string;
+    template: "postgres" | "redis" | "qdrant";
+  }[];
   catalog?: CatalogSpec;
   image: string;
   port: number;
@@ -120,7 +125,9 @@ export function spec(value: unknown): ServiceSpec {
       password: r.password,
     };
   }
+  const volumes = v.volumes === undefined ? [] : persistentVolumes(v.volumes);
   const result: ServiceSpec = {
+    ...(volumes.length ? { volumes } : {}),
     ...(v.catalog ? { catalog: v.catalog as CatalogSpec } : {}),
     image: v.image,
     port,
@@ -131,7 +138,71 @@ export function spec(value: unknown): ServiceSpec {
     registry,
   };
   validateCatalog(result);
+  if (result.catalog && result.volumes?.length)
+    throw new AuthError("INVALID_VOLUMES");
   return result;
+}
+export function persistentVolumes(
+  value: unknown,
+): NonNullable<ServiceSpec["volumes"]> {
+  if (!Array.isArray(value) || value.length > 4)
+    throw new AuthError("INVALID_VOLUMES");
+  const names = new Set<string>();
+  const paths: string[] = [];
+  return value
+    .map((entry) => {
+      const v = object(entry);
+      if (
+        Object.keys(v).some((key) => !["name", "mountPath"].includes(key)) ||
+        typeof v.name !== "string" ||
+        !/^[a-z][a-z0-9-]{0,31}$/.test(v.name) ||
+        names.has(v.name) ||
+        typeof v.mountPath !== "string" ||
+        v.mountPath.length > 150 ||
+        !/^\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_-]+$/.test(v.mountPath) ||
+        /^\/(?:proc|sys|dev|etc|bin|sbin|lib|lib64|usr|run|tmp)(?:\/|$)/.test(
+          v.mountPath,
+        ) ||
+        /^\/var\/(?:run|lib\/docker)(?:\/|$)/.test(v.mountPath) ||
+        paths.some(
+          (p) =>
+            p === v.mountPath ||
+            p.startsWith(`${v.mountPath}/`) ||
+            String(v.mountPath).startsWith(`${p}/`),
+        )
+      )
+        throw new AuthError("INVALID_VOLUMES");
+      names.add(v.name);
+      paths.push(v.mountPath);
+      return { name: v.name, mountPath: v.mountPath };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+export function isStateful(config: Pick<ServiceSpec, "catalog" | "volumes">) {
+  return !!config.catalog || !!config.volumes?.length;
+}
+export function requiredProtocol(
+  config: ServiceSpec,
+  includeSavedReferences = false,
+) {
+  return config.volumes?.length ||
+    config.catalog?.resources ||
+    config.catalog?.template === "qdrant" ||
+    config.connections?.some((c) => c.template === "qdrant") ||
+    (includeSavedReferences &&
+      Object.values(config.environment).some((v) =>
+        /^\$\{\{[a-f0-9-]{36}\.QDRANT_(URL|GRPC_URL|API_KEY)\}\}$/.test(v),
+      ))
+    ? 6
+    : config.connections?.length ||
+        (includeSavedReferences &&
+          Object.values(config.environment).some((v) =>
+            /^\$\{\{[a-f0-9-]{36}\.(DATABASE_URL|REDIS_URL)\}\}$/.test(v),
+          ))
+      ? 5
+      : config.catalog
+        ? 3
+        : 2;
 }
 export function publicSpec(value: ServiceSpec) {
   return {

@@ -1,6 +1,8 @@
 mod config;
 mod hosting;
 mod metrics;
+mod protections;
+mod security;
 mod services;
 mod updater;
 
@@ -43,12 +45,58 @@ fn execute() -> Result<()> {
         );
         return Ok(());
     }
+    if command == "configure-protections" {
+        ensure!(
+            args.len() == 2,
+            "configure-protections requires the panel origin"
+        );
+        return protections::configure(&args[1]);
+    }
+    if command == "protection-updates-pause" {
+        ensure!(args.len() == 1, "No arguments accepted");
+        return protections::updates::pause_locally();
+    }
+    if command == "protection-updates-apply" {
+        ensure!(args.len() == 1, "No arguments accepted");
+        return protections::updates::apply_request();
+    }
+    if command == "protection-updates-continue" {
+        ensure!(args.len() == 1, "No arguments accepted");
+        return protections::updates::continue_check();
+    }
+    if command == "protection-updates-window" {
+        ensure!(args.len() == 1, "No arguments accepted");
+        return protections::updates::window();
+    }
+    if command == "protection-updates-reboot" {
+        ensure!(args.len() == 1, "No arguments accepted");
+        return protections::updates::reboot_if_due();
+    }
+    if command == "protection-worker" {
+        ensure!(args.len() == 1, "protection-worker takes no arguments");
+        return protections::run();
+    }
+    if command == "protection-reset" {
+        ensure!(args.len() == 1, "protection-reset takes no arguments");
+        return protections::reset();
+    }
     if command == "configure-services" {
         ensure!(
             args.len() == 2,
             "configure-services requires the panel origin"
         );
         return services::configure(&args[1]);
+    }
+    if command == "configure-security" {
+        ensure!(
+            args.len() == 2,
+            "configure-security requires the panel origin"
+        );
+        return security::configure(&args[1]);
+    }
+    if command == "security-worker" {
+        ensure!(args.len() == 1, "security-worker takes no arguments");
+        return security::run();
     }
     if command == "service-worker" {
         ensure!(args.len() == 1, "service-worker takes no arguments");

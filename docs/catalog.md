@@ -1,7 +1,7 @@
 # App catalog
 
 Ephor includes reviewed, versioned recipes for PostgreSQL, Redis, Uptime Kuma,
-WordPress + MariaDB, and Umami + PostgreSQL. Each app is one service in the panel,
+WordPress + MariaDB, Umami + PostgreSQL, and Qdrant. Each app is one service in the panel,
 with its own containers, private dependency network, persistent volumes, logs and
 aggregate resource metrics. Catalog recipes ship with the panel and are compiled
 into the Linux worker. No Ephor account or external catalog service is required.
@@ -100,7 +100,28 @@ PostgreSQL uses database `app`, username `ephor`, and generated `DB_PASSWORD`.
 Redis uses `DB_PASSWORD` and AOF persistence with `appendfsync everysec` (up to a
 second of writes can be lost on power failure). Catalog dependency databases are
 accessible to the app through its private Docker network and have no published ports.
-Joining an unrelated service to that network is not currently a panel feature.
+Custom services can join standalone database networks using Variables → Connect a
+service. Connections are limited to the same machine and require protocol 5
+(protocol 6 for Qdrant).
+
+### Qdrant and database sizing
+
+Qdrant requires protocol 6. Its pinned multi-architecture image runs as UID 1000,
+stores collections and snapshots under `/qdrant/storage`, and checks `/readyz`
+before becoming ready. HTTP is available through the allocated loopback port;
+HTTP 6333 and gRPC 6334 are available inside the private service network. There
+is no public database endpoint. Connect an app with `QDRANT_URL`,
+`QDRANT_GRPC_URL`, and `QDRANT_API_KEY` references. The generated key is masked
+and requires a fresh passkey to reveal. Send it as the Qdrant `api-key` header
+or the corresponding client SDK option.
+
+Standalone PostgreSQL, Redis and Qdrant offer **Setup & data → Database resources**.
+Save memory and CPU limits, then explicitly restart to apply them. The restart
+takes a cold recovery point and interrupts connections; saving alone changes no
+running container. Redis also requires a data-memory limit no greater than 75%
+of container memory, leaving headroom for process overhead. These overrides require
+protocol 6 and do not alter the pinned recipe or automatically tune PostgreSQL.
+The worker checks available host memory but does not reserve fleet capacity.
 
 ## Persistent data and lifecycle
 

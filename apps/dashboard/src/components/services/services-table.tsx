@@ -1,6 +1,7 @@
+import { CubeIcon } from "@phosphor-icons/react";
 import { CaretRightIcon } from "@phosphor-icons/react/dist/csr/CaretRight";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { type ComponentProps, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Table,
@@ -34,11 +35,13 @@ export function ServicesTable({
   data,
   machines,
   onOpen,
+  variant = "default",
   emptyMessage = "No services on this machine.",
 }: {
   services: Service[];
   data: ServiceList;
   machines?: { id: string; name: string }[];
+  variant?: ComponentProps<typeof Table>["variant"];
   emptyMessage?: string;
   onOpen?: (service: Service, trigger: HTMLElement, component?: string) => void;
 }) {
@@ -79,7 +82,10 @@ export function ServicesTable({
   }
   return (
     <>
-      <Table className="whitespace-nowrap [&_td]:px-3 [&_td]:py-2 [&_th]:px-3">
+      <Table
+        variant={variant}
+        className="whitespace-nowrap [&_td]:px-3 [&_td]:py-2 [&_th]:px-3"
+      >
         <caption className="sr-only">
           Services and their latest resource usage
         </caption>
@@ -93,10 +99,12 @@ export function ServicesTable({
               "Memory",
               "Uptime",
               ...(machines ? [] : ["Port"]),
-              "",
+              ...(hasGroups ? [""] : []),
             ].map((label, i) => (
               <TableHead key={label || i} scope="col">
-                {label || <span className="sr-only">Open service</span>}
+                {label || (
+                  <span className="sr-only">Expand service components</span>
+                )}
               </TableHead>
             ))}
           </TableRow>
@@ -156,36 +164,8 @@ export function ServicesTable({
                   <div
                     className={`flex items-center gap-2 ${component ? "pl-9" : ""}`}
                   >
-                    {grouped ? (
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        aria-label={`${expanded.has(s.id) ? "Collapse" : "Expand"} ${label} components`}
-                        aria-expanded={expanded.has(s.id)}
-                        onClick={() =>
-                          setExpanded((previous) => {
-                            const next = new Set(previous);
-                            if (next.has(s.id)) next.delete(s.id);
-                            else next.add(s.id);
-                            return next;
-                          })
-                        }
-                      >
-                        <CaretRightIcon
-                          aria-hidden="true"
-                          className={
-                            expanded.has(s.id) ? "rotate-90" : undefined
-                          }
-                        />
-                      </Button>
-                    ) : (
-                      !component &&
-                      hasGroups && (
-                        <span aria-hidden="true" className="w-7 shrink-0" />
-                      )
-                    )}
                     <span
-                      className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-background text-muted-foreground"
+                      className="flex size-7 shrink-0 items-center justify-center text-muted-foreground"
                       aria-hidden="true"
                     >
                       <ServiceIcon
@@ -244,9 +224,10 @@ export function ServicesTable({
                 {machines && (
                   <TableCell className="text-muted-foreground">
                     <span
-                      className="block max-w-32 truncate"
+                      className=" max-w-32 truncate flex flex-row items-center gap-1"
                       title={machineName}
                     >
+                      <CubeIcon />
                       {machineName}
                     </span>
                   </TableCell>
@@ -292,19 +273,40 @@ export function ServicesTable({
                     :{component?.port ?? s.spec.port}
                   </TableCell>
                 )}
-                <TableCell>
-                  <CaretRightIcon
-                    aria-hidden="true"
-                    className="text-muted-foreground"
-                  />
-                </TableCell>
+                {hasGroups && (
+                  <TableCell className="w-12 text-right">
+                    {grouped && (
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label={`${expanded.has(s.id) ? "Collapse" : "Expand"} ${label} components`}
+                        aria-expanded={expanded.has(s.id)}
+                        onClick={() =>
+                          setExpanded((previous) => {
+                            const next = new Set(previous);
+                            if (next.has(s.id)) next.delete(s.id);
+                            else next.add(s.id);
+                            return next;
+                          })
+                        }
+                      >
+                        <CaretRightIcon
+                          aria-hidden="true"
+                          className={
+                            expanded.has(s.id) ? "rotate-90" : undefined
+                          }
+                        />
+                      </Button>
+                    )}
+                  </TableCell>
+                )}
               </TableRow>
             );
           })}
           {!services.length && (
             <TableRow>
               <TableCell
-                colSpan={7}
+                colSpan={hasGroups ? 7 : 6}
                 className="h-40 text-center text-muted-foreground"
               >
                 {emptyMessage}

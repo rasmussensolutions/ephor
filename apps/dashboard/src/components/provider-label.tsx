@@ -48,6 +48,52 @@ const brands: Record<string, Brand> = {
   oci: { image: oracle },
 };
 
+export function ProviderIcon({
+  name,
+  className,
+}: {
+  name?: string | null;
+  className?: string;
+}) {
+  const key = (name?.trim() || "").toLowerCase().replace(/[\s_-]+/g, "");
+  const brand = Object.hasOwn(brands, key) ? brands[key] : undefined;
+  if (!brand)
+    return (
+      <CloudIcon
+        aria-hidden="true"
+        className={cn("size-4 shrink-0 text-muted-foreground", className)}
+      />
+    );
+  if ("image" in brand)
+    return (
+      <img
+        src={brand.image}
+        alt=""
+        aria-hidden="true"
+        width={18}
+        height={18}
+        className={cn(
+          "size-[18px] shrink-0 object-contain dark:brightness-0 dark:invert",
+          className,
+        )}
+      />
+    );
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      focusable="false"
+      className={cn(
+        "size-4 shrink-0 fill-current text-[var(--provider-color)] dark:text-foreground",
+        className,
+      )}
+      style={{ "--provider-color": `#${brand.hex}` } as CSSProperties}
+    >
+      <path d={brand.path} />
+    </svg>
+  );
+}
+
 export function ProviderLabel({
   name,
   className,
@@ -55,39 +101,10 @@ export function ProviderLabel({
   name?: string | null;
   className?: string;
 }) {
-  const label = name?.trim() || "Unknown";
-  const key = label.toLowerCase().replace(/[\s_-]+/g, "");
-  const brand = Object.hasOwn(brands, key) ? brands[key] : undefined;
   return (
     <span className={cn("inline-flex min-w-0 items-center gap-2", className)}>
-      {brand ? (
-        "image" in brand ? (
-          <img
-            src={brand.image}
-            alt=""
-            aria-hidden="true"
-            width={18}
-            height={18}
-            className="size-[18px] shrink-0 object-contain dark:brightness-0 dark:invert"
-          />
-        ) : (
-          <svg
-            viewBox="0 0 24 24"
-            aria-hidden="true"
-            focusable="false"
-            className="size-4 shrink-0 fill-current text-[var(--provider-color)] dark:text-foreground"
-            style={{ "--provider-color": `#${brand.hex}` } as CSSProperties}
-          >
-            <path d={brand.path} />
-          </svg>
-        )
-      ) : (
-        <CloudIcon
-          aria-hidden="true"
-          className="size-4 shrink-0 text-muted-foreground"
-        />
-      )}
-      <span className="truncate">{label}</span>
+      <ProviderIcon name={name} />
+      <span className="truncate">{name?.trim() || "Unknown"}</span>
     </span>
   );
 }

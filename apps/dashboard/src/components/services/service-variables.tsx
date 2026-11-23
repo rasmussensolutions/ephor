@@ -32,7 +32,7 @@ interface VariableList {
   suggestions: {
     serviceId: string;
     serviceName: string;
-    template: "postgres" | "redis";
+    template: "postgres" | "redis" | "qdrant";
     variable: string;
     reference: string;
   }[];
@@ -295,7 +295,7 @@ export function ServiceVariables({
                 changes[suggestion.variable] !== null;
               return (
                 <div
-                  key={suggestion.serviceId}
+                  key={`${suggestion.serviceId}:${suggestion.variable}`}
                   className="flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3"
                 >
                   <div className="min-w-0">
@@ -305,7 +305,9 @@ export function ServiceVariables({
                     <p className="mt-1 text-xs text-muted-foreground">
                       {suggestion.template === "postgres"
                         ? "PostgreSQL"
-                        : "Redis"}
+                        : suggestion.template === "qdrant"
+                          ? "Qdrant"
+                          : "Redis"}
                       {" · "}
                       <code>{suggestion.variable}</code>
                     </p>

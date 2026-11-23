@@ -263,6 +263,7 @@ describe("signed daemon updates", () => {
   });
   test("bootstrap pins trust, keeps monitoring unprivileged, and generates valid shell", async () => {
     const monitoringScript = installer("https://panel.example.com", {
+      securityProtocol: 1,
       x86_64: "a".repeat(64),
     });
     expect(monitoringScript).toContain(
@@ -280,7 +281,7 @@ describe("signed daemon updates", () => {
     for (const script of [
       installer(
         "https://panel.example.com",
-        { x86_64: "a".repeat(64), updaterProtocol: 1 },
+        { x86_64: "a".repeat(64), updaterProtocol: 1, securityProtocol: 1 },
         publicKey,
       ),
       updaterInstaller(

@@ -1,0 +1,1 @@
+ALTER TABLE ephor_backup_job ADD COLUMN protocol INTEGER NOT NULL DEFAULT 4;

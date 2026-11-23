@@ -1,5 +1,4 @@
 import { ArchiveIcon } from "@phosphor-icons/react/dist/csr/Archive";
-import { ArrowClockwiseIcon } from "@phosphor-icons/react/dist/csr/ArrowClockwise";
 import { HardDrivesIcon } from "@phosphor-icons/react/dist/csr/HardDrives";
 import { PlusIcon } from "@phosphor-icons/react/dist/csr/Plus";
 import { RocketLaunchIcon } from "@phosphor-icons/react/dist/csr/RocketLaunch";
@@ -11,7 +10,7 @@ import {
   HomeMachines,
   HomeSetup,
 } from "@/components/home-sections";
-import { StatusIndicator } from "@/components/status-indicator";
+
 import { SummaryCards } from "@/components/summary-cards";
 import { Button } from "@/components/ui/button";
 import { loadHomeOverview, useHomeOverview } from "@/hooks/use-home-overview";
@@ -24,22 +23,13 @@ export const Route = createFileRoute("/_authenticated/")({
 });
 
 function HomePage() {
-  const { data, now, refreshing, refresh } = useHomeOverview(
-    Route.useLoaderData(),
-  );
+  const { data, now } = useHomeOverview(Route.useLoaderData());
   const navigate = useNavigate();
   const machines = data.machines.data?.machines ?? [];
   const services = data.services.data;
   const backups = data.backups.data;
   const overview = homeOverview(machines, services, backups, now);
-  const unavailable = Object.entries(data)
-    .filter(
-      ([, resource]) =>
-        resource.error ||
-        resource.updatedAt === null ||
-        now - resource.updatedAt > 45_000,
-    )
-    .map(([key]) => key);
+
   const connected = overview.machines.some(
     (machine) => machine.enrolledAt !== null,
   );
@@ -48,33 +38,7 @@ function HomePage() {
   );
   const configured = Boolean(backups?.plans.length);
   const setup = !connected || !deployed || !configured;
-  const waiting = overview.machines.some((m) =>
-    ["pending", "connecting"].includes(m.status),
-  );
-  const unconfirmed =
-    overview.unknownServices > 0 ||
-    overview.pendingBackups > 0 ||
-    overview.machines.some((m) => m.status === "online" && !m.telemetry) ||
-    Boolean(
-      backups?.destinations.some(
-        (d) => d.status !== "ready" && d.status !== "failed",
-      ),
-    );
-  const incomplete =
-    unavailable.length > 0 || waiting || unconfirmed || !connected;
-  const status = unavailable.length
-    ? "Some status is unavailable"
-    : overview.attention.length
-      ? `${overview.attention.length} ${overview.attention.length === 1 ? "item needs" : "items need"} attention`
-      : !connected
-        ? "Connect a machine to get started"
-        : waiting || unconfirmed
-          ? "Waiting for status reports"
-          : "All reported systems healthy";
-  const timestamps = Object.values(data).flatMap((r) =>
-    r.updatedAt === null ? [] : [r.updatedAt],
-  );
-  const checkedAt = timestamps.length ? Math.min(...timestamps) : null;
+
   const backupProblems = overview.attention.filter(
     (item) => item.id.startsWith("backup:") || item.id.startsWith("storage:"),
   ).length;
@@ -88,86 +52,21 @@ function HomePage() {
             Your infrastructure, its health, and what needs attention.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            nativeButton={false}
-            variant="outline"
-            size="action"
-            render={<Link to="/machines" search={{ connect: true }} />}
-          >
-            Connect machine
-          </Button>
-          <Button
-            nativeButton={false}
-            variant="gradient"
-            size="action"
-            render={<Link to="/services" search={{ deploy: true }} />}
-          >
-            <PlusIcon
-              aria-hidden
-              data-icon="inline-start"
-              className="size-[1em]"
-            />
-            Deploy service
-          </Button>
-        </div>
-      </header>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div role="status">
-          <StatusIndicator
-            status={status}
-            tone={
-              unavailable.length
-                ? "neutral"
-                : overview.attention.length
-                  ? "error"
-                  : incomplete
-                    ? "neutral"
-                    : "healthy"
-            }
-          />
-        </div>
-        <div className="flex items-center gap-3">
-          <p className="text-xs text-muted-foreground">
-            {checkedAt ? (
-              <>
-                Last refreshed{" "}
-                <time dateTime={new Date(checkedAt).toISOString()}>
-                  {new Date(checkedAt).toLocaleTimeString(undefined, {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                    second: "2-digit",
-                  })}
-                </time>
-              </>
-            ) : (
-              "No reports received"
-            )}
-          </p>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Refresh overview"
-            disabled={refreshing}
-            onClick={refresh}
-          >
-            <ArrowClockwiseIcon
-              aria-hidden
-              className={refreshing ? "animate-spin" : ""}
-            />
-          </Button>
-        </div>
-      </div>
-      {unavailable.length > 0 && (
-        <p
-          role="alert"
-          className="rounded-lg border bg-card px-4 py-3 text-sm text-muted-foreground"
+        <Button
+          nativeButton={false}
+          variant="gradient"
+          size="action"
+          render={<Link to="/services/new" />}
         >
-          Could not confirm the latest {unavailable.join(", ")} status.
-          Available reports remain visible and may be out of date. Retrying
-          automatically.
-        </p>
-      )}
+          <PlusIcon
+            aria-hidden
+            data-icon="inline-start"
+            className="size-[1em]"
+          />
+          Deploy service
+        </Button>
+      </header>
+
       <SummaryCards
         label="Infrastructure summary"
         cards={[
@@ -270,7 +169,7 @@ function HomePage() {
       )}
       <div className="grid min-w-0 items-start gap-6 xl:grid-cols-[minmax(0,1.8fr)_minmax(0,1fr)]">
         <div className="min-w-0 space-y-6">
-          <HomeAttention items={overview.attention} incomplete={incomplete} />
+          <HomeAttention items={overview.attention} />
           <HomeMachines
             machines={overview.machines}
             now={now}

@@ -48,6 +48,7 @@ export default {
     return createApi(
       {
         origin: env.EPHOR_ORIGIN,
+        deployment: { runtime: "cloudflare-worker", frontend: "same-runtime" },
         secret: env.BETTER_AUTH_SECRET,
         setupCode: env.EPHOR_SETUP_CODE || undefined,
         database: env.DB,

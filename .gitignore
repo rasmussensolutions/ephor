@@ -21,6 +21,8 @@ coverage/
 .cache/
 .nyc_output/
 playwright-report/
+.playwright-cli/
+.playwright/.auth/
 test-results/
 blob-report/
 /output/

@@ -252,7 +252,7 @@ function BackupsPage() {
   return (
     <SettingsPage
       title="Backups"
-      description="Manage encrypted backups of your catalog apps and restore them as separate services."
+      description="Manage encrypted backups of your persistent services and restore them as separate services."
     >
       {(error || notice) && (
         <div className="settings-surface space-y-1 rounded-lg px-4 py-3 text-sm sm:px-5">
@@ -873,8 +873,11 @@ function BackupsPage() {
                   : "No backup schedules"
               }
               description={
-                !services.services.some((service) => service.spec.catalog)
-                  ? "Deploy a catalog app from Services to set up its backups."
+                !services.services.some(
+                  (service) =>
+                    service.spec.catalog || service.spec.volumes?.length,
+                )
+                  ? "Deploy a persistent service from Services to set up its backups."
                   : !data.destinations.some(
                         (destination) => destination.status === "ready",
                       )
@@ -890,7 +893,9 @@ function BackupsPage() {
                       disabled={
                         busy ||
                         !services.services.some(
-                          (service) => service.spec.catalog,
+                          (service) =>
+                            service.spec.catalog ||
+                            service.spec.volumes?.length,
                         ) ||
                         !data.destinations.some(
                           (destination) => destination.status === "ready",
@@ -957,7 +962,7 @@ function BackupsPage() {
                       className="w-full"
                       placeholder="Choose an app"
                       options={services.services
-                        .filter((s) => s.spec.catalog)
+                        .filter((s) => s.spec.catalog || s.spec.volumes?.length)
                         .map((s) => ({ value: s.id, label: s.name }))}
                     />
                   </Field>
@@ -1222,8 +1227,12 @@ function BackupsPage() {
                     <p className="text-sm text-muted-foreground">
                       Original data stays in place. Choose a machine with the
                       same CPU architecture and enough disk space for both the
-                      downloaded archives and restored data. Web apps require a
-                      different domain and start with access protection enabled.
+                      downloaded archives and restored data. Catalog web apps
+                      require a new domain and start protected. Custom services
+                      restore privately; reconnect their dependencies and verify
+                      recovery before adding a domain. Restored processes start
+                      with saved variables and may still contact external
+                      services.
                     </p>
                     <div className="grid gap-4 sm:grid-cols-2">
                       <Field label="Destination machine">
@@ -1253,7 +1262,7 @@ function BackupsPage() {
                           )}
                         />
                       </Field>
-                      <Field label="New domain (web apps only)">
+                      <Field label="New domain (catalog web apps only)">
                         <Input
                           name="domain"
                           placeholder="recovered.example.com"

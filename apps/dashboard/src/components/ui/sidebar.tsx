@@ -252,6 +252,7 @@ function Sidebar({
 }
 
 function SidebarTrigger({
+  children,
   className,
   onClick,
   ...props
@@ -271,8 +272,12 @@ function SidebarTrigger({
       }}
       {...props}
     >
-      <SidebarSimpleIcon aria-hidden="true" />
-      <span className="sr-only">Toggle Sidebar</span>
+      {children ?? (
+        <>
+          <SidebarSimpleIcon aria-hidden="true" />
+          <span className="sr-only">Toggle Sidebar</span>
+        </>
+      )}
     </Button>
   );
 }

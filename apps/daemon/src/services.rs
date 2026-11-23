@@ -19,11 +19,14 @@ mod backup;
 mod build;
 mod catalog;
 mod metrics;
+#[cfg(test)]
+mod persistence_tests;
 
 const STATE: &str = "/var/lib/ephor-services";
 const SETTINGS: &str = "/etc/ephor/services.json";
 const PROXY: &str = "ephor-proxy";
 const DOCKER: &str = "/usr/bin/docker";
+const PROTOCOL: u8 = 6;
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -36,6 +39,8 @@ struct Registry {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Spec {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    volumes: Vec<PersistentVolume>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     connections: Vec<Connection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     catalog: Option<catalog::Selection>,
@@ -46,6 +51,75 @@ struct Spec {
     cpus: f64,
     environment: BTreeMap<String, String>,
     registry: Option<Registry>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PersistentVolume {
+    name: String,
+    mount_path: String,
+}
+impl Spec {
+    fn stateful(&self) -> bool {
+        self.catalog.is_some() || !self.volumes.is_empty()
+    }
+}
+fn validate_volumes(s: &Spec) -> Result<()> {
+    ensure!(
+        s.volumes.len() <= 4 && (s.catalog.is_none() || s.volumes.is_empty()),
+        "Invalid volumes"
+    );
+    let mut names = std::collections::BTreeSet::new();
+    let mut paths: Vec<&str> = Vec::new();
+    for v in &s.volumes {
+        ensure!(
+            !v.name.is_empty()
+                && v.name.len() <= 32
+                && v.name.as_bytes()[0].is_ascii_lowercase()
+                && v.name
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+                && names.insert(&v.name),
+            "Invalid volume name"
+        );
+        let p = v.mount_path.as_str();
+        ensure!(
+            p.starts_with('/')
+                && p.len() <= 150
+                && p.split('/').skip(1).all(|part| !part.is_empty()
+                    && part
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))),
+            "Invalid mount path"
+        );
+        ensure!(
+            ![
+                "/proc",
+                "/sys",
+                "/dev",
+                "/etc",
+                "/bin",
+                "/sbin",
+                "/lib",
+                "/lib64",
+                "/usr",
+                "/run",
+                "/tmp",
+                "/var/run",
+                "/var/lib/docker"
+            ]
+            .iter()
+            .any(|r| p == *r || p.starts_with(&format!("{r}/"))),
+            "Reserved mount path"
+        );
+        ensure!(
+            !paths.iter().any(|r| p == *r
+                || p.starts_with(&format!("{r}/"))
+                || r.starts_with(&format!("{p}/"))),
+            "Overlapping volumes"
+        );
+        paths.push(p);
+    }
+    Ok(())
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -140,7 +214,8 @@ fn domain(s: &str) -> bool {
 }
 fn validate(job: &Job) -> Result<()> {
     let s = &job.spec;
-    if s.catalog.is_some() {
+    validate_volumes(s)?;
+    if s.stateful() {
         catalog::validate(job)?;
     } else {
         ensure!(
@@ -174,7 +249,7 @@ fn validate(job: &Job) -> Result<()> {
                 && id(&connection.service_id)
                 && connection.service_id != job.service_id
                 && sources.insert(&connection.service_id)
-                && ["postgres", "redis"].contains(&connection.template.as_str()),
+                && ["postgres", "redis", "qdrant"].contains(&connection.template.as_str()),
             "Invalid service connection"
         );
     }
@@ -789,7 +864,7 @@ fn apply(state: &mut State, settings: &Settings, job: &Job) -> Result<()> {
         error: None,
     });
     save(state)?;
-    if job.spec.catalog.is_some() {
+    if job.spec.stateful() {
         return catalog::apply(state, settings, job);
     }
     if job.action == "stop" {
@@ -863,7 +938,7 @@ fn recover(state: &mut State, settings: &Settings, error: &str) -> Result<()> {
     let j = state.journal.as_ref().context("No journal")?;
     let job = j.job.clone();
     let old = j.old.clone();
-    if job.spec.catalog.is_some() {
+    if job.spec.stateful() {
         return catalog::recover(state, settings, &job, error);
     }
     if let Some(r) = &old.active {
@@ -1004,6 +1079,7 @@ pub fn configure(panel: &str) -> Result<()> {
     );
     // Version pin is resolved to a content digest once. Only a local administrator can change it.
     let proxy_image = pull(&Spec {
+        volumes: Vec::new(),
         connections: Vec::new(),
         catalog: None,
         image: "docker.io/library/caddy:2.11.9".into(),
@@ -1079,7 +1155,7 @@ pub fn run() -> Result<()> {
                     &client,
                     &heartbeat_settings,
                     "heartbeat",
-                    json!({"protocol":5}),
+                    json!({"protocol":PROTOCOL}),
                 );
                 thread::sleep(Duration::from_secs(30));
             }
@@ -1101,7 +1177,7 @@ pub fn run() -> Result<()> {
             if backup::poll(&client, &settings, &mut state)? {
                 return Ok(());
             }
-            let response = post(&client, &settings, "next", json!({"protocol":5}))?;
+            let response = post(&client, &settings, "next", json!({"protocol":PROTOCOL}))?;
             if !response["job"].is_null() {
                 let parsed: Result<Job, _> = serde_json::from_value(response["job"].clone());
                 let job = match parsed {
@@ -1136,7 +1212,7 @@ pub fn run() -> Result<()> {
                         "BACKUP_LIMIT"
                     } else if message.contains("BACKUP_FAILED") {
                         "BACKUP_FAILED"
-                    } else if job.spec.catalog.is_some() {
+                    } else if job.spec.stateful() {
                         "CATALOG_RECOVERY_REQUIRED"
                     } else {
                         "DEPLOYMENT_FAILED"
@@ -1175,6 +1251,7 @@ mod tests {
             domains: None,
             action: "deploy".into(),
             spec: Spec {
+                volumes: Vec::new(),
                 connections: Vec::new(),
                 catalog: None,
                 image: "docker.io/library/example:1".into(),

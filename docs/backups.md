@@ -1,6 +1,7 @@
 # Off-site backups
 
-Ephor backs up catalog apps using Restic 0.19.1 and S3-compatible object storage.
+Ephor backs up catalog apps and custom services with managed persistent volumes
+using Restic 0.19.1 and S3-compatible object storage.
 It supports Cloudflare R2, Backblaze B2, Amazon S3, DigitalOcean Spaces, Wasabi,
 and Hetzner Object Storage. Storage remains in the owner's account. Data travels
 directly from a managed machine to storage, encrypted before upload.
@@ -9,8 +10,9 @@ directly from a managed machine to storage, encrypted before upload.
 
 1. Apply database migrations, deploy the updated panel, and build/publish the
    daemon artifacts (`bun run bundle:daemon`). Upgrade each deployment worker
-   using **Services → Connections**. Backup jobs require service protocol 4;
-   older workers continue to support their existing deployment operations.
+   using the machine's **Settings → Deployments**. Legacy catalog backup jobs require service protocol 4;
+   custom volumes, Qdrant, and database resource overrides require protocol 6.
+   Older workers continue to support their existing deployment operations.
 2. Create a private, dedicated bucket and bucket-scoped S3 credentials. R2 uses
    the account ID and region `auto`; B2 uses its S3 region, application key ID,
    and application key. Other providers use the bucket region. The initial
@@ -25,7 +27,7 @@ directly from a managed machine to storage, encrypted before upload.
    an encrypted test repository, writes a test snapshot, reads it back, and runs
    Restic's complete repository data check. A destination is usable only after
    that worker reports success. Failed checks can be retried.
-4. Select a deployed catalog app, the destination and schedule. Download its
+4. Select a deployed persistent service, the destination and schedule. Download its
    recovery kit and store it in a password manager outside the managed servers.
    Run **Back up now** to create the first usable backup.
 
@@ -47,7 +49,7 @@ root-only receipt survives lost HTTP responses. After a worker interruption, the
 operation is marked failed rather than repeating a potentially destructive step.
 Interrupted catalog mutations use the existing recovery-required mechanism.
 
-For each backup, Ephor stops the catalog app's writers and creates checksummed
+For each backup, Ephor stops the service's writers and creates checksummed
 cold archives of all data volumes. It then resumes an app that was running before
 uploading. A stopped app stays stopped. The snapshot includes a manifest with the
 recipe fingerprint, immutable image references, volume keys, and app secrets.
@@ -70,7 +72,8 @@ memory budget. Very large repositories may require future tuning.
 ## Restore onto another machine
 
 Choose a completed backup in History, then **Restore**. Select an enrolled machine
-with an online protocol-4 worker and the same CPU architecture. Provide a new service
+with an online compatible worker (protocol 6 for custom volumes, Qdrant or resource
+overrides) and the same CPU architecture. Provide a new service
 name and, for web apps, an unused domain. The original machine need not be online.
 
 Ephor fetches the exact snapshot ID, verifies its manifest against the compiled
@@ -79,6 +82,16 @@ archive before extraction into new, labeled volumes. It starts the same pinned
 app recipe and runs its existing health checks. Web apps start with access protection
 enabled. Ephor never changes the original service, reassigns its domain, or changes
 DNS. Inspect the restored app before switching clients or traffic.
+
+Custom-service backups use the last successful deployment's image and environment,
+not pending configuration edits. Locally built images are checksummed and included
+inside the encrypted repository, so loss of the source Docker engine does not lose
+the application image. A custom restore creates a separate image service with no
+public domain or production database network attachments. It starts the saved
+image and retained environment: external URLs, tokens and outbound connectivity
+still work, so review possible external side effects before restoring production
+applications. Reconnect dependencies and repository deployment explicitly after
+validation. Backups are cold snapshots, not PostgreSQL PITR or live replication.
 
 The restored worker must still include the matching recipe fingerprint. A newer
 recipe is not silently substituted for a database's original version. Restoring
@@ -137,7 +150,10 @@ With Restic installed, set `RESTIC_REPOSITORY`, `RESTIC_PASSWORD`,
 private environment or secret files. Do not paste credentials into shell history.
 Run `restic snapshots`, then `restic restore <full-snapshot-id> --target ./recovered
 --verify`. The restored `data/manifest.json` identifies the app recipe, images,
-configuration and secrets. Each `data/volumes/<key>/data.tar` has a `SHA256SUMS`
+configuration and secrets. Custom locally built images also include `data/image.tar`
+and `data/IMAGE_SHA256SUMS`; verify the checksum and load that image before starting
+the saved image ID. Registry images require continued access to their pinned digest.
+Each `data/volumes/<key>/data.tar` has a `SHA256SUMS`
 file. On an isolated recovery host, verify those archives and extract them into
 fresh volumes with ownership preserved; start the matching recipe with its saved
 secrets. The current UI restores from the panel's saved backup history; importing

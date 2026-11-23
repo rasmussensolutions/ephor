@@ -26,6 +26,15 @@ export function environment() {
   };
   const env: AuthEnvironment = {
     origin: process.env.EPHOR_ORIGIN ?? "",
+    deployment: {
+      runtime: process.versions.bun ? "bun" : "node",
+      host: process.env.RAILWAY_PROJECT_ID
+        ? "railway"
+        : process.env.EPHOR_HOST === "vps"
+          ? "vps"
+          : "other",
+      frontend: process.env.EPHOR_ASSETS_DIR ? "same-runtime" : "unknown",
+    },
     secret: process.env.BETTER_AUTH_SECRET ?? "",
     database: pool,
     sql,

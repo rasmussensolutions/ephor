@@ -13,8 +13,11 @@ import { readMetrics, recordMetrics, type ServiceRuntime } from "./metrics";
 import {
   buildSettings,
   domainName,
+  isStateful,
   object,
   publicSpec,
+  requiredProtocol,
+  type ServiceDomains,
   type ServiceSource,
   type ServiceSpec,
   serviceId,
@@ -58,11 +61,59 @@ export interface DeploymentRow extends Record<string, unknown> {
 }
 export class Services {
   readonly secrets: ServiceSecrets;
+  private readonly backupSecrets: ServiceSecrets;
   constructor(
     private sql: Sql,
     secret: string,
   ) {
     this.secrets = new ServiceSecrets(secret);
+    this.backupSecrets = new ServiceSecrets(`backup:${secret}`);
+  }
+  async deployedSnapshot(
+    row: ServiceRow,
+  ): Promise<{ spec: ServiceSpec; domains: ServiceDomains } | null> {
+    if (!row.current_deployment) return null;
+    const [deployment] = await this.sql.query<DeploymentRow>(
+      "SELECT * FROM ephor_deployment WHERE id=$1 AND service_id=$2",
+      [row.current_deployment, row.id],
+    );
+    if (deployment) {
+      const config = await this.secrets.open<ServiceSpec>(
+        deployment.id,
+        deployment.spec,
+      );
+      if (deployment.digest) config.image = deployment.digest;
+      return {
+        spec: config,
+        domains: readDomains({
+          domain: row.domain,
+          domains: deployment.domains,
+        }),
+      };
+    }
+    // Offsite restores have their own durable receipt rather than a deployment row.
+    const [restore] = await this.sql.query<{ id: string; payload: string }>(
+      "SELECT id,payload FROM ephor_backup_job WHERE id=$1 AND service_id=$2 AND action='restore' AND status IN ('running','succeeded')",
+      [row.current_deployment, row.id],
+    );
+    if (!restore) return null;
+    const payload = await this.backupSecrets.open<{
+      job?: {
+        spec: ServiceSpec;
+        domains: ServiceDomains;
+        domain: string | null;
+      };
+    }>(restore.id, restore.payload);
+    return payload.job
+      ? {
+          spec: payload.job.spec,
+          domains: payload.job.domains ?? {
+            primary: payload.job.domain,
+            aliases: [],
+            redirect: false,
+          },
+        }
+      : null;
   }
   async get(id: unknown) {
     const [row] = await this.sql.query<ServiceRow>(
@@ -149,9 +200,23 @@ export class Services {
     const update = object(b.spec);
     const config = spec({
       ...update,
+      volumes: update.volumes ?? old.volumes,
       environment: update.environment ?? old.environment,
       registry: update.registry === undefined ? old.registry : update.registry,
     });
+    if (config.catalog) throw new AuthError("INVALID_CATALOG_CONFIG");
+    if (
+      JSON.stringify(config.volumes ?? []) !==
+        JSON.stringify(old.volumes ?? []) &&
+      (row.current_deployment ||
+        (
+          await this.sql.query(
+            "SELECT id FROM ephor_deployment WHERE service_id=$1 LIMIT 1",
+            [row.id],
+          )
+        ).length)
+    )
+      throw new AuthError("VOLUME_LAYOUT_LOCKED", 409);
     const previousSource = JSON.parse(row.source) as ServiceSource;
     await new ServiceConnections(this.sql, this.secrets).resolve(row, config);
     if (replacement && replacement.type !== previousSource.type)
@@ -223,12 +288,14 @@ export class Services {
         const config = await this.secrets.open<ServiceSpec>(row.id, row.config);
         const deployment = current.get(row.current_deployment ?? "");
         const deployed =
-          !config.catalog && deployment && deployment.action !== "stop"
+          deployment && deployment.action !== "stop"
             ? await this.secrets.open<ServiceSpec>(
                 deployment.id,
                 deployment.spec,
               )
-            : null;
+            : !deployment && row.current_deployment
+              ? ((await this.deployedSnapshot(row))?.spec ?? null)
+              : null;
         const runtime: ServiceRuntime | null = row.runtime
           ? JSON.parse(row.runtime)
           : null;
@@ -254,7 +321,18 @@ export class Services {
           domains: readDomains(row),
           spec: publicSpec(config),
           variableConnections: variableConnections(config),
+          requiredWorkerProtocol: requiredProtocol(config, true),
           variablesPending: await connections.pending(row, config, deployed),
+          resourcesPending:
+            !!config.catalog?.resources &&
+            (!row.current_deployment ||
+              ((!!deployment || !!deployed) &&
+                (config.catalog.resources.memoryMb !==
+                  deployed?.catalog?.resources?.memoryMb ||
+                  config.catalog.resources.cpus !==
+                    deployed?.catalog?.resources?.cpus ||
+                  config.catalog.resources.redisMaxmemoryMb !==
+                    deployed?.catalog?.resources?.redisMaxmemoryMb))),
           ...(config.catalog ? { topology: topology(config.catalog) } : {}),
           source: JSON.parse(row.source) as ServiceSource,
           createdAt: Number(row.created_at),
@@ -311,14 +389,28 @@ export class Services {
     )
       throw new AuthError("INVALID_SERVICE_ACTION");
     let config = await this.secrets.open<ServiceSpec>(row.id, row.config);
+    let domains = readDomains(row);
     if (
       config.catalog &&
       (action === "rollback" || options.image || options.delivery)
     )
       throw new AuthError("CATALOG_ROLLBACK_BLOCKED", 409);
+    if (config.volumes?.length && action === "rollback")
+      throw new AuthError("STATEFUL_ROLLBACK_BLOCKED", 409);
+    // Maintenance must use the deployed image and resolved variables, never pending settings.
+    if (
+      isStateful(config) &&
+      ["stop", "backup", "restore", "delete-backup"].includes(action) &&
+      row.current_deployment
+    ) {
+      const current = await this.deployedSnapshot(row);
+      if (!current) throw new AuthError("BACKUP_APP_NOT_READY", 409);
+      config = current.spec;
+      domains = current.domains;
+    }
     if (
       ["backup", "restore", "delete-backup"].includes(action) &&
-      !config.catalog
+      !isStateful(config)
     )
       throw new AuthError("NOT_A_CATALOG_APP");
     if (["restore", "delete-backup"].includes(action))
@@ -351,18 +443,20 @@ export class Services {
         row,
         config,
       );
-    const protocol = config.connections?.length ? 5 : config.catalog ? 3 : 2;
+    const protocol = requiredProtocol(config);
     const [ready] = await this.sql.query(
-      "SELECT w.machine_id FROM ephor_service_worker w JOIN ephor_machine m ON m.id=w.machine_id WHERE w.machine_id=$1 AND m.state='active' AND w.last_seen > $2 AND w.version IN ('2','3','4','5') AND CAST(w.version AS INTEGER)>=$3 AND w.credential_hash IS NOT NULL",
+      "SELECT w.machine_id FROM ephor_service_worker w JOIN ephor_machine m ON m.id=w.machine_id WHERE w.machine_id=$1 AND m.state='active' AND w.last_seen > $2 AND w.version IN ('2','3','4','5','6') AND CAST(w.version AS INTEGER)>=$3 AND w.credential_hash IS NOT NULL",
       [row.machine_id, Date.now() - 120000, protocol],
     );
     if (!ready)
       throw new AuthError(
-        protocol === 5
-          ? "CONNECTION_WORKER_REQUIRED"
-          : config.catalog
-            ? "CATALOG_WORKER_REQUIRED"
-            : "SERVICE_WORKER_REQUIRED",
+        protocol === 6
+          ? "STATEFUL_WORKER_REQUIRED"
+          : protocol === 5
+            ? "CONNECTION_WORKER_REQUIRED"
+            : config.catalog
+              ? "CATALOG_WORKER_REQUIRED"
+              : "SERVICE_WORKER_REQUIRED",
         409,
       );
     const jobId = crypto.randomUUID(),
@@ -378,7 +472,7 @@ export class Services {
         options.sha ?? null,
         options.delivery ?? null,
         options.run ?? 0,
-        JSON.stringify(readDomains(row)),
+        JSON.stringify(domains),
         protocol,
         ["restore", "delete-backup"].includes(action) ? options.backupId : null,
       ],
@@ -458,7 +552,8 @@ export class Services {
       version !== 2 &&
       version !== 3 &&
       version !== 4 &&
-      version !== 5
+      version !== 5 &&
+      version !== 6
     )
       throw new AuthError("INCOMPATIBLE_SERVICE_WORKER", 409);
     await this.sql.query(
@@ -581,14 +676,18 @@ export class Services {
       .sort((a, b) => b.length - a.length);
     for (const secret of secrets) logs = logs.replaceAll(secret, "[redacted]");
     if (catalog) {
-      if (!config.catalog) throw new AuthError("INVALID_CATALOG_REPORT");
-      const recipe = template(config.catalog.template, config.catalog.version);
+      if (!isStateful(config)) throw new AuthError("INVALID_CATALOG_REPORT");
+      const recipe = config.catalog
+        ? template(config.catalog.template, config.catalog.version)
+        : { components: [{ id: "web", image: "" }] };
       const names = new Set<string>();
       for (const component of catalog.components) {
         if (
           names.has(component.name) ||
           !recipe.components.some(
-            (c) => c.id === component.name && c.image === component.image,
+            (c) =>
+              c.id === component.name &&
+              (!config.catalog || c.image === component.image),
           )
         )
           throw new AuthError("INVALID_CATALOG_REPORT");
@@ -630,6 +729,24 @@ export class Services {
           component.name,
         );
     }
+  }
+  async resources(id: unknown, body: unknown) {
+    const row = await this.get(id);
+    const config = await this.secrets.open<ServiceSpec>(row.id, row.config);
+    if (
+      !config.catalog ||
+      !["postgres", "redis", "qdrant"].includes(config.catalog.template)
+    )
+      throw new AuthError("INVALID_DATABASE_RESOURCES");
+    config.catalog.resources = object(body) as unknown as NonNullable<
+      typeof config.catalog.resources
+    >;
+    const validated = spec(config);
+    await this.sql.query("UPDATE ephor_service SET config=$1 WHERE id=$2", [
+      await this.secrets.seal(row.id, validated),
+      row.id,
+    ]);
+    await new AuthStore(this.sql).audit("service.resources_configured", row.id);
   }
   async catalogAccess(id: unknown, protection?: boolean) {
     const row = await this.get(id),

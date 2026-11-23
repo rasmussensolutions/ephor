@@ -83,6 +83,7 @@
   --chart-3: oklch(0.62 0.18 295);
   --chart-4: oklch(0.72 0.16 75);
   --chart-5: oklch(0.65 0.19 25);
+  --chart-grid-dot: oklch(0.556 0 0 / 34%);
   --radius: 0.625rem;
   --sidebar: oklch(0.948 0.002 286);
   --sidebar-foreground: oklch(0.145 0 0);
@@ -120,6 +121,7 @@
   --chart-3: oklch(0.62 0.18 295);
   --chart-4: oklch(0.72 0.16 75);
   --chart-5: oklch(0.65 0.19 25);
+  --chart-grid-dot: oklch(1 0 0 / 8%);
   --sidebar: oklch(0.145 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.488 0.243 264.376);
@@ -144,15 +146,68 @@
 
 @layer components {
   .settings-surface,
-  [data-slot="table-container"] {
+  [data-slot="table-container"]:not([data-variant="layered"]) {
     @apply border bg-card;
+  }
+
+  [data-slot="table-container"][data-variant="layered"] {
+    @apply bg-transparent ring-1 ring-border;
+
+    [data-slot="table"] {
+      @apply border-separate border-spacing-0;
+    }
+
+    [data-slot="table-header"] {
+      @apply border-b-0;
+    }
+
+    [data-slot="table-body"] {
+      @apply relative;
+
+      &::after {
+        content: "";
+        @apply pointer-events-none absolute inset-0 z-10 rounded-lg ring-1 ring-border;
+      }
+
+      & > tr > * {
+        @apply border-b bg-card transition-colors;
+      }
+
+      & > tr:hover > * {
+        background-color: color-mix(in oklab, var(--muted) 30%, var(--card));
+      }
+
+      & > tr:first-child > :first-child {
+        @apply rounded-tl-lg;
+      }
+
+      & > tr:first-child > :last-child {
+        @apply rounded-tr-lg;
+      }
+
+      & > tr:last-child > * {
+        @apply border-b-0;
+      }
+
+      & > tr:last-child > :first-child {
+        @apply rounded-bl-lg;
+      }
+
+      & > tr:last-child > :last-child {
+        @apply rounded-br-lg;
+      }
+    }
   }
 
   .settings-surface {
     @apply text-card-foreground;
   }
 
-  .dark :is(.settings-surface, [data-slot="table-container"]) {
+  .dark
+    :is(
+      .settings-surface,
+      [data-slot="table-container"]:not([data-variant="layered"])
+    ) {
     --border: #2d2d2e;
     background-color: #1a1a1b;
     border-color: #222223;

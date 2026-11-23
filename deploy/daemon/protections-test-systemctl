@@ -1,0 +1,11 @@
+#!/bin/sh
+active() { ps -eo stat=,comm= | awk '$2 == "crowdsec" && $1 !~ /^Z/ { found=1 } END { exit !found }'; }
+case "$1" in
+start|restart) /var/lib/ephor-protections/runtime/usr/bin/crowdsec -c /var/lib/ephor-protections/engine/config.yaml >/tmp/crowdsec.log 2>&1 & sleep 2; active ;;
+stop) pkill -x crowdsec || true
+ for i in $(seq 1 100); do active || exit 0; sleep .1; done
+ exit 1 ;;
+is-active) active ;;
+enable|disable) exit 0 ;;
+*) exit 1 ;;
+esac

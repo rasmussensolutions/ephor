@@ -426,3 +426,113 @@ test("permanent email rejection is visible and does not retry or retain credenti
     )[0]?.email_config,
   ).toBeNull();
 });
+
+test("legacy security email backlog is cancelled, history retained and other emails still deliver", async () => {
+  const f = await setup();
+  await f.n.save(config);
+  for (let i = 0; i < 30; i++)
+    await f.n.emit({
+      key: `security:old-${i}`,
+      type: "security_finding",
+      title: "Old CVE",
+      body: "Old body",
+      href: "/security",
+      severity: "warning",
+    });
+  await f.n.emit({
+    key: "backup:unrelated",
+    type: "backup_failed",
+    title: "Backup failed",
+    body: "Needs attention",
+    href: "/backups",
+    severity: "warning",
+  });
+  await f.n.deliver();
+  expect(f.requests).toHaveLength(1);
+  expect(String(f.requests[0]?.init.body)).toContain("Backup failed");
+  const old = await f.sql.query(
+    "SELECT email_status,email_config,read_at,error FROM ephor_notification WHERE event_type='security_finding'",
+  );
+  expect(old).toHaveLength(30);
+  expect(
+    old.every(
+      (r) =>
+        r.email_status === "cancelled" &&
+        r.email_config === null &&
+        r.read_at !== null &&
+        r.error === "SECURITY_DIGEST_REPLACED",
+    ),
+  ).toBe(true);
+});
+test("security digest respects channel preferences and delivery retries retain one identity", async () => {
+  const f = await setup();
+  const preferences = defaultPreferences();
+  preferences.security_finding = { inApp: true, email: false };
+  await f.n.save({ ...config, preferences });
+  const event = {
+    key: "security-digest:first",
+    type: "security_finding" as const,
+    title: "Security review: 2 affected resources",
+    body: "Grouped findings",
+    href: "/security",
+    severity: "warning" as const,
+  };
+  await f.n.emit(event);
+  await f.n.deliver();
+  expect(f.requests).toHaveLength(0);
+  preferences.security_finding = { inApp: false, email: true };
+  await f.n.save({ ...config, preferences });
+  await f.n.emit({ ...event, key: "security-digest:second" });
+  f.respond(() => new Response("retry", { status: 503 }));
+  await f.n.deliver();
+  f.advance(60001);
+  f.respond(() => Response.json({ id: "summary-message" }));
+  await f.n.deliver();
+  expect(f.requests).toHaveLength(2);
+  expect(f.requests[0]?.init.body).toBe(f.requests[1]?.init.body);
+  const rows = await f.sql.query(
+    "SELECT in_app,email_status FROM ephor_notification ORDER BY event_key",
+  );
+  expect(rows).toEqual([
+    { in_app: 1, email_status: "skipped" },
+    { in_app: 0, email_status: "sent" },
+  ]);
+});
+
+test("active legacy email leases are not stolen, and expired leases are not retried", async () => {
+  const f = await setup();
+  await f.n.save(config);
+  const queued = await f.n.emit({
+    key: "security:in-flight",
+    type: "security_finding",
+    title: "Old finding",
+    body: "Already started",
+    href: "/security",
+    severity: "warning",
+  });
+  await f.sql.query(
+    "UPDATE ephor_notification SET email_status='sending',lease_until=$1,lease_owner='old-process',first_attempt=$2 WHERE id=$3",
+    [f.now() + 60000, f.now(), queued.id],
+  );
+  await f.n.deliver();
+  expect(
+    (
+      await f.sql.query(
+        "SELECT email_status FROM ephor_notification WHERE id=$1",
+        [queued.id],
+      )
+    )[0]?.email_status,
+  ).toBe("sending");
+  f.advance(60001);
+  await f.n.deliver();
+  const [row] = await f.sql.query(
+    "SELECT email_status,email_config,error FROM ephor_notification WHERE id=$1",
+    [queued.id],
+  );
+  expect(row).toEqual({
+    email_status: "uncertain",
+    email_config: null,
+    error: "SECURITY_DIGEST_REPLACED",
+  });
+  expect(f.requests).toHaveLength(0);
+});

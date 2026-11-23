@@ -1,4 +1,5 @@
 import type { Machine, MachineList } from "@ephor/api/machines";
+import { CubeIcon } from "@phosphor-icons/react";
 import { CpuIcon } from "@phosphor-icons/react/dist/csr/Cpu";
 import { HardDriveIcon } from "@phosphor-icons/react/dist/csr/HardDrive";
 import { HardDrivesIcon } from "@phosphor-icons/react/dist/csr/HardDrives";
@@ -43,7 +44,7 @@ import {
 } from "@/components/ui/table";
 import { Usage } from "@/components/usage-meter";
 import { api, signIn } from "@/lib/auth";
-import { primaryAddress } from "@/lib/machine-address";
+import { currentMachineMetrics } from "@/lib/machine-metrics";
 import { machineSummary } from "@/lib/machine-summary";
 
 export const Route = createFileRoute("/_authenticated/machines")({
@@ -262,7 +263,7 @@ function MachinesPage() {
               </DialogTrigger>
             </div>
           ) : (
-            <Table className="[&_td]:px-3 [&_th]:px-3">
+            <Table variant="layered" className="[&_td]:px-3 [&_th]:px-3">
               <caption className="sr-only">
                 Machines and their latest resource usage
               </caption>
@@ -270,7 +271,6 @@ function MachinesPage() {
                 <TableRow>
                   {[
                     "Machine",
-                    "IP address",
                     "Provider",
                     "Status",
                     "CPU",
@@ -289,6 +289,7 @@ function MachinesPage() {
                   <MachineRow
                     key={machine.id}
                     machine={machine}
+                    now={now}
                     hasCommand={activeEnrollment?.id === machine.id}
                     actionDialogOpen={machineAction?.machine.id === machine.id}
                     onAction={(action) => setMachineAction({ machine, action })}
@@ -316,10 +317,10 @@ function MachinesPage() {
             </DialogTitle>
             <DialogDescription>
               {activeEnrollment
-                ? "Installs monitoring and deployments, including Docker and build tools on Ubuntu and Debian. Requires sudo, curl, and systemd."
+                ? "Installs monitoring, deployments and Security, including Docker, build tools and vulnerability scanning. Requires sudo, curl, and systemd."
                 : enrollmentMachineId
                   ? "Generate a new install command for this machine. Its previous command will stop working."
-                  : "Connect a Linux VPS for monitoring and deployments. Requires systemd and outbound HTTPS."}
+                  : "Connect a Linux VPS for monitoring, deployments and Security. Requires systemd and outbound HTTPS."}
             </DialogDescription>
           </DialogHeader>
           <DialogBody className="space-y-6">
@@ -335,9 +336,11 @@ function MachinesPage() {
                   </p>
                 )}
                 {(!data.installer.architectures.length ||
-                  !data.installer.deployments) && (
+                  !data.installer.deployments ||
+                  !data.installer.security) && (
                   <p className="text-muted-foreground">
-                    This panel needs a deployment-capable Linux agent build. Run{" "}
+                    This panel needs a Linux agent build with deployment and
+                    Security support. Run{" "}
                     <code className="text-foreground">
                       bun run bundle:daemon
                     </code>{" "}
@@ -355,8 +358,8 @@ function MachinesPage() {
                 <p className="text-sm text-muted-foreground">
                   {enrolledMachine?.deploymentWorker &&
                   enrolledMachine.deploymentWorker.lastSeen > now - 120000
-                    ? "Your machine is ready for deployments."
-                    : "Keep the installer running until deployment setup finishes. If it fails, open this machine’s settings to complete setup."}
+                    ? "Deployments are connected. Let the installer finish, then check the Security tab for collector status."
+                    : "Keep the installer running until deployments and Security finish setting up. If either fails, use Settings for deployment repair or the Security tab for collector setup."}
                 </p>
                 <Button
                   variant="outline"
@@ -517,7 +520,7 @@ function MachineSummaryCards({
   const cards = [
     {
       label: "Machines online",
-      icon: HardDrivesIcon,
+      icon: CubeIcon,
       value: `${summary.online} / ${summary.total}`,
       segments: { filled: summary.online, total: summary.total },
       detail:
@@ -573,20 +576,22 @@ function relativeTime(timestamp: number) {
 }
 function MachineRow({
   machine,
+  now,
   hasCommand,
   onEnrollment,
   onAction,
   actionDialogOpen,
 }: {
   machine: Machine;
+  now: number;
   hasCommand: boolean;
   onEnrollment: () => void;
   onAction: (action: "rename" | "disconnect") => void;
   actionDialogOpen: boolean;
 }) {
-  const metrics = machine.telemetry;
+  const metrics = currentMachineMetrics(machine, now);
   const root = metrics?.disks.find((disk) => disk.mount === "/");
-  const address = primaryAddress(metrics?.ipAddresses);
+
   const detailsLink = useRef<HTMLAnchorElement>(null);
   return (
     <ContextMenu>
@@ -627,22 +632,19 @@ function MachineRow({
             ref={detailsLink}
             to="/machines/$machineId"
             params={{ machineId: machine.id }}
-            className="block w-full min-w-0 rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="flex w-full min-w-0 items-center gap-2 rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <span className="block max-w-full truncate text-sm font-medium">
+            <CubeIcon
+              aria-hidden="true"
+              className="size-4 shrink-0 text-muted-foreground"
+            />
+            <span className="block min-w-0 max-w-full truncate text-sm font-medium">
               {machine.name}
             </span>
             <span className="sr-only">Show machine details</span>
           </Link>
         </TableHead>
-        <TableCell className="font-mono text-xs text-muted-foreground">
-          <span
-            className="block max-w-36 truncate"
-            title={address ?? undefined}
-          >
-            {address ?? "—"}
-          </span>
-        </TableCell>
+
         <TableCell
           className="whitespace-nowrap text-xs"
           title={
@@ -652,17 +654,12 @@ function MachineRow({
           }
         >
           <ProviderLabel
-            name={machine.providerOverride ?? metrics?.hosting?.provider}
+            name={
+              machine.providerOverride ?? machine.telemetry?.hosting?.provider
+            }
           />
         </TableCell>
-        <TableCell
-          className="whitespace-nowrap text-xs text-muted-foreground"
-          title={
-            metrics && machine.status !== "online"
-              ? "Usage shows last reported values, not live metrics."
-              : undefined
-          }
-        >
+        <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
           {machine.status === "pending" || machine.status === "expired" ? (
             <DialogTrigger
               render={<Button variant="raised" size="sm" />}

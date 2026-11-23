@@ -11,6 +11,16 @@ pub(super) struct Selection {
     template: String,
     version: u32,
     protected: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    resources: Option<Resources>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Resources {
+    memory_mb: u32,
+    cpus: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    redis_maxmemory_mb: Option<u32>,
 }
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -55,6 +65,8 @@ pub(super) struct Backup {
     id: String,
     created_at: u64,
     volumes: BTreeMap<String, String>,
+    #[serde(default)]
+    spec: Option<Spec>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct App {
@@ -65,12 +77,45 @@ pub(super) struct App {
     backups: Vec<Backup>,
     port: u16,
     access_hash: String,
-    recovery_required: bool,
+    pub(super) recovery_required: bool,
 }
 fn definitions() -> Result<Definitions> {
     Ok(serde_json::from_str(DEFINITIONS)?)
 }
 fn recipe(job: &Job) -> Result<Template> {
+    if !job.spec.volumes.is_empty() {
+        validate_volumes(&job.spec)?;
+        return Ok(Template {
+            id: "custom".into(),
+            version: 1,
+            web: true,
+            secrets: vec![],
+            components: vec![Component {
+                id: "web".into(),
+                image: job.spec.image.clone(),
+                port: job.spec.port,
+                memory_mb: job.spec.memory_mb,
+                cpus: job.spec.cpus,
+                user: "65532:65532".into(),
+                environment: job.spec.environment.clone(),
+                volumes: job
+                    .spec
+                    .volumes
+                    .iter()
+                    .map(|v| Volume {
+                        key: v.name.clone(),
+                        target: v.mount_path.clone(),
+                        uid: 65532,
+                    })
+                    .collect(),
+                health: vec!["NONE".into()],
+                command: vec![],
+                capabilities: vec![],
+                tmpfs: BTreeMap::new(),
+                internal: false,
+            }],
+        });
+    }
     let selection = job.spec.catalog.as_ref().context("Not a catalog app")?;
     definitions()?
         .templates
@@ -79,6 +124,9 @@ fn recipe(job: &Job) -> Result<Template> {
         .context("CATALOG_WORKER_REQUIRED")
 }
 fn raw_recipe(t: &Template) -> Value {
+    if t.id == "custom" {
+        return json!({"customStorageVersion":1,"volumes":t.components[0].volumes.iter().map(|v| json!({"name":v.key,"mountPath":v.target})).collect::<Vec<_>>()});
+    }
     let value: Value = serde_json::from_str(DEFINITIONS).expect("Compiled catalog JSON");
     value["templates"]
         .as_array()
@@ -120,26 +168,47 @@ fn compatible_recipe_hash(saved: &str, t: &Template) -> bool {
 }
 pub(super) fn validate(job: &Job) -> Result<()> {
     let t = recipe(job)?;
+    if let Some(r) = job.spec.catalog.as_ref().and_then(|c| c.resources.as_ref()) {
+        ensure!(
+            ["postgres", "redis", "qdrant"].contains(&t.id.as_str())
+                && (128..=65536).contains(&r.memory_mb)
+                && r.cpus.is_finite()
+                && (0.1..=32.0).contains(&r.cpus),
+            "Invalid database resources"
+        );
+        ensure!(
+            if t.id == "redis" {
+                r.redis_maxmemory_mb
+                    .is_some_and(|m| m >= 16 && m <= r.memory_mb * 3 / 4)
+            } else {
+                r.redis_maxmemory_mb.is_none()
+            },
+            "Invalid Redis memory limit"
+        );
+    }
     ensure!(
         t.components.len() <= 8 && !t.components.is_empty(),
         "Invalid template"
     );
     ensure!(
         job.spec.image == t.components.last().context("No main component")?.image
-            && job.spec.registry.is_none(),
+            && (t.id == "custom" || job.spec.registry.is_none()),
         "Catalog image override rejected"
     );
     ensure!(
-        job.spec.environment.len() == t.secrets.len()
-            && t.secrets.iter().all(|k| job
-                .spec
-                .environment
-                .get(k)
-                .is_some_and(|v| v.len() == 64 && v.bytes().all(|b| b.is_ascii_hexdigit()))),
+        t.id == "custom"
+            || (job.spec.environment.len() == t.secrets.len()
+                && t.secrets.iter().all(|k| job
+                    .spec
+                    .environment
+                    .get(k)
+                    .is_some_and(|v| v.len() == 64 && v.bytes().all(|b| b.is_ascii_hexdigit())))),
         "Invalid catalog secrets"
     );
     ensure!(
-        if t.web {
+        if t.id == "custom" {
+            true
+        } else if t.web {
             job.domain.is_some()
         } else {
             job.domain.is_none()
@@ -174,6 +243,7 @@ pub(super) fn connect(container: &str, connection: &Connection) -> Result<()> {
     let component = match connection.template.as_str() {
         "postgres" => "database",
         "redis" => "redis",
+        "qdrant" => "qdrant",
         _ => anyhow::bail!("Unsupported service connection"),
     };
     let target = inspect(&name(sid, component))?;
@@ -349,7 +419,12 @@ pub(super) fn remove_owned(n: &str, sid: &str) -> Result<()> {
 fn config(job: &Job, c: &Component, app: &App) -> Result<Value> {
     let sid = &job.service_id;
     let mut env = c.environment.clone();
-    for value in env.values_mut() {
+    if !job.spec.volumes.is_empty() {
+        env.entry("PORT".into())
+            .or_insert(job.spec.port.to_string());
+        env.entry("HOST".into()).or_insert("0.0.0.0".into());
+    }
+    for value in env.values_mut().filter(|_| job.spec.volumes.is_empty()) {
         for (key, secret) in &job.spec.environment {
             *value = value.replace(&format!("${{{key}}}"), secret);
         }
@@ -365,9 +440,31 @@ fn config(job: &Job, c: &Component, app: &App) -> Result<Value> {
         .collect::<Vec<_>>();
     let mut tmpfs = c.tmpfs.clone();
     tmpfs.insert("/tmp".into(), "rw,nosuid,size=128m,mode=1777".into());
-    let mut body = json!({"Image":c.image,"User":c.user,"Env":env.iter().map(|(k,v)|format!("{k}={v}")).collect::<Vec<_>>(),"Labels":labels(sid,"component"),"Healthcheck":{"Test":c.health,"Interval":5_000_000_000_u64,"Timeout":3_000_000_000_u64,"Retries":3,"StartPeriod":20_000_000_000_u64},"HostConfig":{"NetworkMode":n,"RestartPolicy":{"Name":"unless-stopped"},"ReadonlyRootfs":true,"CapDrop":["ALL"],"CapAdd":c.capabilities,"SecurityOpt":["no-new-privileges"],"Tmpfs":tmpfs,"Mounts":mounts,"Memory":u64::from(c.memory_mb)*1024*1024,"MemorySwap":u64::from(c.memory_mb)*1024*1024,"NanoCpus":(c.cpus*1e9) as u64,"PidsLimit":256,"LogConfig":{"Type":"local","Config":{"max-size":"10m","max-file":"3"}}},"NetworkingConfig":{"EndpointsConfig":{n:{"Aliases":[c.id]}}}});
+    let mut body = json!({"Image":if c.image.starts_with("ephor.local/") {c.image.split_once('@').map(|(_,d)|d).unwrap_or(&c.image)} else {&c.image},"User":c.user,"Env":env.iter().map(|(k,v)|format!("{k}={v}")).collect::<Vec<_>>(),"Labels":labels(sid,"component"),"Healthcheck":{"Test":c.health,"Interval":5_000_000_000_u64,"Timeout":3_000_000_000_u64,"Retries":3,"StartPeriod":20_000_000_000_u64},"HostConfig":{"NetworkMode":n,"RestartPolicy":{"Name":"unless-stopped"},"ReadonlyRootfs":true,"CapDrop":["ALL"],"CapAdd":c.capabilities,"SecurityOpt":["no-new-privileges"],"Tmpfs":tmpfs,"Mounts":mounts,"Memory":u64::from(c.memory_mb)*1024*1024,"MemorySwap":u64::from(c.memory_mb)*1024*1024,"NanoCpus":(c.cpus*1e9) as u64,"PidsLimit":256,"LogConfig":{"Type":"local","Config":{"max-size":"10m","max-file":"3"}}},"NetworkingConfig":{"EndpointsConfig":{n:{"Aliases":[c.id]}}}});
+    if !job.spec.volumes.is_empty() {
+        body["HostConfig"]["Init"] = json!(true);
+    }
+    if let Some(r) = job.spec.catalog.as_ref().and_then(|c| c.resources.as_ref()) {
+        body["HostConfig"]["Memory"] = json!(u64::from(r.memory_mb) * 1024 * 1024);
+        body["HostConfig"]["MemorySwap"] = body["HostConfig"]["Memory"].clone();
+        body["HostConfig"]["NanoCpus"] = json!((r.cpus * 1e9) as u64);
+    }
     if !c.command.is_empty() {
         body["Cmd"] = json!(c.command);
+        if let Some(m) = job
+            .spec
+            .catalog
+            .as_ref()
+            .and_then(|c| c.resources.as_ref())
+            .and_then(|r| r.redis_maxmemory_mb)
+        {
+            body["Cmd"] = json!(
+                c.command
+                    .iter()
+                    .map(|s| s.replace("--maxmemory 96mb", &format!("--maxmemory {m}mb")))
+                    .collect::<Vec<_>>()
+            );
+        }
     }
     if main {
         body["HostConfig"]["PortBindings"] =
@@ -424,12 +521,15 @@ fn start_components(job: &Job, app: &App, t: &Template) -> Result<()> {
                 json!({"Container":n,"EndpointConfig":{"Aliases":[c.id]}}),
             )?;
         }
+        for connection in &job.spec.connections {
+            connect(&n, connection)?;
+        }
         d(&["start", &n], 30)?;
         let start = Instant::now();
         let mut passes = 0;
         while start.elapsed() < Duration::from_secs(180) {
             let v = inspect(&n)?;
-            if v["State"]["Health"]["Status"] == "healthy" {
+            if component_healthy(job, app, c, &v) {
                 passes += 1;
             } else {
                 passes = 0;
@@ -456,6 +556,7 @@ fn cold_backup(sid: &str, app: &mut App, backup_id: &str) -> Result<()> {
         volumes.insert(key.clone(), dst);
     }
     app.backups.push(Backup {
+        spec: Some(app.job.spec.clone()),
         id: backup_id.into(),
         created_at: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
@@ -474,6 +575,12 @@ fn revision(job: &Job, app: &App, t: &Template) -> Revision {
     }
 }
 pub(super) fn apply(state: &mut State, settings: &Settings, job: &Job) -> Result<()> {
+    // Resolve a custom image to an immutable identity before persisting its state.
+    let mut pinned = job.clone();
+    if !pinned.spec.volumes.is_empty() && job.action != "stop" {
+        pinned.spec.image = pull(&pinned.spec).context("IMAGE_PULL_FAILED")?;
+    }
+    let job = &pinned;
     let t = recipe(job)?;
     let sid = &job.service_id;
     ensure!(
@@ -485,10 +592,29 @@ pub(super) fn apply(state: &mut State, settings: &Settings, job: &Job) -> Result
         "DOCKER_VERSION_REQUIRED"
     );
     let existing = state.services.get(sid).and_then(|s| s.app.clone());
+    ensure!(
+        existing.is_some()
+            || state
+                .services
+                .get(sid)
+                .is_none_or(|s| s.active.is_none() && s.previous.is_none()),
+        "Cannot convert a deployed stateless service in place"
+    );
     if let Some(app) = &existing {
+        if t.id == "custom" && !["deploy", "import"].contains(&job.action.as_str()) {
+            ensure!(
+                !app.recovery_required || job.action == "stop",
+                "CATALOG_RECOVERY_REQUIRED"
+            );
+            ensure!(
+                app.job.spec.image == job.spec.image
+                    && app.job.spec.environment == job.spec.environment,
+                "Deployed configuration changed; recover explicitly"
+            );
+        }
         ensure!(
             compatible_recipe_hash(&app.recipe_hash, &t)
-                && app.job.spec.environment == job.spec.environment,
+                && (t.id == "custom" || app.job.spec.environment == job.spec.environment),
             "CATALOG_RECIPE_MISMATCH"
         );
     }
@@ -519,6 +645,28 @@ pub(super) fn apply(state: &mut State, settings: &Settings, job: &Job) -> Result
     if job.action != "stop" {
         let mut system = sysinfo::System::new();
         system.refresh_memory();
+        let requested = job
+            .spec
+            .catalog
+            .as_ref()
+            .and_then(|c| c.resources.as_ref())
+            .map_or_else(
+                || {
+                    t.components
+                        .iter()
+                        .map(|c| u64::from(c.memory_mb))
+                        .sum::<u64>()
+                },
+                |r| u64::from(r.memory_mb),
+            );
+        let previous = existing
+            .as_ref()
+            .map_or(0, |a| u64::from(a.job.spec.memory_mb));
+        ensure!(
+            system.available_memory()
+                > requested.saturating_sub(previous) * 1024 * 1024 + 128 * 1024 * 1024,
+            "INSUFFICIENT_CAPACITY"
+        );
         if existing.is_none() {
             ensure!(
                 system.available_memory()
@@ -561,7 +709,7 @@ pub(super) fn apply(state: &mut State, settings: &Settings, job: &Job) -> Result
                 .collect(),
             backups: vec![],
             port: listener.local_addr()?.port(),
-            access_hash: if t.web {
+            access_hash: if t.web && t.id != "custom" {
                 bcrypt::hash(&job.spec.environment["ACCESS_PASSWORD"], 12)?
             } else {
                 String::new()
@@ -587,6 +735,16 @@ pub(super) fn apply(state: &mut State, settings: &Settings, job: &Job) -> Result
     } else {
         None
     };
+    if let Some(ref snapshot) = restore {
+        if t.id == "custom" {
+            ensure!(
+                snapshot.spec.as_ref().is_some_and(
+                    |s| s.image == job.spec.image && s.environment == job.spec.environment
+                ),
+                "Restore this snapshot into a separate service; current image or variables differ"
+            );
+        }
+    }
     let was_running = state.services.get(sid).is_some_and(|s| s.active.is_some());
     // Persist the full plan before resource creation. Failed or interrupted stateful
     // operations are stopped and explicitly resumed; data is never auto-rolled back.
@@ -662,6 +820,8 @@ pub(super) fn apply(state: &mut State, settings: &Settings, job: &Job) -> Result
         save(state)?;
     }
     app.job = job.clone();
+    state.services.get_mut(sid).context("No service")?.app = Some(app.clone());
+    save(state)?;
     if job.action != "backup" || was_running {
         start_components(job, &app, &t)?;
         let r = revision(job, &app, &t);
@@ -719,12 +879,36 @@ pub(super) fn recover(
     j.error = Some(error.into());
     save(state)
 }
+fn component_healthy(job: &Job, app: &App, c: &Component, info: &Value) -> bool {
+    if info["State"]["Running"] != true {
+        return false;
+    }
+    if !job.spec.volumes.is_empty()
+        || job
+            .spec
+            .catalog
+            .as_ref()
+            .is_some_and(|s| s.template == "qdrant")
+    {
+        let path = if c.id == "qdrant" {
+            "/readyz"
+        } else {
+            &job.spec.health_path
+        };
+        return health_client().is_ok_and(|client| {
+            client
+                .get(format!("http://127.0.0.1:{}{}", app.port, path))
+                .send()
+                .is_ok_and(|r| r.status().is_success())
+        });
+    }
+    info["State"]["Health"]["Status"] == "healthy"
+}
 pub(super) fn healthy(app: &App) -> bool {
     recipe(&app.job).is_ok_and(|t| {
         t.components.iter().all(|c| {
-            inspect(&name(&app.job.service_id, &c.id)).is_ok_and(|v| {
-                v["State"]["Running"] == true && v["State"]["Health"]["Status"] == "healthy"
-            })
+            inspect(&name(&app.job.service_id, &c.id))
+                .is_ok_and(|v| component_healthy(&app.job, app, c, &v))
         })
     })
 }
@@ -770,7 +954,7 @@ pub(super) fn telemetry(
         let status = match &info {
             None => "missing",
             Some(v) if v["State"]["Running"] != true => "stopped",
-            Some(v) if v["State"]["Health"]["Status"] == "healthy" => "running",
+            Some(v) if component_healthy(&app.job, app, c, v) => "running",
             _ => "unhealthy",
         };
         let component_logs = report_logs(
@@ -892,6 +1076,7 @@ mod tests {
             template: t.id.clone(),
             version: t.version,
             protected: t.web,
+            resources: None,
         });
         job.spec.environment = t
             .secrets
@@ -1205,6 +1390,66 @@ mod tests {
                     .status();
                 assert!(authenticated.is_success() || authenticated.is_redirection());
             }
+            if ["postgres", "redis"].contains(&t.id.as_str()) {
+                job.spec.catalog.as_mut().unwrap().resources = Some(Resources {
+                    memory_mb: 512,
+                    cpus: 1.5,
+                    redis_maxmemory_mb: (t.id == "redis").then_some(256),
+                });
+                job.spec.memory_mb = 512;
+                job.spec.cpus = 1.5;
+                job.id = uid();
+                super::super::apply(&mut state, &settings, &job).unwrap();
+                let info = inspect(&name(&job.service_id, &t.components[0].id)).unwrap();
+                assert_eq!(info["HostConfig"]["Memory"], 512 * 1024 * 1024);
+                assert_eq!(info["HostConfig"]["NanoCpus"], 1_500_000_000);
+                if t.id == "redis" {
+                    assert!(
+                        d(
+                            &[
+                                "exec",
+                                &name(&job.service_id, "redis"),
+                                "redis-cli",
+                                "CONFIG",
+                                "GET",
+                                "maxmemory"
+                            ],
+                            20
+                        )
+                        .unwrap()
+                        .contains("268435456")
+                    );
+                }
+            }
+            if t.id == "qdrant" {
+                let client = Client::new();
+                let base = format!("http://127.0.0.1:{}", app.port);
+                assert!(
+                    !client
+                        .get(format!("{base}/collections"))
+                        .send()
+                        .unwrap()
+                        .status()
+                        .is_success()
+                );
+                assert!(
+                    client
+                        .put(format!("{base}/collections/durable"))
+                        .header("api-key", &job.spec.environment["API_KEY"])
+                        .json(&json!({"vectors":{"size":2,"distance":"Cosine"}}))
+                        .send()
+                        .unwrap()
+                        .status()
+                        .is_success()
+                );
+                assert!(client.put(format!("{base}/collections/durable/points?wait=true")).header("api-key", &job.spec.environment["API_KEY"]).json(&json!({"points":[{"id":1,"vector":[1.0,0.0],"payload":{"value":"before"}}]})).send().unwrap().status().is_success());
+                let ip = inspect(&name(&job.service_id,"qdrant")).unwrap()["NetworkSettings"]["Networks"][network(&job.service_id,false)]["IPAddress"].as_str().unwrap().to_string();
+                std::net::TcpStream::connect_timeout(
+                    &format!("{ip}:6334").parse().unwrap(),
+                    Duration::from_secs(3),
+                )
+                .expect("Private gRPC listener");
+            }
             // Write a marker to every persistent volume, including dependency databases.
             for vol in app.volumes.values() {
                 helper(
@@ -1278,6 +1523,19 @@ mod tests {
             super::super::apply(&mut state, &settings, &job).unwrap();
             let restored = state.services[&job.service_id].app.clone().unwrap();
             assert_ne!(restored.volumes, app.volumes);
+            if t.id == "qdrant" {
+                let point: Value = Client::new()
+                    .get(format!(
+                        "http://127.0.0.1:{}/collections/durable/points/1",
+                        restored.port
+                    ))
+                    .header("api-key", &job.spec.environment["API_KEY"])
+                    .send()
+                    .unwrap()
+                    .json()
+                    .unwrap();
+                assert_eq!(point["result"]["payload"]["value"], "before");
+            }
             for vol in restored.volumes.values() {
                 helper(
                     &job.service_id,
@@ -1547,7 +1805,19 @@ pub(super) fn validate_import(job: &Job, source: &str, manifest: &ExportManifest
         "Backup recipe mismatch"
     );
     ensure!(
-        manifest.spec.image == job.spec.image
+        manifest.spec.volumes == job.spec.volumes
+            && serde_json::to_value(
+                manifest
+                    .spec
+                    .catalog
+                    .as_ref()
+                    .and_then(|c| c.resources.as_ref())
+            )? == serde_json::to_value(
+                job.spec.catalog.as_ref().and_then(|c| c.resources.as_ref())
+            )?
+            && manifest.spec.port == job.spec.port
+            && manifest.spec.health_path == job.spec.health_path
+            && manifest.spec.image == job.spec.image
             && manifest.spec.environment == job.spec.environment
             && manifest
                 .spec
@@ -1617,7 +1887,7 @@ pub(super) fn import(
         volumes,
         backups: vec![],
         port: listener.local_addr()?.port(),
-        access_hash: if t.web {
+        access_hash: if t.web && t.id != "custom" {
             bcrypt::hash(&job.spec.environment["ACCESS_PASSWORD"], 12)?
         } else {
             String::new()

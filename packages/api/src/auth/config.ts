@@ -8,6 +8,11 @@ export interface AuthEnvironment {
   secret: string;
   database: BetterAuthOptions["database"];
   sql: Sql;
+  deployment?: {
+    runtime: "cloudflare-worker" | "node" | "bun";
+    frontend: "same-runtime" | "unknown";
+    host?: "railway" | "vps" | "other";
+  };
   setupCode?: string;
   releaseUrl?: string;
   releasePublicKey?: string;

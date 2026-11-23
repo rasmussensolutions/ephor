@@ -118,6 +118,24 @@ test("deployment worker credentials cannot act as monitor or owner credentials, 
     401,
   );
 });
+test("build polling cannot downgrade deployment capabilities, but a real worker downgrade can", async () => {
+  const f = await setup();
+  await agent(f.app, "next", f.worker, { protocol: 6 });
+  expect(
+    (await agent(f.app, "build-next", f.worker, { protocol: 5 })).status,
+  ).toBe(200);
+  let [worker] = await f.sql.query(
+    "SELECT version FROM ephor_service_worker WHERE machine_id=$1",
+    [f.machineId],
+  );
+  expect(worker?.version).toBe("6");
+  await agent(f.app, "next", f.worker, { protocol: 5 });
+  [worker] = await f.sql.query(
+    "SELECT version FROM ephor_service_worker WHERE machine_id=$1",
+    [f.machineId],
+  );
+  expect(worker?.version).toBe("5");
+});
 test("one-use worker enrollment cannot be stolen or reused with another credential", async () => {
   const f = await setup(),
     token = await f.services.issueWorker(f.machineId);
@@ -126,12 +144,14 @@ test("one-use worker enrollment cannot be stolen or reused with another credenti
     monitor = randomToken();
   await f.machines.enroll(ticket.token, monitor);
   const grant = await f.services.issueWorker(ticket.id),
-    credential = randomToken();
-  const results = await Promise.allSettled([
-    f.services.enroll(grant, credential),
-    f.services.enroll(grant, randomToken()),
-  ]);
+    credentials = [randomToken(), randomToken()];
+  const results = await Promise.allSettled(
+    credentials.map((credential) => f.services.enroll(grant, credential)),
+  );
   expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+  const credential = credentials[
+    results.findIndex((r) => r.status === "fulfilled")
+  ] as string;
   await f.services.enroll(grant, credential);
   await f.sql.query(
     "UPDATE ephor_service_worker SET enrollment_expires=0 WHERE machine_id=$1",
@@ -306,9 +326,12 @@ test("rejects command injection, host paths, domain wildcards, unsafe resource l
     { environment: { BAD: "\0" } },
   ])
     expect(() => spec({ ...config, ...patch })).toThrow();
-  expect(
+  expect(() =>
     spec({ ...config, privileged: true, volumes: ["/:/host"] }),
-  ).not.toHaveProperty("privileged");
+  ).toThrow();
+  expect(spec({ ...config, privileged: true })).not.toHaveProperty(
+    "privileged",
+  );
 });
 test("GitHub deployment verifies signature and binds repository identity, branch, workflow and audience", async () => {
   const key = await generateKeyPair("RS256"),

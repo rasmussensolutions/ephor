@@ -5,9 +5,10 @@ import type { ServiceRow } from "./store";
 
 // References are whole values, never arbitrary interpolation or executable expressions.
 export function connectionReference(value: string) {
-  const match = /^\$\{\{([a-f0-9-]{36})\.(DATABASE_URL|REDIS_URL)\}\}$/.exec(
-    value,
-  );
+  const match =
+    /^\$\{\{([a-f0-9-]{36})\.(DATABASE_URL|REDIS_URL|QDRANT_URL|QDRANT_GRPC_URL|QDRANT_API_KEY)\}\}$/.exec(
+      value,
+    );
   if (!match) {
     if (value.includes("${{"))
       throw new AuthError("INVALID_VARIABLE_REFERENCE");
@@ -46,6 +47,12 @@ function exported(config: ServiceSpec) {
       template: "redis" as const,
       variable: "REDIS_URL",
       component: "redis",
+    };
+  if (config.catalog.template === "qdrant")
+    return {
+      template: "qdrant" as const,
+      variable: "QDRANT_URL",
+      component: "qdrant",
     };
   return null;
 }
@@ -98,13 +105,16 @@ export class ServiceConnections {
       );
       const item = exported(config);
       if (!item) continue;
-      suggestions.push({
-        serviceId: source.id,
-        serviceName: source.name,
-        template: item.template,
-        variable: item.variable,
-        reference: referenceValue(source.id, item.variable),
-      });
+      for (const variable of item.template === "qdrant"
+        ? ["QDRANT_URL", "QDRANT_GRPC_URL", "QDRANT_API_KEY"]
+        : [item.variable])
+        suggestions.push({
+          serviceId: source.id,
+          serviceName: source.name,
+          template: item.template,
+          variable,
+          reference: referenceValue(source.id, variable),
+        });
     }
     return suggestions;
   }
@@ -142,14 +152,28 @@ export class ServiceConnections {
         sources.set(ref.serviceId, source);
       }
       const item = exported(source.config);
-      const password = source.config.environment.DB_PASSWORD;
-      if (!item || ref.variable !== item.variable || !password)
+      const password =
+        source.config.environment.DB_PASSWORD ??
+        source.config.environment.API_KEY;
+      if (
+        !item ||
+        !(item.template === "qdrant"
+          ? ["QDRANT_URL", "QDRANT_GRPC_URL", "QDRANT_API_KEY"].includes(
+              ref.variable,
+            )
+          : ref.variable === item.variable) ||
+        !password
+      )
         throw new AuthError("CONNECTION_SOURCE_UNAVAILABLE", 409);
       const host = `ephor-app-${source.row.id}-${item.component}`;
       environment[name] =
-        item.template === "postgres"
-          ? `postgresql://ephor:${encodeURIComponent(password)}@${host}:5432/app`
-          : `redis://:${encodeURIComponent(password)}@${host}:6379/0`;
+        item.template === "qdrant"
+          ? ref.variable === "QDRANT_API_KEY"
+            ? password
+            : `http://${host}:${ref.variable === "QDRANT_GRPC_URL" ? 6334 : 6333}`
+          : item.template === "postgres"
+            ? `postgresql://ephor:${encodeURIComponent(password)}@${host}:5432/app`
+            : `redis://:${encodeURIComponent(password)}@${host}:6379/0`;
       connections.set(source.row.id, {
         serviceId: source.row.id,
         template: item.template,

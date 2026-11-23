@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./panel": "./src/panel/types.ts",
+    "./protections": "./src/protections/types.ts",
+    "./security": "./src/security/types.ts",
     "./ai": "./src/ai/types.ts",
     ".": "./src/index.ts",
     "./machines": "./src/machines/store.ts",

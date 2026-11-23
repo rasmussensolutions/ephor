@@ -90,6 +90,10 @@ export function describeActivity(path: string, body: Body): Description {
       type: "service",
       created: true,
     },
+    "/api/services/map-positions": {
+      action: "Arrange services on map",
+      type: "service",
+    },
     "/api/services/catalog/deploy": {
       action: "Deploy catalog app",
       type: "service",
@@ -142,6 +146,22 @@ export function describeActivity(path: string, body: Body): Description {
     "/api/notifications/settings": { action: "Update notification settings" },
     "/api/notifications/test": { action: "Send test notification" },
     "/api/security/recovery-codes": { action: "Regenerate recovery codes" },
+    "/api/security/collector": {
+      action: "Enroll security collector",
+      type: "machine",
+      id: body.machineId,
+    },
+    "/api/security/collector/revoke": {
+      action: "Revoke security collector",
+      type: "machine",
+      id: body.machineId,
+    },
+    "/api/security/scan": {
+      action: "Request security scan",
+      type: body.serviceId ? "service" : "machine",
+      id: body.serviceId || body.machineId,
+    },
+    "/api/security/settings": { action: "Change security retention" },
     "/api/security/passkeys/remove": {
       action: "Remove passkey",
       type: "passkey",

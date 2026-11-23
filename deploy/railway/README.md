@@ -31,3 +31,17 @@ and include the generated `apps/dashboard/public/daemon/` artifacts in your buil
 context/deployed assets. Git-only deployments do not include these gitignored
 artifacts automatically. The panel must have a public HTTPS origin; `/api/*` and
 `/daemon/*` must be reachable by the VPS. See [connecting machines](../../docs/machines.md).
+
+## Panel updates
+
+Open **Updates** in Ephor and connect its dedicated Updates GitHub App to the
+repository that hosts this panel. Select your host and deployment method.
+For a GitHub-connected Railway service with autodeploy enabled, select **My host
+deploys GitHub pushes**. Use the repository default branch as the production
+branch and configure the migration pre-deploy command above. Keep preview/PR
+environments isolated from production data. Image-based or manually deployed
+services should select **I deploy updates manually** instead.
+
+Ephor separates repository progress from the version actually serving requests.
+See the [panel update guide](../../docs/panel-updates.md) for the full review flow,
+required GitHub permissions, and upgrading older installations.

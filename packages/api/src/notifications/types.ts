@@ -1,5 +1,19 @@
 export const notificationEvents = [
   {
+    id: "security_finding",
+    label: "Security findings digest",
+    description:
+      "Grouped high/critical findings, at most one summary every 24 hours. Unchanged findings are not repeated.",
+    enabled: true,
+  },
+  {
+    id: "security_coverage_lost",
+    label: "Security monitoring unavailable",
+    description:
+      "A security helper has not reported for 30 minutes; reminders once a day.",
+    enabled: true,
+  },
+  {
     id: "backup_failed",
     label: "Backup failed",
     description:

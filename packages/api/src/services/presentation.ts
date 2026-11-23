@@ -1,6 +1,6 @@
 import { AuthError, AuthStore, type Sql } from "../auth/store";
 import { template } from "./catalog";
-import { object, type ServiceSpec } from "./spec";
+import { object, type ServiceSpec, serviceId } from "./spec";
 import { Services } from "./store";
 
 export const groupColors = [
@@ -27,6 +27,99 @@ function displayName(value: unknown) {
     throw new AuthError("INVALID_DISPLAY_NAME");
   return value.trim();
 }
+export async function updateMapPositions(sql: Sql, body: unknown) {
+  const b = object(body);
+  // D1 allows 100 bound parameters; 32 roots use 96 in the atomic upsert.
+  if (
+    Object.keys(b).some((key) => key !== "positions") ||
+    !Array.isArray(b.positions) ||
+    b.positions.length < 1 ||
+    b.positions.length > 32
+  )
+    throw new AuthError("INVALID_MAP_POSITION");
+  const ids = new Set<string>();
+  const values: unknown[] = [];
+  const rows = b.positions.map((value, index) => {
+    const point = object(value),
+      id = serviceId(point.id);
+    if (
+      Object.keys(point).some((key) => !["id", "x", "y"].includes(key)) ||
+      ids.has(id) ||
+      ![point.x, point.y].every(
+        (coordinate) =>
+          typeof coordinate === "number" &&
+          Number.isFinite(coordinate) &&
+          coordinate >= 0 &&
+          coordinate <= 20000,
+      )
+    )
+      throw new AuthError("INVALID_MAP_POSITION");
+    ids.add(id);
+    values.push(id, point.x, point.y);
+    return `($${index * 3 + 1},'',$${index * 3 + 2},$${index * 3 + 3})`;
+  });
+  const serviceIds = [...ids];
+  const placeholders = serviceIds.map((_, index) => `$${index + 1}`).join(",");
+  const existing = await sql.query<{ id: string }>(
+    `SELECT id FROM ephor_service WHERE id IN (${placeholders})`,
+    serviceIds,
+  );
+  if (existing.length !== ids.size)
+    throw new AuthError("SERVICE_NOT_FOUND", 404);
+  // One statement makes all root edits atomic; child rows are never touched.
+  await sql.query(
+    `INSERT INTO ephor_service_map_position (service_id,component_id,x,y) VALUES ${rows.join(",")} ON CONFLICT (service_id,component_id) DO UPDATE SET x=excluded.x,y=excluded.y,revision=ephor_service_map_position.revision+1`,
+    values,
+  );
+  await new AuthStore(sql).audit("service.layout_updated");
+  const services = await sql.query<{
+    id: string;
+    name: string;
+    group_name: string | null;
+    group_color: ServicePresentation["groupColor"] | null;
+    component_names: string | null;
+  }>(
+    `SELECT id,name,group_name,group_color,component_names FROM ephor_service WHERE id IN (${placeholders})`,
+    serviceIds,
+  );
+  const positions = await sql.query<{
+    service_id: string;
+    component_id: string;
+    x: number;
+    y: number;
+    revision: number;
+  }>(
+    `SELECT service_id,component_id,x,y,revision FROM ephor_service_map_position WHERE service_id IN (${placeholders})`,
+    serviceIds,
+  );
+  return {
+    services: services.map((service) => ({
+      id: service.id,
+      name: service.name,
+      presentation: {
+        groupName: service.group_name ?? service.name,
+        groupColor: service.group_color ?? "neutral",
+        componentNames: JSON.parse(service.component_names ?? "{}") as Record<
+          string,
+          string
+        >,
+        positions: Object.fromEntries(
+          positions
+            .filter((position) => position.service_id === service.id)
+            .map((position) => [
+              position.component_id,
+              {
+                x: Number(position.x),
+                y: Number(position.y),
+                revision: Number(position.revision),
+              },
+            ]),
+        ),
+      },
+    })),
+  };
+}
+
 export async function updatePresentation(
   sql: Sql,
   secret: string,

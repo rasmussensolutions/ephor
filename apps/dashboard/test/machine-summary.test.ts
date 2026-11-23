@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import type { Machine } from "@ephor/api/machines";
+import { currentMachineMetrics } from "../src/lib/machine-metrics";
 import { machineSummary } from "../src/lib/machine-summary";
 
 const now = 100_000;
@@ -35,6 +36,49 @@ function machine(overrides: Partial<Machine> = {}): Machine {
     ...overrides,
   };
 }
+
+test("current metrics require an online machine with a fresh report", () => {
+  const current = machine();
+  assert.equal(currentMachineMetrics(current, now), current.telemetry);
+  assert.equal(
+    currentMachineMetrics(machine({ lastSeen: now - 59_999 }), now)?.cpuPercent,
+    100,
+  );
+  for (const status of [
+    "offline",
+    "pending",
+    "connecting",
+    "revoked",
+    "expired",
+  ] as const) {
+    const cached = machine({ status });
+    assert.equal(currentMachineMetrics(cached, now), null);
+    assert.equal(cached.telemetry?.cpuPercent, 100);
+  }
+  assert.equal(
+    currentMachineMetrics(machine({ lastSeen: now - 60_000 }), now),
+    null,
+  );
+  assert.equal(
+    currentMachineMetrics(machine({ lastSeen: now - 120_000 }), now),
+    null,
+  );
+  assert.equal(currentMachineMetrics(machine({ lastSeen: null }), now), null);
+  assert.equal(currentMachineMetrics(machine({ telemetry: null }), now), null);
+});
+
+test("zero readings are current values, not unavailable metrics", () => {
+  const current = machine();
+  assert.ok(current.telemetry);
+  current.telemetry.cpuPercent = 0;
+  current.telemetry.memoryUsed = 0;
+  current.telemetry.uptime = 0;
+  const disk = current.telemetry.disks[0];
+  assert.ok(disk);
+  disk.used = 0;
+  assert.equal(currentMachineMetrics(current, now), current.telemetry);
+  assert.equal(currentMachineMetrics(current, now)?.cpuPercent, 0);
+});
 
 test("weights usage by capacity and counts root disks only", () => {
   const first = machine();

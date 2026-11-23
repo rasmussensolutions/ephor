@@ -29,35 +29,9 @@ import type { ServiceList } from "@/lib/services";
 const textLink =
   "inline-flex shrink-0 items-center gap-1.5 rounded-sm text-xs text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring";
 
-export function HomeAttention({
-  items,
-  incomplete,
-}: {
-  items: AttentionItem[];
-  incomplete: boolean;
-}) {
+export function HomeAttention({ items }: { items: AttentionItem[] }) {
   const [expanded, setExpanded] = useState(false);
-  if (!items.length)
-    return (
-      <div className="flex items-center gap-3 rounded-lg border bg-card px-4 py-3">
-        {incomplete ? (
-          <WarningCircleIcon
-            aria-hidden
-            className="size-5 shrink-0 text-muted-foreground"
-          />
-        ) : (
-          <CheckCircleIcon
-            aria-hidden
-            className="size-5 shrink-0 text-emerald-700 dark:text-emerald-400"
-          />
-        )}
-        <p className="text-sm">
-          {incomplete
-            ? "No problems in the available reports. Some status is still unconfirmed."
-            : "No items need attention."}
-        </p>
-      </div>
-    );
+  if (!items.length) return null;
   return (
     <section
       aria-labelledby="attention-title"
@@ -131,10 +105,13 @@ export function HomeMachines({
   return (
     <section
       aria-labelledby="home-machines-title"
-      className="min-w-0 space-y-3"
+      className="min-w-0 overflow-hidden rounded-lg bg-transparent ring-1 ring-border"
     >
-      <header className="flex items-center justify-between gap-3">
-        <h2 id="home-machines-title" className="text-sm font-medium">
+      <header className="flex items-center justify-between gap-3 px-4 py-2">
+        <h2
+          id="home-machines-title"
+          className="text-sm font-medium text-muted-foreground"
+        >
           Machines at a glance
         </h2>
         <Link to="/machines" className={textLink}>
@@ -142,99 +119,103 @@ export function HomeMachines({
           <ArrowRightIcon aria-hidden className="size-3.5" />
         </Link>
       </header>
-      {!machines.length ? (
-        <div className="rounded-xl border bg-card px-6 py-12 text-center">
-          <HardDrivesIcon
-            aria-hidden
-            className="mx-auto mb-3 size-7 text-muted-foreground"
-          />
-          <p className="text-sm font-medium">
-            {available ? "No machines connected" : "Machine status unavailable"}
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {available
-              ? "Connect a machine to see its health and resource usage."
-              : "Try refreshing to load your machines."}
-          </p>
-        </div>
-      ) : (
-        <Table aria-label="Machine health and resource usage">
-          <TableHeader>
-            <TableRow>
-              <TableHead>Machine</TableHead>
-              <TableHead>CPU</TableHead>
-              <TableHead>Memory</TableHead>
-              <TableHead>Disk</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {machines.slice(0, 6).map((machine) => {
-              const status = currentMachineStatus(machine, now);
-              const metrics = status === "online" ? machine.telemetry : null;
-              const root = metrics?.disks.find((disk) => disk.mount === "/");
-              return (
-                <TableRow key={machine.id}>
-                  <TableCell className="min-w-40">
-                    <Link
-                      to="/machines/$machineId"
-                      params={{ machineId: machine.id }}
-                      className="block rounded-sm focus-visible:outline-2 focus-visible:outline-ring"
-                    >
-                      <p
-                        className="max-w-48 truncate font-medium hover:underline"
-                        title={machine.name}
+      <div className="rounded-lg bg-card ring-1 ring-border">
+        {!machines.length ? (
+          <div className="px-6 py-12 text-center">
+            <HardDrivesIcon
+              aria-hidden
+              className="mx-auto mb-3 size-7 text-muted-foreground"
+            />
+            <p className="text-sm font-medium">
+              {available
+                ? "No machines connected"
+                : "Machine status unavailable"}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {available
+                ? "Connect a machine to see its health and resource usage."
+                : "Try refreshing to load your machines."}
+            </p>
+          </div>
+        ) : (
+          <Table aria-label="Machine health and resource usage">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Machine</TableHead>
+                <TableHead>CPU</TableHead>
+                <TableHead>Memory</TableHead>
+                <TableHead>Disk</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {machines.slice(0, 6).map((machine) => {
+                const status = currentMachineStatus(machine, now);
+                const metrics = status === "online" ? machine.telemetry : null;
+                const root = metrics?.disks.find((disk) => disk.mount === "/");
+                return (
+                  <TableRow key={machine.id}>
+                    <TableCell className="min-w-40">
+                      <Link
+                        to="/machines/$machineId"
+                        params={{ machineId: machine.id }}
+                        className="block rounded-sm focus-visible:outline-2 focus-visible:outline-ring"
                       >
-                        {machine.name}
-                      </p>
-                      <div className="mt-1.5">
-                        <MachineStatus status={status} />
-                      </div>
-                    </Link>
-                  </TableCell>
-                  <TableCell>
-                    <Usage
-                      label="CPU"
-                      percent={metrics?.cpuPercent ?? null}
-                      detail={machine.name}
-                      size="sm"
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <Usage
-                      label="Memory"
-                      percent={
-                        metrics && metrics.memoryTotal > 0
-                          ? (metrics.memoryUsed / metrics.memoryTotal) * 100
-                          : null
-                      }
-                      detail={machine.name}
-                      size="sm"
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <Usage
-                      label="Root disk"
-                      percent={
-                        root && root.total > 0
-                          ? (root.used / root.total) * 100
-                          : null
-                      }
-                      detail="Root filesystem"
-                      size="sm"
-                    />
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
-      )}
-      {machines.length > 6 && (
-        <p className="text-xs text-muted-foreground">
-          Showing 6 of {machines.length} machines. Machines needing attention
-          appear first.
-        </p>
-      )}
+                        <p
+                          className="max-w-48 truncate font-medium hover:underline"
+                          title={machine.name}
+                        >
+                          {machine.name}
+                        </p>
+                        <div className="mt-1.5">
+                          <MachineStatus status={status} />
+                        </div>
+                      </Link>
+                    </TableCell>
+                    <TableCell>
+                      <Usage
+                        label="CPU"
+                        percent={metrics?.cpuPercent ?? null}
+                        detail={machine.name}
+                        size="sm"
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <Usage
+                        label="Memory"
+                        percent={
+                          metrics && metrics.memoryTotal > 0
+                            ? (metrics.memoryUsed / metrics.memoryTotal) * 100
+                            : null
+                        }
+                        detail={machine.name}
+                        size="sm"
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <Usage
+                        label="Root disk"
+                        percent={
+                          root && root.total > 0
+                            ? (root.used / root.total) * 100
+                            : null
+                        }
+                        detail="Root filesystem"
+                        size="sm"
+                      />
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        )}
+        {machines.length > 6 && (
+          <p className="px-4 pb-4 text-xs text-muted-foreground">
+            Showing 6 of {machines.length} machines. Machines needing attention
+            appear first.
+          </p>
+        )}
+      </div>
     </section>
   );
 }
@@ -251,10 +232,13 @@ export function HomeActivity({
   return (
     <section
       aria-labelledby="home-activity-title"
-      className="min-w-0 space-y-3"
+      className="min-w-0 overflow-hidden rounded-lg bg-transparent ring-1 ring-border"
     >
-      <header className="flex items-center justify-between gap-3">
-        <h2 id="home-activity-title" className="text-sm font-medium">
+      <header className="flex items-center justify-between gap-3 px-4 py-2">
+        <h2
+          id="home-activity-title"
+          className="text-sm font-medium text-muted-foreground"
+        >
           Recent activity
         </h2>
         <Link to="/activity" className={textLink}>
@@ -262,7 +246,7 @@ export function HomeActivity({
           <ArrowRightIcon aria-hidden className="size-3.5" />
         </Link>
       </header>
-      <div className="overflow-hidden rounded-xl border bg-card">
+      <div className="rounded-lg bg-card ring-1 ring-border">
         {!activity?.items.length ? (
           <div className="px-6 py-12 text-center">
             <ClockCounterClockwiseIcon
@@ -333,12 +317,6 @@ export function HomeActivity({
           </ul>
         )}
       </div>
-      {Boolean(activity?.items.length) && (
-        <p className="text-xs leading-relaxed text-muted-foreground">
-          Activity shows panel requests. Deployments and backups may continue in
-          the background.
-        </p>
-      )}
     </section>
   );
 }
@@ -415,7 +393,7 @@ export function HomeSetup({
             <Button
               nativeButton={false}
               variant="gradient"
-              render={<Link to="/services" search={{ deploy: true }} />}
+              render={<Link to="/services/new" />}
             >
               Deploy service
             </Button>

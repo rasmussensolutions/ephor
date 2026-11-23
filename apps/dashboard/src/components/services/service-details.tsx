@@ -1,11 +1,16 @@
 import type { MachineList } from "@ephor/api/machines";
-import { ArrowLeftIcon } from "@phosphor-icons/react/dist/csr/ArrowLeft";
+
 import { ArrowSquareOutIcon } from "@phosphor-icons/react/dist/csr/ArrowSquareOut";
 import { CaretRightIcon } from "@phosphor-icons/react/dist/csr/CaretRight";
+import { ClockIcon } from "@phosphor-icons/react/dist/csr/Clock";
+import { CpuIcon } from "@phosphor-icons/react/dist/csr/Cpu";
 import { DotsThreeVerticalIcon } from "@phosphor-icons/react/dist/csr/DotsThreeVertical";
 import { GlobeIcon } from "@phosphor-icons/react/dist/csr/Globe";
+import { ListBulletsIcon } from "@phosphor-icons/react/dist/csr/ListBullets";
+import { MemoryIcon } from "@phosphor-icons/react/dist/csr/Memory";
 import { Link } from "@tanstack/react-router";
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { SecurityWorkspace } from "@/components/security/security-workspace";
 import { CatalogDetails } from "@/components/services/catalog-details";
 import { ServiceCharts } from "@/components/services/service-charts";
 import { ServiceDomains } from "@/components/services/service-domains";
@@ -173,10 +178,12 @@ export function ServiceDetails({
       return;
     if (
       kind === "deploy" &&
-      s.spec.catalog &&
+      (s.spec.catalog || s.spec.volumes?.length) &&
       s.currentDeployment &&
       !confirm(
-        "Restart this app? Ephor takes a recovery point and restarts its pinned containers. The app will be unavailable during this operation.",
+        s.spec.catalog
+          ? "Restart this app? Ephor takes a recovery point and restarts its pinned containers. The app will be unavailable during this operation."
+          : "Deploy this app? Ephor takes a recovery point before starting the new image. The app will be unavailable during the stop/start deployment.",
       )
     )
       return;
@@ -192,11 +199,17 @@ export function ServiceDetails({
       (w) =>
         w.machine_id === machineId &&
         Number(w.version) >=
-          (deploying && service?.variableConnections?.length
-            ? 5
-            : service?.spec.catalog
-              ? 3
-              : 2) &&
+          (deploying && service?.requiredWorkerProtocol
+            ? service.requiredWorkerProtocol
+            : service?.spec.volumes?.length ||
+                service?.spec.catalog?.resources ||
+                service?.spec.catalog?.template === "qdrant"
+              ? 6
+              : deploying && service?.variableConnections?.length
+                ? 5
+                : service?.spec.catalog
+                  ? 3
+                  : 2) &&
         Number(w.last_seen) > Date.now() - 120000,
     );
   if (!service)
@@ -237,7 +250,9 @@ export function ServiceDetails({
     Boolean(service.variableConnections?.length) &&
     !data.workers.some(
       (worker) =>
-        worker.machine_id === service.machineId && Number(worker.version) >= 5,
+        worker.machine_id === service.machineId &&
+        Number(worker.version) >=
+          Math.max(5, service.requiredWorkerProtocol ?? 5),
     );
   const canStop =
     !busy && !active && ready(service.machineId) && !!service.currentDeployment;
@@ -304,18 +319,6 @@ export function ServiceDetails({
     <div
       className={drawer ? "flex min-h-0 flex-1 flex-col" : "min-w-0 space-y-7"}
     >
-      {!drawer && (
-        <Link
-          to="/services"
-          onClick={(event) => {
-            if (!canLeave()) event.preventDefault();
-          }}
-          className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeftIcon />
-          Services
-        </Link>
-      )}
       {firstDeployment && (
         <Button
           variant="raised"
@@ -334,15 +337,11 @@ export function ServiceDetails({
       >
         <div>
           <div className="flex flex-wrap items-center gap-3">
-            <span
-              className={drawer ? "shrink-0" : "rounded-xl border bg-card p-3"}
-            >
-              <ServiceIcon
-                source={service.source}
-                image={service.spec.image}
-                size={drawer ? 32 : 24}
-              />
-            </span>
+            <ServiceIcon
+              source={service.source}
+              image={service.spec.image}
+              size={drawer ? 32 : 20}
+            />
             {drawer ? (
               <SheetTitle className="min-w-0 break-words text-2xl font-semibold tracking-tight">
                 {service.name}
@@ -423,18 +422,20 @@ export function ServiceDetails({
         >
           {[
             ...(drawer
-              ? ["Deployments", "Variables", "Metrics", "Logs"]
+              ? ["Deployments", "Variables", "Metrics", "Logs", "Security"]
               : [
                   "Overview",
                   ...(hasDomains ? ["Domains"] : []),
                   "Deployments",
                   "Variables",
                   "Logs",
+                  "Security",
                 ]),
             ...(drawer && (service.topology?.components.length ?? 0) > 1
               ? ["Components"]
               : []),
-            ...(!drawer && service.spec.catalog
+            ...(!drawer &&
+            (service.spec.catalog || service.spec.volumes?.length)
               ? ["Setup & data"]
               : ["Settings"]),
           ].map((t) => (
@@ -665,40 +666,54 @@ export function ServiceDetails({
               </p>
             )}
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-              {[
+              {(
                 [
-                  "CPU",
-                  metrics?.cpuPercent != null
-                    ? `${metrics.cpuPercent.toFixed(1)}%`
-                    : "—",
-                  "of the whole machine",
-                ],
-                [
-                  "Memory",
-                  metrics ? bytes(metrics.memoryBytes) : "—",
-                  metrics
-                    ? `${bytes(metrics.memoryLimitBytes)} limit`
-                    : "container memory",
-                ],
-                [
-                  "Uptime",
-                  metrics ? uptime(metrics.uptimeSeconds) : "—",
-                  metrics
-                    ? `${metrics.restarts} container restarts`
-                    : "since container start",
-                ],
-                [
-                  "Processes",
-                  metrics ? String(metrics.processes) : "—",
-                  "threads and processes",
-                ],
-              ].map(([label, value, detail]) => (
-                <div key={label} className="rounded-xl border bg-card p-5">
-                  <h2 className="text-sm text-muted-foreground">{label}</h2>
-                  <p className="my-3 text-3xl font-medium tracking-tight tabular-nums">
-                    {value}
-                  </p>
-                  <p className="text-xs text-muted-foreground">{detail}</p>
+                  [
+                    "CPU",
+                    CpuIcon,
+                    metrics?.cpuPercent != null
+                      ? `${metrics.cpuPercent.toFixed(1)}%`
+                      : "—",
+                    "of the whole machine",
+                  ],
+                  [
+                    "Memory",
+                    MemoryIcon,
+                    metrics ? bytes(metrics.memoryBytes) : "—",
+                    metrics
+                      ? `${bytes(metrics.memoryLimitBytes)} limit`
+                      : "container memory",
+                  ],
+                  [
+                    "Uptime",
+                    ClockIcon,
+                    metrics ? uptime(metrics.uptimeSeconds) : "—",
+                    metrics
+                      ? `${metrics.restarts} container restarts`
+                      : "since container start",
+                  ],
+                  [
+                    "Processes",
+                    ListBulletsIcon,
+                    metrics ? String(metrics.processes) : "—",
+                    "threads and processes",
+                  ],
+                ] as const
+              ).map(([label, Icon, value, detail]) => (
+                <div
+                  key={label}
+                  className="flex min-w-0 flex-col overflow-hidden rounded-lg bg-transparent ring-1 ring-border"
+                >
+                  <h2 className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-muted-foreground">
+                    <Icon aria-hidden="true" className="size-4 shrink-0" />
+                    {label}
+                  </h2>
+                  <div className="relative flex flex-1 flex-col gap-3 rounded-lg bg-card p-4 ring-1 ring-border">
+                    <p className="text-3xl font-medium tracking-tight tabular-nums">
+                      {value}
+                    </p>
+                    <p className="text-xs text-muted-foreground">{detail}</p>
+                  </div>
                 </div>
               ))}
             </div>
@@ -935,6 +950,7 @@ export function ServiceDetails({
                       ) : d.status === "succeeded" &&
                         d.digest &&
                         !service.spec.catalog &&
+                        !service.spec.volumes?.length &&
                         service.currentDeployment !== d.id ? (
                         <Button
                           size="sm"
@@ -965,6 +981,7 @@ export function ServiceDetails({
               </div>
             </section>
           ))}
+        {tab === "Security" && <SecurityWorkspace serviceId={service.id} />}
         {tab === "Logs" && (
           <section
             className={
@@ -996,7 +1013,7 @@ export function ServiceDetails({
           </section>
         )}
         {tab === (drawer ? "Settings" : "Setup & data") &&
-          service.spec.catalog && (
+          (service.spec.catalog || service.spec.volumes?.length) && (
             <CatalogDetails
               key={service.id}
               service={service}

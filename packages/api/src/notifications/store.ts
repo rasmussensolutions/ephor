@@ -1,7 +1,9 @@
 import type { AuthEnvironment } from "../auth/config";
 import { AuthError, AuthStore, type Sql } from "../auth/store";
+import { maintainSecurity } from "../security/maintenance";
 import { ServiceSecrets } from "../services/crypto";
 import { object } from "../services/spec";
+import { retireSecurityAlerts } from "./security-legacy";
 import {
   defaultPreferences,
   type EventType,
@@ -102,7 +104,10 @@ export class Notifications {
       from: c.from,
       recipients: c.recipients,
       hasKey: !!c.apiKey,
-      preferences: JSON.parse(row.preferences) as Preferences,
+      preferences: {
+        ...defaultPreferences(),
+        ...JSON.parse(row.preferences),
+      } as Preferences,
     };
   }
   async save(value: unknown) {
@@ -164,7 +169,12 @@ export class Notifications {
     const prefs =
       event.type === "test"
         ? { inApp: testChannel === "inApp", email: testChannel === "email" }
-        : (JSON.parse(row.preferences) as Preferences)[event.type];
+        : (
+            {
+              ...defaultPreferences(),
+              ...JSON.parse(row.preferences),
+            } as Preferences
+          )[event.type];
     const wantsEmail = prefs.email && config.enabled;
     if (testChannel === "email" && !wantsEmail)
       throw new AuthError("NOTIFICATION_EMAIL_NOT_CONFIGURED", 409);
@@ -513,6 +523,7 @@ export class Notifications {
     }
   }
   async deliver() {
+    await retireSecurityAlerts(this.sql, this.clock());
     const config = await this.secrets.open<EmailConfig>(
       "settings",
       (await this.settingsRow()).config,
@@ -652,5 +663,6 @@ export class Notifications {
 export async function processNotifications(
   env: Pick<AuthEnvironment, "sql" | "secret" | "origin">,
 ) {
+  await maintainSecurity(env);
   await new Notifications(env.sql, env.secret, env.origin).tick();
 }

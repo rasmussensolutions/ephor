@@ -13,7 +13,7 @@ export function DeploymentSettings({ machine }: { machine: Machine }) {
     machine.status !== "revoked" &&
     worker &&
     worker.lastSeen > Date.now() - 120000;
-  const current = ready && worker.version >= 5;
+  const current = ready && worker.version >= 6;
   return (
     <section className="w-full max-w-2xl space-y-3 rounded-xl border bg-card p-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -23,9 +23,9 @@ export function DeploymentSettings({ machine }: { machine: Machine }) {
             {machine.status === "revoked"
               ? "This machine is disconnected."
               : current
-                ? "Ready for deployments, service connections, and backups."
+                ? "Ready for persistent services, service connections, and backups."
                 : ready
-                  ? "Update the deployment worker to support service connections and the latest app features."
+                  ? "Upgrade the deployment worker to use persistent volumes, Qdrant, and database sizing."
                   : worker
                     ? "The deployment worker is not reporting. Check the installer or repair it below."
                     : "New enrollments include deployments. Complete setup here for an older machine or an interrupted installation."}
@@ -43,7 +43,7 @@ export function DeploymentSettings({ machine }: { machine: Machine }) {
               await signIn();
               const result = await api<{ command: string }>(
                 "/services/worker",
-                { machineId: machine.id },
+                { machineId: machine.id, minimumProtocol: 6 },
               );
               setCommand(result.command);
             } catch (error) {
@@ -62,7 +62,9 @@ export function DeploymentSettings({ machine }: { machine: Machine }) {
             : current
               ? "Get repair command"
               : worker
-                ? "Get update / repair command"
+                ? ready
+                  ? "Get upgrade command"
+                  : "Get repair command"
                 : "Complete setup"}
         </Button>
       </div>

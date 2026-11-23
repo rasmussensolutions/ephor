@@ -1,0 +1,12 @@
+#!/bin/sh
+# Test-only systemd lifecycle emulator. Never shipped to machines.
+case "$1" in
+show)
+ case "$*" in *apt-daily-upgrade.service*) if test -f /tmp/ephor-test-package-busy; then echo activating; else echo inactive; fi ;; *ephor-updates-apply.service*) echo inactive ;; *timer*) echo active ;; *) echo inactive ;; esac ;;
+is-active)
+ case "$*" in *apt-daily-upgrade.service*) test -f /tmp/ephor-test-package-busy ;; *ephor-updates-apply.service*) exit 1 ;; *timer*) exit 0 ;; *) exit 1 ;; esac ;;
+is-enabled|daemon-reload|enable|disable|start|restart|stop) exit 0 ;;
+list-jobs) exit 0 ;;
+--check-inhibitors=yes) test ! -f /tmp/ephor-test-inhibitor || exit 1; touch /tmp/ephor-test-reboot-requested ;;
+*) exit 1 ;;
+esac

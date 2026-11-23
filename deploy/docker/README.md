@@ -40,3 +40,18 @@ and include the generated `apps/dashboard/public/daemon/` artifacts in your buil
 context/deployed assets. Git-only deployments do not include these gitignored
 artifacts automatically. The panel must have a public HTTPS origin; `/api/*` and
 `/daemon/*` must be reachable by the VPS. See [connecting machines](../../docs/machines.md).
+
+## Panel updates
+
+Open **Updates** in Ephor and connect its dedicated Updates GitHub App to the
+repository that hosts this panel. Select your host and deployment method.
+For Docker/VPS, select **I deploy updates manually** unless an existing deployment
+pipeline already builds the production branch, runs migrations, and restarts the
+panel. A repository merge alone does not replace your container. For manual
+updates, pull the merged production branch and repeat the build, migration, and
+panel startup commands above, keeping the database volume and secrets. Set
+`EPHOR_HOST=vps` to suggest VPS hosting during setup.
+
+Ephor separates repository progress from the version actually serving requests.
+See the [panel update guide](../../docs/panel-updates.md) for the full review flow,
+required GitHub permissions, and upgrading older installations.

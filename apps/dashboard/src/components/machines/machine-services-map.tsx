@@ -1,4 +1,5 @@
 import { ArrowsOutSimpleIcon } from "@phosphor-icons/react/dist/csr/ArrowsOutSimple";
+import { MagicWandIcon } from "@phosphor-icons/react/dist/csr/MagicWand";
 import { MinusIcon } from "@phosphor-icons/react/dist/csr/Minus";
 import { PlusIcon } from "@phosphor-icons/react/dist/csr/Plus";
 import { Link } from "@tanstack/react-router";
@@ -13,7 +14,9 @@ import { MachineServiceCard } from "@/components/machines/machine-service-card";
 import { Button } from "@/components/ui/button";
 import { useMapPositions } from "@/hooks/use-map-positions";
 import { mapGridSize } from "@/lib/map-grid";
+import type { Project } from "@/lib/projects";
 import { type MapPoint, mapLayout, projectMapLayout } from "@/lib/service-map";
+import { autoLayoutServices } from "@/lib/service-map-auto-layout";
 import { serviceMapConnections } from "@/lib/service-map-connector";
 import type { Service, ServiceList } from "@/lib/services";
 import { MapDraggable } from "./map-draggable";
@@ -34,9 +37,13 @@ export function MachineServicesMap({
   onOpen,
   fullPage = false,
   machines,
+  projects = [],
+  autoLayoutDisabled = false,
 }: {
   fullPage?: boolean;
+  autoLayoutDisabled?: boolean;
   machines?: { id: string; name: string }[];
+  projects?: Project[];
   services: Service[];
   data: ServiceList;
   onOpen: (
@@ -56,8 +63,15 @@ export function MachineServicesMap({
   } | null>(null);
   const pendingZoom = useRef<{ scale: number; scroll?: MapPoint } | null>(null);
   const [zoom, setZoom] = useState(1);
+  const [autoLayoutVersion, setAutoLayoutVersion] = useState(0);
+  const [autoLayoutError, setAutoLayoutError] = useState("");
   const hasServices = services.length > 0;
   const positions = useMapPositions(services);
+  const serviceProjects = new Map(
+    projects.flatMap((project) =>
+      project.serviceIds.map((id) => [id, project] as const),
+    ),
+  );
   const layout = machines
     ? projectMapLayout(positions.services, machines)
     : { ...mapLayout(positions.services), groups: [] };
@@ -119,6 +133,51 @@ export function MachineServicesMap({
     }
     setZoom(next);
   }
+
+  function fitServices() {
+    const element = viewport.current;
+    if (!element) return;
+    const scale = Math.max(
+      minZoom,
+      Math.min(
+        1,
+        element.clientWidth / layout.width,
+        element.clientHeight / layout.height,
+      ),
+    );
+    const scroll = {
+      x: canvasOrigin.x + (layout.width * scale - element.clientWidth) / 2,
+      y: canvasOrigin.y + (layout.height * scale - element.clientHeight) / 2,
+    };
+    if (scale === zoom) {
+      pendingZoom.current = null;
+      element.scrollLeft = scroll.x;
+      element.scrollTop = scroll.y;
+    } else {
+      pendingZoom.current = { scale, scroll };
+      setZoom(scale);
+    }
+  }
+
+  function autoLayout() {
+    try {
+      const updates = autoLayoutServices(positions.services, projects);
+      // Explicit arranging may shrink the canvas; dragging must not do so.
+      extent.current = { width: 0, height: 0 };
+      positions.commitMany(updates);
+      setAutoLayoutError("");
+      setAutoLayoutVersion((version) => version + 1);
+    } catch {
+      setAutoLayoutError(
+        "Could not arrange these services. Move widely spread components closer together and try again.",
+      );
+    }
+  }
+
+  const fitAfterAutoLayout = useEffectEvent(fitServices);
+  useLayoutEffect(() => {
+    if (autoLayoutVersion > 0) fitAfterAutoLayout();
+  }, [autoLayoutVersion]);
 
   const pinchZoom = useEffectEvent(
     (event: WheelEvent, element: HTMLElement) => {
@@ -311,6 +370,7 @@ export function MachineServicesMap({
                       <TemplateServiceGroup
                         service={service}
                         data={data}
+                        project={serviceProjects.get(service.id)}
                         onOpen={onOpen}
                         zoom={zoom}
                         onCancel={(component) =>
@@ -327,6 +387,7 @@ export function MachineServicesMap({
                       <MachineServiceCard
                         service={service}
                         data={data}
+                        project={serviceProjects.get(service.id)}
                         onOpen={onOpen}
                       />
                     )}
@@ -346,21 +407,23 @@ export function MachineServicesMap({
           )}
         </div>
       </section>
-      {positions.error && !positions.saving && (
-        <div className="absolute bottom-4 left-4 flex items-center gap-2 rounded-lg border bg-card px-3 py-2 text-xs text-destructive shadow-sm">
-          <p role="alert">Layout not saved.</p>
-          <button
-            type="button"
-            onClick={positions.retry}
-            className="underline underline-offset-4"
-          >
-            Retry
-          </button>
+      {(autoLayoutError || (positions.error && !positions.saving)) && (
+        <div className="absolute bottom-4 left-4 flex max-w-sm items-center gap-2 rounded-lg border bg-card px-3 py-2 text-xs text-destructive shadow-sm">
+          <p role="alert">{autoLayoutError || "Layout not saved."}</p>
+          {!autoLayoutError && (
+            <button
+              type="button"
+              onClick={positions.retry}
+              className="underline underline-offset-4"
+            >
+              Retry
+            </button>
+          )}
         </div>
       )}
       {hasServices && (
         <fieldset
-          aria-label="Map zoom controls"
+          aria-label="Map controls"
           className="absolute right-4 bottom-4 flex items-center gap-1 rounded-lg border bg-card p-1 shadow-sm"
         >
           <Button
@@ -399,20 +462,29 @@ export function MachineServicesMap({
             size="icon-sm"
             aria-label="Fit all services"
             title="Fit all services"
-            onClick={() => {
-              const element = viewport.current;
-              if (element)
-                changeZoom(
-                  Math.min(
-                    1,
-                    element.clientWidth / width,
-                    element.clientHeight / height,
-                  ),
-                  null,
-                );
-            }}
+            onClick={fitServices}
           >
             <ArrowsOutSimpleIcon />
+          </Button>
+          <span aria-hidden className="mx-1 h-4 border-l" />
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label="Auto-layout services"
+            title={
+              positions.error
+                ? "Retry failed layout saves before arranging"
+                : autoLayoutDisabled
+                  ? "Waiting for current project information"
+                  : "Arrange cards by project and save their positions"
+            }
+            disabled={
+              autoLayoutDisabled || positions.saving > 0 || positions.error
+            }
+            onClick={autoLayout}
+          >
+            <MagicWandIcon aria-hidden="true" />
+            Auto layout
           </Button>
         </fieldset>
       )}

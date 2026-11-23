@@ -6,14 +6,23 @@ import {
 import {
   ArrowClockwiseIcon,
   ClockCounterClockwiseIcon,
+  CubeIcon,
   MagnifyingGlassIcon,
+  SlidersHorizontalIcon,
   UserCircleIcon,
+  XIcon,
 } from "@phosphor-icons/react";
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { type ComponentProps, useEffect, useRef, useState } from "react";
+import { StatusIndicator } from "@/components/status-indicator";
 import { Button } from "@/components/ui/button";
 import { DatePicker } from "@/components/ui/date-picker";
 import { Input } from "@/components/ui/input";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Select } from "@/components/ui/select";
 import {
   Table,
@@ -30,25 +39,15 @@ export const Route = createFileRoute("/_authenticated/activity")({
   loader: () => api<ActivityList>("/activity"),
   component: ActivityPage,
 });
-const outcomes: Record<ActivityOutcome, { label: string; className: string }> =
-  {
-    succeeded: {
-      label: "Succeeded",
-      className: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
-    },
-    failed: {
-      label: "Failed",
-      className: "bg-destructive/10 text-destructive",
-    },
-    pending: {
-      label: "Unconfirmed",
-      className: "bg-amber-500/10 text-amber-700 dark:text-amber-400",
-    },
-    unknown: {
-      label: "Historical",
-      className: "bg-muted text-muted-foreground",
-    },
-  };
+const outcomes: Record<
+  ActivityOutcome,
+  { label: string; tone: ComponentProps<typeof StatusIndicator>["tone"] }
+> = {
+  succeeded: { label: "Succeeded", tone: "healthy" },
+  failed: { label: "Failed", tone: "error" },
+  pending: { label: "Unconfirmed", tone: "busy" },
+  unknown: { label: "Historical", tone: "neutral" },
+};
 const titleCase = (value: string) =>
   value.charAt(0).toUpperCase() + value.slice(1);
 function actionLabel(action: string) {
@@ -136,117 +135,149 @@ function ActivityPage() {
       if (current === generation.current) setMore(false);
     }
   }
-  const filtered = !!(search || category || outcome || user || from || to);
+  const activeFilters = [category, outcome, user, from || to].filter(
+    Boolean,
+  ).length;
+  const filtered = !!(search || activeFilters);
   return (
-    <div className="space-y-6">
-      <header className="flex flex-wrap items-start justify-between gap-4">
+    <div className="min-w-0 space-y-6">
+      <header className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="page-title">Activity</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Every panel action, with who did it and when.
+            A history of panel actions, who took them, and their outcomes.
           </p>
         </div>
         <Button
-          variant="outline"
+          variant="raised"
+          size="action"
           disabled={loading}
           onClick={() => setRefresh((value) => value + 1)}
         >
-          <ArrowClockwiseIcon className={loading ? "animate-spin" : ""} />{" "}
+          <ArrowClockwiseIcon
+            aria-hidden="true"
+            data-icon="inline-start"
+            className={loading ? "animate-spin" : undefined}
+          />
           Refresh
         </Button>
       </header>
-      <div className="space-y-3">
-        <div className="flex flex-wrap gap-2">
-          <div className="relative min-w-56 flex-1">
-            <MagnifyingGlassIcon className="pointer-events-none absolute top-2.5 left-3 size-4 text-muted-foreground" />
-            <Input
-              aria-label="Search activity"
-              className="h-9 pl-9"
-              placeholder="Search actions, users, or resources…"
-              maxLength={200}
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-            />
-          </div>
-          <Select
-            aria-label="Filter by category"
-            value={category}
-            onValueChange={(next) => setCategory(next)}
-            options={[
-              { value: "", label: "All categories" },
-              ...activityCategories.map((value) => ({
-                value,
-                label: titleCase(value),
-              })),
-            ]}
+      <div className="flex min-w-0 items-center gap-2">
+        <div className="relative min-w-0 flex-1 sm:max-w-sm">
+          <MagnifyingGlassIcon
+            aria-hidden="true"
+            className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
           />
-          <Select
-            aria-label="Filter by user"
-            value={user}
-            onValueChange={(next) => setUser(next)}
-            options={[
-              { value: "", label: "All users" },
-              ...data.users.map((actor) => ({
-                value: actor.id,
-                label: actor.name,
-              })),
-            ]}
-          />
-          <Select
-            aria-label="Filter by outcome"
-            value={outcome}
-            onValueChange={(next) => setOutcome(next)}
-            options={[
-              { value: "", label: "All outcomes" },
-              ...Object.entries(outcomes).map(([value, info]) => ({
-                value,
-                label: info.label,
-              })),
-            ]}
+          <Input
+            variant="toolbar"
+            aria-label="Search activity"
+            className="pl-9"
+            placeholder="Search activity…"
+            maxLength={200}
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
           />
         </div>
-        <div className="flex flex-wrap items-center gap-3 text-sm">
-          <div className="flex items-center gap-2 text-muted-foreground">
-            <span>From</span>
-            <DatePicker
-              label="From"
-              value={from}
-              max={to || undefined}
-              onValueChange={setFrom}
+        <Popover>
+          <PopoverTrigger
+            render={
+              <Button variant="raised" size="action" className="ml-auto" />
+            }
+          >
+            <SlidersHorizontalIcon
+              aria-hidden="true"
+              data-icon="inline-start"
             />
-          </div>
-          <div className="flex items-center gap-2 text-muted-foreground">
-            <span>To</span>
-            <DatePicker
-              label="To"
-              value={to}
-              min={from || undefined}
-              onValueChange={setTo}
-            />
-          </div>
-          {filtered && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                setSearch("");
-                setQuery("");
-                setCategory("");
-                setOutcome("");
-                setUser("");
-                setFrom("");
-                setTo("");
-              }}
-            >
-              Clear filters
-            </Button>
-          )}
-          <p className="ml-auto text-xs text-muted-foreground" role="status">
-            {loading
-              ? "Loading activity…"
-              : `${data.items.length} ${data.items.length === 1 ? "entry" : "entries"} shown`}
-          </p>
-        </div>
+            Filters
+            {activeFilters > 0 && (
+              <span className="flex size-5 items-center justify-center rounded-md bg-muted text-xs tabular-nums">
+                {activeFilters}
+                <span className="sr-only">active</span>
+              </span>
+            )}
+          </PopoverTrigger>
+          <PopoverContent
+            align="end"
+            aria-label="Filter activity"
+            className="w-80 gap-4"
+          >
+            <h2 className="font-medium">Filter activity</h2>
+            <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-4 gap-y-3">
+              <span className="text-xs text-muted-foreground">Category</span>
+              <Select
+                aria-label="Filter by category"
+                value={category}
+                onValueChange={setCategory}
+                options={[
+                  { value: "", label: "All categories" },
+                  ...activityCategories.map((value) => ({
+                    value,
+                    label: titleCase(value),
+                  })),
+                ]}
+              />
+              <span className="text-xs text-muted-foreground">User</span>
+              <Select
+                aria-label="Filter by user"
+                value={user}
+                onValueChange={setUser}
+                options={[
+                  { value: "", label: "All users" },
+                  ...data.users.map((actor) => ({
+                    value: actor.id,
+                    label: actor.name,
+                  })),
+                ]}
+              />
+              <span className="text-xs text-muted-foreground">Outcome</span>
+              <Select
+                aria-label="Filter by outcome"
+                value={outcome}
+                onValueChange={setOutcome}
+                options={[
+                  { value: "", label: "All outcomes" },
+                  ...Object.entries(outcomes).map(([value, info]) => ({
+                    value,
+                    label: info.label,
+                  })),
+                ]}
+              />
+              <span className="text-xs text-muted-foreground">From</span>
+              <DatePicker
+                label="From"
+                value={from}
+                max={to || undefined}
+                onValueChange={setFrom}
+              />
+              <span className="text-xs text-muted-foreground">To</span>
+              <DatePicker
+                label="To"
+                value={to}
+                min={from || undefined}
+                onValueChange={setTo}
+              />
+            </div>
+          </PopoverContent>
+        </Popover>
+        {filtered && (
+          <Button
+            variant="ghost"
+            size="icon-lg"
+            aria-label="Clear search and filters"
+            title="Clear search and filters"
+            onClick={() => {
+              setSearch("");
+              setQuery("");
+              setCategory("");
+              setOutcome("");
+              setUser("");
+              setFrom("");
+              setTo("");
+            }}
+          >
+            <XIcon aria-hidden="true" />
+          </Button>
+        )}
       </div>
       {error && (
         <p
@@ -256,120 +287,200 @@ function ActivityPage() {
           {error}
         </p>
       )}
-      {data.items.some((item) => item.actor.kind === "unknown") && (
-        <p className="text-xs text-muted-foreground">
-          Historical entries come from the previous audit log, which did not
-          record the acting user or request outcome.
-        </p>
-      )}
-      <Table aria-label="Panel activity history" aria-busy={loading || more}>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Action</TableHead>
-            <TableHead>User</TableHead>
-            <TableHead>Resource</TableHead>
-            <TableHead>Outcome</TableHead>
-            <TableHead>Time</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {!loading && !data.items.length && (
+      <div className="space-y-4">
+        <Table
+          variant="layered"
+          className="min-w-2xl table-fixed whitespace-nowrap [&_td]:px-3 [&_td]:py-2 [&_th]:px-3"
+          aria-label="Panel activity history"
+          aria-busy={loading || more}
+        >
+          <TableHeader>
             <TableRow>
-              <TableCell colSpan={5} className="py-16 text-center">
-                <ClockCounterClockwiseIcon className="mx-auto mb-3 size-7 text-muted-foreground" />
-                <p className="font-medium">
-                  {filtered ? "No matching activity" : "No activity yet"}
-                </p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {filtered
-                    ? "Try another search or clear your filters."
-                    : "Actions taken in the panel will appear here."}
-                </p>
-              </TableCell>
+              <TableHead scope="col">Action</TableHead>
+              <TableHead scope="col" className="w-[18%]">
+                User
+              </TableHead>
+              <TableHead scope="col">Resource</TableHead>
+              <TableHead scope="col" className="w-32">
+                Outcome
+              </TableHead>
+              <TableHead scope="col" className="w-36 text-right">
+                Time
+              </TableHead>
             </TableRow>
-          )}
-          {data.items.map((item) => (
-            <TableRow key={item.id} className={loading ? "opacity-50" : ""}>
-              <TableCell className="min-w-52">
-                <p className="font-medium">{actionLabel(item.action)}</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {titleCase(item.category)}
-                </p>
-              </TableCell>
-              <TableCell>
-                <div
-                  className="flex items-center gap-2"
-                  title={
-                    item.actor.id ??
-                    (item.actor.kind === "unknown"
-                      ? "User information was not stored for this historical entry."
-                      : "No authenticated user was identified.")
-                  }
-                >
-                  <UserCircleIcon className="size-5 shrink-0 text-muted-foreground" />
-                  <span className="max-w-48 truncate">{item.actor.name}</span>
-                </div>
-              </TableCell>
-              <TableCell className="max-w-64">
-                <p
-                  className="truncate"
-                  title={item.target.name ?? item.target.id ?? undefined}
-                >
-                  {item.target.name ??
-                    (item.target.type ? titleCase(item.target.type) : "—")}
-                </p>
-                {item.target.id && (
-                  <p
-                    className="mt-1 truncate font-mono text-xs text-muted-foreground"
-                    title={item.target.id}
-                  >
-                    {item.target.id}
-                  </p>
-                )}
-              </TableCell>
-              <TableCell>
-                <span
-                  className={`inline-flex whitespace-nowrap rounded-md px-2 py-1 text-xs font-medium ${outcomes[item.outcome].className}`}
-                  title={
-                    item.outcome === "pending"
-                      ? "The request was recorded, but its final response was not confirmed."
-                      : item.status
-                        ? `HTTP ${item.status}`
-                        : "The original audit log did not record an outcome."
-                  }
-                >
-                  {outcomes[item.outcome].label}
-                </span>
-              </TableCell>
-              <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                <time dateTime={new Date(item.occurredAt).toISOString()}>
-                  {new Date(item.occurredAt).toLocaleDateString(undefined, {
-                    day: "numeric",
-                    month: "short",
-                    year: "numeric",
-                  })}
-                  <span className="mt-1 block">
-                    {new Date(item.occurredAt).toLocaleTimeString()}
-                  </span>
-                </time>
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
-          Outcomes describe the panel request. Deployments, updates, and backups
-          continue in the background. Times are shown in your local timezone.
-        </p>
-        {data.nextCursor && (
-          <Button
-            variant="outline"
-            disabled={loading || more}
-            onClick={() => void loadMore()}
+          </TableHeader>
+          <TableBody>
+            {!data.items.length && (
+              <TableRow>
+                <TableCell colSpan={5} className="h-48 text-center">
+                  {loading ? (
+                    <div
+                      role="status"
+                      className="flex items-center justify-center gap-2 text-muted-foreground"
+                    >
+                      <ArrowClockwiseIcon
+                        aria-hidden="true"
+                        className="size-4 animate-spin"
+                      />
+                      Loading activity…
+                    </div>
+                  ) : (
+                    <>
+                      <ClockCounterClockwiseIcon
+                        aria-hidden="true"
+                        className="mx-auto mb-3 size-7 text-muted-foreground"
+                      />
+                      <p className="font-medium">
+                        {filtered ? "No matching activity" : "No activity yet"}
+                      </p>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        {filtered
+                          ? "Try another search or clear your filters."
+                          : "Actions taken in the panel will appear here."}
+                      </p>
+                    </>
+                  )}
+                </TableCell>
+              </TableRow>
+            )}
+            {data.items.map((item) => {
+              const action = actionLabel(item.action);
+              const occurredAt = new Date(item.occurredAt);
+              const timestamp = occurredAt.toLocaleString(undefined, {
+                dateStyle: "full",
+                timeStyle: "long",
+              });
+              const resource =
+                item.target.name ??
+                item.target.id ??
+                (item.target.type ? titleCase(item.target.type) : "—");
+              return (
+                <TableRow key={item.id} className={loading ? "opacity-50" : ""}>
+                  <TableHead scope="row" className="py-2 text-foreground">
+                    <div
+                      className="flex min-w-0 items-center gap-2"
+                      title={`${action} · ${titleCase(item.category)}`}
+                    >
+                      <ClockCounterClockwiseIcon
+                        aria-hidden="true"
+                        className="size-4 shrink-0 text-muted-foreground"
+                      />
+                      <span className="truncate text-sm font-medium">
+                        {action}
+                      </span>
+                    </div>
+                  </TableHead>
+                  <TableCell>
+                    <div
+                      className="flex min-w-0 items-center gap-2"
+                      title={`${item.actor.name} · ${
+                        item.actor.id ??
+                        (item.actor.kind === "unknown"
+                          ? "User information was not stored for this historical entry."
+                          : "No authenticated user was identified.")
+                      }`}
+                    >
+                      <UserCircleIcon
+                        aria-hidden="true"
+                        className="size-4 shrink-0 text-muted-foreground"
+                      />
+                      <span className="truncate text-xs text-muted-foreground">
+                        {item.actor.name}
+                      </span>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div
+                      className="flex min-w-0 items-center gap-2"
+                      title={
+                        [item.target.type, item.target.name, item.target.id]
+                          .filter(Boolean)
+                          .join(" · ") || undefined
+                      }
+                    >
+                      {item.target.type === "service" && (
+                        <CubeIcon
+                          aria-hidden="true"
+                          className="size-4 shrink-0 text-muted-foreground"
+                        />
+                      )}
+                      <span
+                        className={`truncate ${!item.target.name && item.target.id ? "font-mono text-xs text-muted-foreground" : ""}`}
+                      >
+                        {resource}
+                      </span>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div
+                      className="flex items-center"
+                      title={
+                        item.outcome === "pending"
+                          ? "The request was recorded, but its final response was not confirmed."
+                          : item.status
+                            ? `HTTP ${item.status}`
+                            : "The original audit log did not record an outcome."
+                      }
+                    >
+                      <StatusIndicator
+                        status={outcomes[item.outcome].label}
+                        tone={outcomes[item.outcome].tone}
+                      />
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
+                    <time
+                      className="block truncate"
+                      dateTime={occurredAt.toISOString()}
+                      title={timestamp}
+                    >
+                      <span aria-hidden="true">
+                        {occurredAt.toLocaleString(undefined, {
+                          day: "numeric",
+                          month: "short",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                      <span className="sr-only">{timestamp}</span>
+                    </time>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p
+            className="text-xs tabular-nums text-muted-foreground"
+            role="status"
           >
-            {more ? "Loading…" : "Load older activity"}
-          </Button>
+            {loading
+              ? "Updating activity…"
+              : `${data.items.length} ${data.items.length === 1 ? "entry" : "entries"} shown`}
+          </p>
+          {data.nextCursor && (
+            <Button
+              variant="raised"
+              size="action"
+              disabled={loading || more}
+              onClick={() => void loadMore()}
+            >
+              {more && (
+                <ArrowClockwiseIcon
+                  aria-hidden="true"
+                  className="animate-spin"
+                />
+              )}
+              {more ? "Loading…" : "Load older activity"}
+            </Button>
+          )}
+        </div>
+        {data.items.some((item) => item.actor.kind === "unknown") && (
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            Historical entries come from the previous audit log, which did not
+            record the acting user or request outcome.
+          </p>
         )}
       </div>
     </div>

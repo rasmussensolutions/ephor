@@ -1,12 +1,7 @@
 import type { MachineList } from "@ephor/api/machines";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { MachineServicesMap } from "@/components/machines/machine-services-map";
-import {
-  type DeploymentMode,
-  DeployServiceDialog,
-  deploymentSources,
-} from "@/components/services/deploy-service-dialog";
 import { ServiceDrawer } from "@/components/services/service-drawer";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,6 +21,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { useServices } from "@/hooks/use-services";
 import { api } from "@/lib/auth";
+import { deploymentSources } from "@/lib/deployment-sources";
 import type { Project, ProjectList } from "@/lib/projects";
 import type { Service, ServiceList } from "@/lib/services";
 
@@ -68,10 +64,6 @@ function ProjectPage({
   };
 }) {
   const navigate = useNavigate();
-  const canvas = useRef<HTMLDivElement>(null);
-  const [deploymentMode, setDeploymentMode] = useState<DeploymentMode | null>(
-    null,
-  );
   const { data, machines, error: refreshError, refresh } = useServices(initial);
   const [project, setProject] = useState(initial.project);
   const [inventory, setInventory] = useState(initial.inventory);
@@ -80,12 +72,6 @@ function ProjectPage({
   const [search, setSearch] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
-  const [machineId, setMachineId] = useState("");
-  const [deploy, setDeploy] = useState<{
-    machineId: string;
-    trigger: HTMLElement | null;
-  } | null>(null);
   const [selected, setSelected] = useState<{
     service: Service;
     trigger: HTMLElement;
@@ -113,7 +99,6 @@ function ProjectPage({
   async function run(action: () => Promise<unknown>) {
     setBusy(true);
     setError("");
-    setNotice("");
     try {
       await action();
       await reload();
@@ -123,8 +108,7 @@ function ProjectPage({
       setBusy(false);
     }
   }
-  function openAdd(mode: DeploymentMode | null = null) {
-    setDeploymentMode(mode);
+  function openAdd() {
     setDialog("add");
     void run(async () => {});
   }
@@ -135,7 +119,7 @@ function ProjectPage({
   return (
     <div className="relative h-full min-w-0 overflow-hidden">
       <ContextMenu>
-        <ContextMenuTrigger render={<div className="h-full" />} ref={canvas}>
+        <ContextMenuTrigger render={<div className="h-full" />}>
           <MachineServicesMap
             fullPage
             machines={machines}
@@ -157,7 +141,12 @@ function ProjectPage({
             <ContextMenuItem
               key={mode}
               className="gap-3 px-2 py-2"
-              onClick={() => openAdd(mode)}
+              onClick={() =>
+                void navigate({
+                  to: "/services/new",
+                  search: { projectId: project.id, source: mode },
+                })
+              }
             >
               <Icon aria-hidden="true" />
               {label}
@@ -193,16 +182,11 @@ function ProjectPage({
           </Button>
         </div>
       </header>
-      {(refreshError || (error && !dialog) || notice) && (
+      {(refreshError || (error && !dialog)) && (
         <div className="absolute top-32 left-4 right-4 max-w-lg rounded-xl border bg-card p-3 shadow-sm sm:top-20">
           {(refreshError || (error && !dialog)) && (
             <p role="alert" className="text-sm text-destructive">
               {refreshError || error}
-            </p>
-          )}
-          {notice && (
-            <p role="status" className="text-sm text-muted-foreground">
-              {notice}
             </p>
           )}
         </div>
@@ -219,11 +203,7 @@ function ProjectPage({
         <DialogContent showCloseButton={!busy}>
           <DialogHeader>
             <DialogTitle>
-              {dialog === "add"
-                ? deploymentMode
-                  ? "Deploy new service"
-                  : "Add service"
-                : "Project settings"}
+              {dialog === "add" ? "Add service" : "Project settings"}
             </DialogTitle>
             <DialogDescription>
               {dialog === "add"
@@ -239,85 +219,60 @@ function ProjectPage({
             )}
             {dialog === "add" ? (
               <>
-                {!deploymentMode && (
-                  <>
-                    <label
-                      htmlFor="project-service-search"
-                      className="grid gap-2 text-sm"
+                <label
+                  htmlFor="project-service-search"
+                  className="grid gap-2 text-sm"
+                >
+                  Existing services
+                  <Input
+                    id="project-service-search"
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                    placeholder="Search services"
+                  />
+                </label>
+                <div className="max-h-56 space-y-2 overflow-auto">
+                  {available.map((s) => (
+                    <div
+                      key={s.id}
+                      className="flex items-center justify-between gap-3 rounded-lg border p-3"
                     >
-                      Existing services
-                      <Input
-                        id="project-service-search"
-                        value={search}
-                        onChange={(event) => setSearch(event.target.value)}
-                        placeholder="Search services"
-                      />
-                    </label>
-                    <div className="max-h-56 space-y-2 overflow-auto">
-                      {available.map((s) => (
-                        <div
-                          key={s.id}
-                          className="flex items-center justify-between gap-3 rounded-lg border p-3"
-                        >
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-medium">
-                              {s.name}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              {machines.find((m) => m.id === s.machineId)?.name}
-                            </p>
-                          </div>
-                          <Button
-                            size="sm"
-                            disabled={busy}
-                            onClick={() =>
-                              void run(() =>
-                                api(`/projects/${project.id}/add`, {
-                                  serviceId: s.id,
-                                }),
-                              )
-                            }
-                          >
-                            Add
-                          </Button>
-                        </div>
-                      ))}
-                      {available.length === 0 && (
-                        <p className="text-sm text-muted-foreground">
-                          No unassigned services match.
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium">{s.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {machines.find((m) => m.id === s.machineId)?.name}
                         </p>
-                      )}
+                      </div>
+                      <Button
+                        size="sm"
+                        disabled={busy}
+                        onClick={() =>
+                          void run(() =>
+                            api(`/projects/${project.id}/add`, {
+                              serviceId: s.id,
+                            }),
+                          )
+                        }
+                      >
+                        Add
+                      </Button>
                     </div>
-                  </>
-                )}
+                  ))}
+                  {available.length === 0 && (
+                    <p className="text-sm text-muted-foreground">
+                      No unassigned services match.
+                    </p>
+                  )}
+                </div>
                 <div className="space-y-3 border-t pt-4">
-                  <label className="grid gap-2 text-sm">
-                    Deploy on machine
-                    <select
-                      className="h-9 rounded-lg border bg-background px-2"
-                      value={machineId}
-                      onChange={(event) => setMachineId(event.target.value)}
-                    >
-                      <option value="">Choose a machine</option>
-                      {machines
-                        .filter((m) => m.status !== "revoked")
-                        .map((m) => (
-                          <option key={m.id} value={m.id}>
-                            {m.name}
-                          </option>
-                        ))}
-                    </select>
-                  </label>
                   <Button
-                    disabled={busy || !machineId}
-                    onClick={() => {
-                      setDialog(null);
-                      setDeploy({
-                        machineId,
-                        trigger:
-                          canvas.current?.querySelector("section") ?? null,
-                      });
-                    }}
+                    disabled={busy}
+                    onClick={() =>
+                      void navigate({
+                        to: "/services/new",
+                        search: { projectId: project.id },
+                      })
+                    }
                   >
                     Deploy new service
                   </Button>
@@ -408,32 +363,6 @@ function ProjectPage({
           </DialogBody>
         </DialogContent>
       </Dialog>
-      {deploy && (
-        <DeployServiceDialog
-          machineId={deploy.machineId}
-          workers={data.workers}
-          initialMode={deploymentMode}
-          trigger={deploy.trigger}
-          onClose={() => setDeploy(null)}
-          onSaved={async (serviceId, message) => {
-            setDeploy(null);
-            try {
-              await api(`/projects/${project.id}/add`, { serviceId });
-              setNotice(message);
-              await reload();
-              await navigate({
-                to: "/services/$serviceId",
-                params: { serviceId },
-                search: { deploymentNotice: message },
-              });
-            } catch (e) {
-              setError(
-                `Service saved. Could not add it to this project. Use Add service to retry. ${e instanceof Error ? e.message : ""}`,
-              );
-            }
-          }}
-        />
-      )}
       {selected && (
         <ServiceDrawer
           key={`${selected.service.id}:${selected.component ?? "app"}`}

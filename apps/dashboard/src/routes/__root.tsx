@@ -24,6 +24,11 @@ export const Route = createRootRoute({
           ? `${stylesheet}?direct&ephor-dev=1`
           : stylesheet,
       },
+      {
+        rel: "icon",
+        type: "image/png",
+        href: "/icon_256.png",
+      },
     ],
   }),
   component: RootLayout,

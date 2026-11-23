@@ -1,6 +1,6 @@
 import type { Icon } from "@phosphor-icons/react";
 import { useId } from "react";
-import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts";
+import { Area, AreaChart, XAxis } from "recharts";
 import {
   type ChartConfig,
   ChartContainer,
@@ -13,6 +13,7 @@ const time = (value: number) =>
     hour: "2-digit",
     minute: "2-digit",
   });
+
 export function MetricChart<K extends string>({
   title,
   icon: TitleIcon,
@@ -81,16 +82,20 @@ export function MetricChart<K extends string>({
       <div
         className={
           layered
-            ? "relative min-w-0 rounded-lg bg-card p-4 ring-1 ring-border"
+            ? "relative min-w-0 rounded-lg bg-card ring-1 ring-border"
             : undefined
         }
       >
         {hasData && history ? (
-          <ChartContainer config={config} className="aspect-auto h-60 w-full">
+          <ChartContainer
+            dottedGrid
+            config={config}
+            className="aspect-auto h-60 w-full"
+          >
             <AreaChart
               accessibilityLayer
               data={history.points}
-              margin={{ left: 0, right: 4, top: 8, bottom: 0 }}
+              margin={{ left: 0, right: 0, top: 8, bottom: 0 }}
             >
               <defs>
                 {fields.map((f) => (
@@ -115,22 +120,11 @@ export function MetricChart<K extends string>({
                   </linearGradient>
                 ))}
               </defs>
-              <CartesianGrid vertical={false} />
               <XAxis
+                hide
                 dataKey="timestamp"
                 type="number"
-                domain={[history.from, history.to]}
-                tickFormatter={time}
-                axisLine={false}
-                tickLine={false}
-                minTickGap={50}
-              />
-              <YAxis
-                tickFormatter={format}
-                axisLine={false}
-                tickLine={false}
-                width={70}
-                domain={[0, "auto"]}
+                domain={["dataMin", "dataMax"]}
               />
               <ChartTooltip
                 content={

@@ -1,11 +1,10 @@
-import { ArrowLeftIcon } from "@phosphor-icons/react/dist/csr/ArrowLeft";
 import { ArrowSquareOutIcon } from "@phosphor-icons/react/dist/csr/ArrowSquareOut";
 import { CheckIcon } from "@phosphor-icons/react/dist/csr/Check";
 import { CircleNotchIcon } from "@phosphor-icons/react/dist/csr/CircleNotch";
 import { CopyIcon } from "@phosphor-icons/react/dist/csr/Copy";
 import { TerminalIcon } from "@phosphor-icons/react/dist/csr/Terminal";
 import { XIcon } from "@phosphor-icons/react/dist/csr/X";
-import { Link } from "@tanstack/react-router";
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BuildDiagnose } from "@/components/services/build-diagnosis";
 import { ServiceIcon } from "@/components/services/service-icon";
@@ -76,26 +75,18 @@ export function FirstDeployment({
     : null;
   return (
     <div className="min-w-0 space-y-8">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <Link
-          to="/services"
-          className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeftIcon /> Services
-        </Link>
+      <div className="flex justify-end">
         <Button variant="ghost" onClick={() => onOpen(configuration)}>
           Configuration
         </Button>
       </div>
       <header className="space-y-5">
         <div className="flex items-center gap-3">
-          <span className="rounded-xl border bg-card p-3">
-            <ServiceIcon
-              source={service.source}
-              image={service.spec.image}
-              size={24}
-            />
-          </span>
+          <ServiceIcon
+            source={service.source}
+            image={service.spec.image}
+            size={24}
+          />
           <div className="min-w-0">
             <p className="truncate font-medium">{service.name}</p>
             <p

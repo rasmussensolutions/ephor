@@ -2,7 +2,13 @@ import { AuthError, AuthStore, randomToken, type Sql } from "../auth/store";
 import { template } from "../services/catalog";
 import { ServiceSecrets } from "../services/crypto";
 import { readDomains } from "../services/domains";
-import { object, type ServiceSpec, serviceId } from "../services/spec";
+import {
+  isStateful,
+  object,
+  requiredProtocol,
+  type ServiceSpec,
+  serviceId,
+} from "../services/spec";
 import { Services } from "../services/store";
 import {
   type DestinationConfig,
@@ -68,11 +74,11 @@ export class Backups {
     this.secrets = new ServiceSecrets(`backup:${secret}`);
     this.services = new Services(sql, secret);
   }
-  async ready(machine: unknown) {
+  async ready(machine: unknown, minimum = 4) {
     const id = serviceId(machine);
     const [row] = await this.sql.query(
-      "SELECT m.id FROM ephor_machine m JOIN ephor_service_worker w ON w.machine_id=m.id WHERE m.id=$1 AND m.state='active' AND w.version IN ('4','5') AND w.last_seen>$2",
-      [id, Date.now() - 120000],
+      "SELECT m.id FROM ephor_machine m JOIN ephor_service_worker w ON w.machine_id=m.id WHERE m.id=$1 AND m.state='active' AND w.version IN ('4','5','6') AND CAST(w.version AS INTEGER)>=$3 AND w.last_seen>$2",
+      [id, Date.now() - 120000, minimum],
     );
     if (!row) throw new AuthError("BACKUP_WORKER_REQUIRED", 409);
     return id;
@@ -104,7 +110,7 @@ export class Backups {
     id = crypto.randomUUID() as string,
   ) {
     const rows = await this.sql.query(
-      "INSERT INTO ephor_backup_job (id,machine_id,service_id,plan_id,destination_id,action,payload,status,created_at,updated_at,schedule_key) VALUES ($1,$2,$3,$4,$5,$6,$7,'queued',$8,$8,$9) ON CONFLICT DO NOTHING RETURNING id",
+      "INSERT INTO ephor_backup_job (id,machine_id,service_id,plan_id,destination_id,action,payload,status,created_at,updated_at,schedule_key,protocol) VALUES ($1,$2,$3,$4,$5,$6,$7,'queued',$8,$8,$9,$10) ON CONFLICT DO NOTHING RETURNING id",
       [
         id,
         machine,
@@ -115,6 +121,7 @@ export class Backups {
         await this.secrets.seal(id, payload),
         Date.now(),
         key,
+        Math.max(4, payload.job ? requiredProtocol(payload.job.spec) : 4),
       ],
     );
     if (!rows.length) throw new AuthError("BACKUP_ALREADY_RUNNING", 409);
@@ -200,7 +207,7 @@ export class Backups {
       d = await this.destination(b.destinationId),
       timing = schedule(b);
     const spec = await this.services.secrets.open<ServiceSpec>(s.id, s.config);
-    if (!spec.catalog) throw new AuthError("NOT_A_CATALOG_APP");
+    if (!isStateful(spec)) throw new AuthError("NOT_A_CATALOG_APP");
     const [old] = await this.sql.query<Plan>(
       "SELECT * FROM ephor_backup_plan WHERE service_id=$1",
       [s.id],
@@ -209,7 +216,8 @@ export class Backups {
       throw new AuthError("BACKUP_DESTINATION_NOT_READY", 409);
     if (old && old.destination_id !== d.id)
       throw new AuthError("BACKUP_DESTINATION_LOCKED", 409);
-    if (!old) await this.ready(s.machine_id);
+    if (!old)
+      await this.ready(s.machine_id, Math.max(4, requiredProtocol(spec)));
     const id = old?.id ?? crypto.randomUUID();
     const saved = await this.sql.query<{ id: string }>(
       "INSERT INTO ephor_backup_plan (id,service_id,destination_id,password,frequency,hour,next_run,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(service_id) DO UPDATE SET frequency=$5,hour=$6,next_run=$7 WHERE ephor_backup_plan.destination_id=$3 RETURNING id",
@@ -240,8 +248,9 @@ export class Backups {
       [s.id],
     );
     if (busy) throw new AuthError("DEPLOYMENT_ALREADY_RUNNING", 409);
-    const spec = await this.services.secrets.open<ServiceSpec>(s.id, s.config);
-    if (!spec.catalog || !s.current_deployment)
+    const deployed = await this.services.deployedSnapshot(s);
+    const spec = deployed?.spec;
+    if (!spec || !isStateful(spec))
       throw new AuthError("BACKUP_APP_NOT_READY", 409);
     const [machine] = await this.sql.query<{ telemetry: string | null }>(
       "SELECT telemetry FROM ephor_machine WHERE id=$1",
@@ -250,6 +259,8 @@ export class Backups {
     const architecture = JSON.parse(machine?.telemetry ?? "{}").arch;
     if (!["x86_64", "aarch64"].includes(architecture))
       throw new AuthError("MACHINE_ARCHITECTURE_REQUIRED", 409);
+    if (scheduled === undefined)
+      await this.ready(s.machine_id, Math.max(4, requiredProtocol(spec)));
     const jid = crypto.randomUUID();
     const payload: Payload = {
       architecture,
@@ -258,8 +269,8 @@ export class Backups {
       job: {
         id: jid,
         serviceId: s.id,
-        domain: s.domain,
-        domains: readDomains(s),
+        domain: deployed.domains.primary,
+        domains: deployed.domains,
         action: "backup",
         spec,
       },
@@ -319,8 +330,9 @@ export class Backups {
       source.id,
       source.payload,
     );
-    if (!original.job?.spec.catalog)
+    if (!original.job || !isStateful(original.job.spec))
       throw new AuthError("BACKUP_NOT_FOUND", 404);
+    await this.ready(machine, Math.max(4, requiredProtocol(original.job.spec)));
     // Same physical database files require the same architecture, even when the image is multi-platform.
     const [targetMachine] = await this.sql.query<{ telemetry: string | null }>(
       "SELECT telemetry FROM ephor_machine WHERE id=$1",
@@ -329,19 +341,24 @@ export class Backups {
     const architecture = JSON.parse(targetMachine?.telemetry ?? "{}").arch;
     if (!original.architecture || original.architecture !== architecture)
       throw new AuthError("BACKUP_ARCHITECTURE_MISMATCH", 409);
-    const recipe = template(
-      original.job.spec.catalog.template,
-      original.job.spec.catalog.version,
-    );
+    const recipe = original.job.spec.catalog
+      ? template(
+          original.job.spec.catalog.template,
+          original.job.spec.catalog.version,
+        )
+      : { web: false };
     if (recipe.web && !b.domain) throw new AuthError("CATALOG_DOMAIN_REQUIRED");
     if (!recipe.web && b.domain)
       throw new AuthError("DATABASE_MUST_BE_PRIVATE");
     const config = structuredClone(original.job.spec);
-    config.catalog = { ...original.job.spec.catalog, protected: true };
+    if (original.job.spec.catalog)
+      config.catalog = { ...original.job.spec.catalog, protected: recipe.web };
+    // Restored custom applications are private and detached from production dependencies.
+    delete config.connections;
     const sourceService = await this.services.get(original.job.serviceId);
     const created = await this.services.create(
       { machineId: machine, name: b.name, domain: b.domain, spec: config },
-      JSON.parse(sourceService.source),
+      config.catalog ? JSON.parse(sourceService.source) : { type: "image" },
     );
     const jid = crypto.randomUUID();
     try {
@@ -381,20 +398,23 @@ export class Backups {
     return { id: jid, serviceId: created.id };
   }
   async next(machine: string, protocol: unknown) {
-    if (protocol !== 4 && protocol !== 5)
+    if (protocol !== 4 && protocol !== 5 && protocol !== 6)
       throw new AuthError("BACKUP_WORKER_REQUIRED", 409);
-    await this.services.heartbeat(machine, 4);
+    await this.services.heartbeat(machine, Number(protocol));
     await this.tick(machine);
     // A running job is never reassigned to a different machine or expired by a timer.
     await this.sql.query(
-      "UPDATE ephor_backup_job SET status='running',updated_at=$1 WHERE id=(SELECT id FROM ephor_backup_job WHERE machine_id=$2 AND status='queued' ORDER BY created_at,id LIMIT 1) AND status='queued' AND NOT EXISTS (SELECT 1 FROM ephor_backup_job WHERE machine_id=$2 AND status='running') AND NOT EXISTS (SELECT 1 FROM ephor_deployment WHERE machine_id=$2 AND status='running') RETURNING id",
-      [Date.now(), machine],
+      "UPDATE ephor_backup_job SET status='running',updated_at=$1 WHERE id=(SELECT id FROM ephor_backup_job WHERE machine_id=$2 AND status='queued' AND protocol <= $3 ORDER BY created_at,id LIMIT 1) AND status='queued' AND NOT EXISTS (SELECT 1 FROM ephor_backup_job WHERE machine_id=$2 AND status='running') AND NOT EXISTS (SELECT 1 FROM ephor_deployment WHERE machine_id=$2 AND status='running') RETURNING id",
+      [Date.now(), machine, protocol],
     );
     const [job] = await this.sql.query<BackupJob>(
       "SELECT * FROM ephor_backup_job WHERE machine_id=$1 AND status='running'",
       [machine],
     );
     if (!job) return null;
+    const payload = await this.secrets.open<Payload>(job.id, job.payload);
+    if (payload.job && requiredProtocol(payload.job.spec) > Number(protocol))
+      return null;
     const d = await this.destination(job.destination_id);
     return {
       id: job.id,

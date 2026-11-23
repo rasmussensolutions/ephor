@@ -1,7 +1,22 @@
 name: Update Ephor
+# ephor-panel-protocol: 1
+run-name: ${{ inputs.panel_request && format('Ephor panel {0}', inputs.panel_request) || 'Update Ephor' }}
 
 on:
   workflow_dispatch:
+    inputs:
+      panel_request:
+        description: Panel request ID (leave empty for the GitHub flow)
+        type: string
+        default: ""
+      target:
+        description: Exact tested official commit (optional)
+        type: string
+        default: ""
+      base:
+        description: Expected deployment branch commit (optional)
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -26,11 +41,26 @@ jobs:
         id: version
         env:
           GH_TOKEN: ${{ github.token }}
+          REQUESTED_TARGET: ${{ inputs.target }}
+          EXPECTED_BASE: ${{ inputs.base }}
+          PANEL_REQUEST: ${{ inputs.panel_request }}
         shell: bash
         run: |
           set -euo pipefail
+          if [[ -n "$PANEL_REQUEST" ]]; then
+            [[ "$PANEL_REQUEST" =~ ^[a-f0-9-]{36}$ && "$EXPECTED_BASE" =~ ^[a-f0-9]{40}$ && "$REQUESTED_TARGET" =~ ^[a-f0-9]{40}$ ]]
+          fi
+          if [[ -n "$EXPECTED_BASE" ]]; then
+            [[ "$EXPECTED_BASE" =~ ^[a-f0-9]{40}$ && "$(git rev-parse HEAD)" == "$EXPECTED_BASE" ]] || { echo 'Production branch changed. Prepare a new update.'; exit 1; }
+          fi
           target=$(gh api 'repos/rasmussensolutions/ephor/actions/workflows/ci.yml/runs?branch=main&event=push&status=success&per_page=1' --jq '.workflow_runs[0].head_sha // empty')
           [[ "$target" =~ ^[0-9a-f]{40}$ ]] || { echo 'No successfully tested official version is available.'; exit 1; }
+          if [[ -n "$REQUESTED_TARGET" ]]; then
+            [[ "$REQUESTED_TARGET" =~ ^[a-f0-9]{40}$ ]]
+            tested=$(gh api "repos/rasmussensolutions/ephor/actions/workflows/ci.yml/runs?branch=main&event=push&status=success&head_sha=$REQUESTED_TARGET&per_page=1" --jq '.workflow_runs[0].head_sha // empty')
+            [[ "$tested" == "$REQUESTED_TARGET" ]] || { echo 'Requested version has not passed official CI.'; exit 1; }
+            target="$REQUESTED_TARGET"
+          fi
           git fetch --no-tags https://github.com/rasmussensolutions/ephor.git main
           git merge-base --is-ancestor "$target" FETCH_HEAD
           echo "commit=$target" >> "$GITHUB_OUTPUT"
@@ -49,6 +79,7 @@ jobs:
           TARGET: ${{ steps.version.outputs.commit }}
           REPOSITORY: ${{ github.repository }}
           BASE: ${{ github.event.repository.default_branch }}
+          PANEL_REQUEST: ${{ inputs.panel_request }}
         shell: bash
         run: |
           set -euo pipefail
@@ -69,6 +100,10 @@ jobs:
           git commit -m "Update Ephor to $TARGET"
           # No persistent credentials or access to Cloudflare secrets is needed.
           git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin "HEAD:refs/heads/$branch"
+          if [[ -n "$PANEL_REQUEST" ]]; then
+            echo 'Prepared. Return to Ephor to review and install this update.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           body="$RUNNER_TEMP/ephor-update-pr.md"
           cat > "$body" <<BODY
           Updates Ephor to https://github.com/rasmussensolutions/ephor/commit/$TARGET, which passed official CI.

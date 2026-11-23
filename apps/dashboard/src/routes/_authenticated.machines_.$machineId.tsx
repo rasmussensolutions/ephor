@@ -1,21 +1,29 @@
 import type { MachineDetail } from "@ephor/api/machines";
-import { ArrowLeftIcon } from "@phosphor-icons/react/dist/csr/ArrowLeft";
+import {
+  ArrowClockwiseIcon,
+  CheckIcon,
+  PlugIcon,
+  PlusIcon,
+} from "@phosphor-icons/react";
+
 import { ClockIcon } from "@phosphor-icons/react/dist/csr/Clock";
 import { CpuIcon } from "@phosphor-icons/react/dist/csr/Cpu";
 import { HardDriveIcon } from "@phosphor-icons/react/dist/csr/HardDrive";
-import { HardDrivesIcon } from "@phosphor-icons/react/dist/csr/HardDrives";
 import { MemoryIcon } from "@phosphor-icons/react/dist/csr/Memory";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
 import { MachineCharts } from "@/components/machines/machine-charts";
 import { MachineServices } from "@/components/machines/machine-services";
 import { MachineSettings } from "@/components/machines/machine-settings";
 import { MachineStatus } from "@/components/machines/machine-status";
-import { ProviderLabel } from "@/components/provider-label";
+import { ProviderIcon } from "@/components/provider-label";
+import { SecurityWorkspace } from "@/components/security/security-workspace";
+
 import { Button } from "@/components/ui/button";
 import { Usage } from "@/components/usage-meter";
 import { api, signIn } from "@/lib/auth";
-import { primaryAddress } from "@/lib/machine-address";
+
+import { currentMachineMetrics } from "@/lib/machine-metrics";
 import { bytes, uptime } from "@/lib/services";
 
 export const Route = createFileRoute("/_authenticated/machines_/$machineId")({
@@ -46,12 +54,22 @@ function MachineRoute() {
   return <MachinePage key={initial.machine.id} initial={initial} />;
 }
 function MachinePage({ initial }: { initial: MachineDetail }) {
+  const navigate = useNavigate();
   const [data, setData] = useState(initial);
+  const [now, setNow] = useState(Date.now);
   const [tab, setTab] = useState("Overview");
   const [refreshError, setRefreshError] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [updateCheck, setUpdateCheck] = useState<
+    "idle" | "checking" | "complete"
+  >("idle");
+  useEffect(() => {
+    if (updateCheck !== "complete") return;
+    const timeout = setTimeout(() => setUpdateCheck("idle"), 3000);
+    return () => clearTimeout(timeout);
+  }, [updateCheck]);
   const id = initial.machine.id;
   const refresh = useCallback(async () => {
     setData(await api<MachineDetail>(`/machines/${id}`));
@@ -78,9 +96,11 @@ function MachinePage({ initial }: { initial: MachineDetail }) {
       if (active) timer = setTimeout(poll, 15000);
     }
     timer = setTimeout(poll, 15000);
+    const clock = setInterval(() => setNow(Date.now()), 15000);
     return () => {
       active = false;
       clearTimeout(timer);
+      clearInterval(clock);
     };
   }, [id]);
   async function run(action: () => Promise<void>) {
@@ -90,35 +110,35 @@ function MachinePage({ initial }: { initial: MachineDetail }) {
     try {
       await action();
       await refresh();
+      return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Please try again.");
+      return false;
     } finally {
       setBusy(false);
     }
   }
   const { machine, releaseInfo } = data;
   const metrics = machine.telemetry;
+  const provider = machine.providerOverride ?? metrics?.hosting?.provider;
+  const currentMetrics = currentMachineMetrics(machine, now);
   const root = metrics?.disks.find((disk) => disk.mount === "/");
-  const online = machine.status === "online";
-  const memoryPercent = metrics
-    ? (metrics.memoryUsed / metrics.memoryTotal) * 100
-    : 0;
+  const currentRoot = currentMetrics?.disks.find((disk) => disk.mount === "/");
+  const memoryPercent =
+    currentMetrics && currentMetrics.memoryTotal > 0
+      ? (currentMetrics.memoryUsed / currentMetrics.memoryTotal) * 100
+      : null;
   return (
     <div className="min-w-0 space-y-7">
-      <Link
-        to="/machines"
-        className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
-      >
-        <ArrowLeftIcon />
-        Machines
-      </Link>
       <header>
         <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
           <h1 className="page-title flex min-w-0 items-center gap-2.5">
-            <HardDrivesIcon
-              aria-hidden="true"
-              className="size-6 shrink-0 text-muted-foreground"
-            />
+            <span
+              className="flex shrink-0"
+              title={provider || "Unknown provider"}
+            >
+              <ProviderIcon name={provider} className="size-6" />
+            </span>
             <span className="wrap-anywhere">{machine.name}</span>
           </h1>
           <MachineStatus status={machine.status} />
@@ -134,25 +154,14 @@ function MachinePage({ initial }: { initial: MachineDetail }) {
           {notice}
         </p>
       )}
-      {!online && (
-        <p
-          role="status"
-          className="rounded-lg border bg-muted/30 px-4 py-3 text-sm text-muted-foreground"
-        >
-          {metrics
-            ? `Showing last reported values from ${machine.lastSeen ? new Date(machine.lastSeen).toLocaleString() : "an earlier report"}. These readings are not live.`
-            : machine.status === "pending"
-              ? "Waiting for enrollment. Run the install command on this machine to connect it."
-              : machine.status === "expired"
-                ? "The enrollment command expired. Generate a new command from the machine list."
-                : machine.status === "revoked"
-                  ? "This machine is disconnected. Its credential can no longer send reports."
-                  : "Waiting for the machine’s first metrics report."}
-          {(machine.status === "pending" || machine.status === "expired") && (
-            <Link to="/machines" className="ml-1 underline underline-offset-4">
-              Manage enrollment
-            </Link>
-          )}
+      {(machine.status === "pending" || machine.status === "expired") && (
+        <p className="text-sm text-muted-foreground">
+          {machine.status === "pending"
+            ? "Run the install command on this machine to connect it."
+            : "Generate a new enrollment command to connect this machine."}
+          <Link to="/machines" className="ml-1 underline underline-offset-4">
+            Manage enrollment
+          </Link>
         </p>
       )}
       <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
@@ -160,32 +169,113 @@ function MachinePage({ initial }: { initial: MachineDetail }) {
           aria-label="Machine sections"
           className="flex w-fit max-w-full flex-wrap gap-1 rounded-lg bg-muted p-1"
         >
-          {["Overview", "Services", "Canvas", "Storage", "Settings"].map(
-            (value) => (
-              <button
-                type="button"
-                key={value}
-                aria-pressed={tab === value}
-                onClick={() => setTab(value)}
-                className={`rounded-md px-3 py-1.5 text-sm ${tab === value ? "bg-card" : "text-muted-foreground"}`}
-              >
-                {value}
-              </button>
-            ),
-          )}
+          {[
+            "Overview",
+            "Services",
+            "Canvas",
+            "Storage",
+            "Security",
+            "Settings",
+          ].map((value) => (
+            <button
+              type="button"
+              key={value}
+              aria-pressed={tab === value}
+              onClick={() => setTab(value)}
+              className={`rounded-md px-3 py-1.5 text-sm ${tab === value ? "bg-card" : "text-muted-foreground"}`}
+            >
+              {value}
+            </button>
+          ))}
         </nav>
-        <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-x-3 gap-y-1 text-right text-sm text-muted-foreground">
-          <ProviderLabel
-            name={machine.providerOverride ?? metrics?.hosting?.provider}
-          />
-          <span className="wrap-anywhere font-mono text-xs">
-            {primaryAddress(metrics?.ipAddresses) ?? "IP unavailable"}
-          </span>
-          {metrics && (
-            <span className="wrap-anywhere">
-              {metrics.os} · {metrics.arch}
-            </span>
-          )}
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          <Button
+            variant="raised"
+            size="action"
+            disabled={busy || !releaseInfo?.configured}
+            title={
+              !releaseInfo?.configured
+                ? "Release updates are not configured."
+                : undefined
+            }
+            aria-live="polite"
+            aria-busy={updateCheck === "checking"}
+            alternateContent={{
+              active: updateCheck !== "idle",
+              children: (
+                <>
+                  {updateCheck === "complete" ? (
+                    <CheckIcon
+                      aria-hidden="true"
+                      data-icon="inline-start"
+                      className="size-[1em]"
+                    />
+                  ) : (
+                    <ArrowClockwiseIcon
+                      aria-hidden="true"
+                      data-icon="inline-start"
+                      className="size-[1em] motion-safe:animate-spin"
+                    />
+                  )}
+                  {updateCheck === "complete" ? "Check complete" : "Checking…"}
+                </>
+              ),
+            }}
+            onClick={async () => {
+              setUpdateCheck("checking");
+              const checked = await run(async () => {
+                await api("/machines/updates/check", {});
+              });
+              setUpdateCheck(checked ? "complete" : "idle");
+            }}
+          >
+            <ArrowClockwiseIcon
+              aria-hidden="true"
+              data-icon="inline-start"
+              className="size-[1em]"
+            />
+            Check for updates
+          </Button>
+          <Button
+            variant="destructive-gradient"
+            size="action"
+            aria-label={`Disconnect ${machine.name}`}
+            disabled={busy || machine.status === "revoked"}
+            onClick={() => {
+              if (
+                confirm(
+                  `Disconnect “${machine.name}”? Its credential and any pending enrollment command will stop working. Services on the VPS will keep running.`,
+                )
+              )
+                void run(async () => {
+                  await signIn();
+                  await api("/machines/revoke", { id });
+                  setNotice("Machine disconnected.");
+                });
+            }}
+          >
+            <PlugIcon
+              aria-hidden="true"
+              data-icon="inline-start"
+              className="size-[1em]"
+            />
+            Disconnect
+          </Button>
+          <Button
+            variant="gradient"
+            size="action"
+            disabled={busy || machine.status === "revoked"}
+            onClick={() =>
+              void navigate({ to: "/services/new", search: { machineId: id } })
+            }
+          >
+            <PlusIcon
+              aria-hidden="true"
+              data-icon="inline-start"
+              className="size-[1em]"
+            />
+            Deploy service
+          </Button>
         </div>
       </div>
       {tab === "Overview" && (
@@ -196,7 +286,9 @@ function MachinePage({ initial }: { initial: MachineDetail }) {
                 [
                   "CPU",
                   CpuIcon,
-                  metrics ? `${metrics.cpuPercent.toFixed(1)}%` : "—",
+                  currentMetrics
+                    ? `${currentMetrics.cpuPercent.toFixed(1)}%`
+                    : "—",
                   metrics
                     ? `${metrics.cpuCount} ${metrics.cpuCount === 1 ? "core" : "cores"}`
                     : "Waiting for report",
@@ -204,25 +296,27 @@ function MachinePage({ initial }: { initial: MachineDetail }) {
                 [
                   "Memory",
                   MemoryIcon,
-                  metrics ? bytes(metrics.memoryUsed) : "—",
+                  currentMetrics ? bytes(currentMetrics.memoryUsed) : "—",
                   metrics
-                    ? `${bytes(metrics.memoryTotal)} total · ${memoryPercent.toFixed(1)}% used`
+                    ? `${bytes(metrics.memoryTotal)} total${memoryPercent !== null ? ` · ${memoryPercent.toFixed(1)}% used` : ""}`
                     : "Waiting for report",
                 ],
                 [
                   "Root disk /",
                   HardDriveIcon,
-                  root
-                    ? `${((root.used / root.total) * 100).toFixed(1)}%`
+                  currentRoot
+                    ? `${((currentRoot.used / currentRoot.total) * 100).toFixed(1)}%`
                     : "—",
-                  root
-                    ? `${bytes(root.total - root.used)} free of ${bytes(root.total)}`
-                    : "Root filesystem not reported",
+                  currentRoot
+                    ? `${bytes(currentRoot.total - currentRoot.used)} free of ${bytes(currentRoot.total)}`
+                    : root
+                      ? `${bytes(root.total)} total`
+                      : "Root filesystem not reported",
                 ],
                 [
                   "Uptime",
                   ClockIcon,
-                  metrics ? uptime(metrics.uptime) : "—",
+                  currentMetrics ? uptime(currentMetrics.uptime) : "—",
                   "Since the last host restart",
                 ],
               ] as const
@@ -286,35 +380,47 @@ function MachinePage({ initial }: { initial: MachineDetail }) {
       {(tab === "Services" || tab === "Canvas") && (
         <MachineServices id={id} view={tab === "Canvas" ? "canvas" : "table"} />
       )}
+      {tab === "Security" && <SecurityWorkspace machineId={id} />}
       {tab === "Storage" && (
-        <section className="space-y-5 rounded-xl border bg-card p-5">
-          <div>
-            <h2 className="font-medium">Mounted filesystems</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Latest reported capacity for each mount. Mounts may share the same
-              underlying disk.
-            </p>
-          </div>
+        <section aria-label="Storage" className="min-w-0">
           {metrics?.disks.length ? (
             <div className="grid gap-4 sm:grid-cols-2">
               {metrics.disks.map((disk) => (
                 <div
                   key={disk.mount}
-                  className="space-y-3 rounded-lg border p-4"
+                  className="flex min-w-0 flex-col overflow-hidden rounded-lg bg-transparent ring-1 ring-border"
                 >
-                  <h3 className="break-all font-mono text-sm">{disk.mount}</h3>
-                  <Usage
-                    label={`Filesystem ${disk.mount}`}
-                    percent={(disk.used / disk.total) * 100}
-                    detail={`${bytes(disk.used)} / ${bytes(disk.total)}`}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    {bytes(disk.used)} used of {bytes(disk.total)} ·{" "}
-                    {bytes(disk.total - disk.used)} free
-                    {disk.used / disk.total >= 0.85
-                      ? " · Storage is running low"
-                      : ""}
-                  </p>
+                  <h2 className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-muted-foreground">
+                    <HardDriveIcon
+                      aria-hidden="true"
+                      className="size-4 shrink-0"
+                    />
+                    <span className="truncate font-mono" title={disk.mount}>
+                      {disk.mount}
+                    </span>
+                  </h2>
+                  <div className="relative flex flex-1 flex-col gap-3 rounded-lg bg-card p-4 ring-1 ring-border">
+                    <Usage
+                      label={`Filesystem ${disk.mount}`}
+                      percent={
+                        currentMetrics ? (disk.used / disk.total) * 100 : null
+                      }
+                      detail={`${bytes(disk.used)} / ${bytes(disk.total)}`}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      {currentMetrics ? (
+                        <>
+                          {bytes(disk.used)} used of {bytes(disk.total)} ·{" "}
+                          {bytes(disk.total - disk.used)} free
+                          {disk.used / disk.total >= 0.85
+                            ? " · Storage is running low"
+                            : ""}
+                        </>
+                      ) : (
+                        `${bytes(disk.total)} total`
+                      )}
+                    </p>
+                  </div>
                 </div>
               ))}
             </div>
@@ -327,23 +433,7 @@ function MachinePage({ initial }: { initial: MachineDetail }) {
       )}
       {tab === "Settings" && (
         <section className="space-y-5 rounded-xl border bg-card p-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="font-medium">Provider & daemon</h2>
-            {releaseInfo?.configured && (
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busy}
-                onClick={() =>
-                  void run(async () => {
-                    await api("/machines/updates/check", {});
-                  })
-                }
-              >
-                Check for updates
-              </Button>
-            )}
-          </div>
+          <h2 className="font-medium">Provider & daemon</h2>
           <MachineSettings
             machine={machine}
             busy={busy}
@@ -363,18 +453,6 @@ function MachinePage({ initial }: { initial: MachineDetail }) {
                   await signIn();
                   await api("/machines/updates", { id });
                   setNotice("Daemon update queued.");
-                });
-            }}
-            revoke={() => {
-              if (
-                confirm(
-                  `Disconnect “${machine.name}”? Its credential and any pending enrollment command will stop working. Services on the VPS will keep running.`,
-                )
-              )
-                void run(async () => {
-                  await signIn();
-                  await api("/machines/revoke", { id });
-                  setNotice("Machine disconnected.");
                 });
             }}
           />
