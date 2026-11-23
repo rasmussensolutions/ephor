@@ -32,10 +32,12 @@
     "test:services:linux": "bun scripts/test-services-linux.ts",
     "build:all": "bun run --filter @ephor/dashboard build && bun run --parallel --filter @ephor/website --filter @ephor/server build && bun run --filter @ephor/worker build",
     "build:cloudflare": "bun scripts/download-daemon.ts && bun run --filter @ephor/dashboard build",
-    "deploy": "bun run --filter @ephor/worker exec:wrangler d1 migrations apply DB --remote --config ../../wrangler.jsonc && bun run --filter @ephor/worker exec:wrangler deploy --config ../../wrangler.jsonc"
+    "deploy": "bun run --filter @ephor/worker exec:wrangler d1 migrations apply DB --remote --config ../../wrangler.jsonc && bun run --filter @ephor/worker exec:wrangler deploy --config ../../wrangler.jsonc",
+    "test:worker": "node --test scripts/tests/worker-integrations.test.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.7",
+    "miniflare": "5.20261110.1-beta",
     "typescript": "7.0.2"
   },
   "cloudflare": {

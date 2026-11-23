@@ -110,7 +110,7 @@ test("email tests use fixed Resend endpoint, frozen recipients and idempotent de
   expect(f.requests).toHaveLength(1);
   expect(f.requests[0]?.url).toBe("https://api.resend.com/emails");
   const init = f.requests[0]?.init;
-  expect(init?.redirect).toBe("error");
+  expect(init?.redirect).toBe("manual");
   expect(new Headers(init?.headers).get("idempotency-key")).toBe(
     `ephor-notification/${job.id}`,
   );

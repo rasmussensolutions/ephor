@@ -182,6 +182,14 @@ const messages: Record<string, string> = {
     "Build limits must be 512–32768 MiB and 0.25–16 CPU cores.",
   INVALID_BUILD_PATH:
     "Use a relative project/Dockerfile path within the repository, without .. or .git.",
+  GITHUB_ALREADY_CONFIGURED:
+    "The GitHub App is already registered. Start again to finish installing it.",
+  INVALID_GITHUB_CODE:
+    "GitHub returned an invalid registration code. Start connecting again.",
+  INVALID_GITHUB_APP:
+    "GitHub returned incomplete App credentials. Start connecting again.",
+  INTERNAL_ERROR:
+    "The server could not complete this request. Check the panel's Worker or server logs before retrying.",
   GITHUB_NOT_CONNECTED: "Connect GitHub in Settings → Integrations first.",
   GITHUB_RECONNECT_REQUIRED:
     "Reconnect this repository through the GitHub App.",

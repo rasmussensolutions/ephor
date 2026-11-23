@@ -125,3 +125,16 @@ on a build machine with Docker to build the daemon from source. Include the gene
 `apps/dashboard/public/daemon/` artifacts in your deployed assets and apply the D1
 migrations. The panel must have a public HTTPS origin; `/api/*` and
 `/daemon/*` must be reachable by the VPS. See [connecting machines](../../docs/machines.md).
+
+## Runtime verification
+
+Run `bun run test:worker` before publishing changes to integrations. This offline
+test runs GitHub App registration and installation, panel-update authentication,
+AI model discovery, email delivery and DNS lookups in workerd with a disposable
+D1 database. Outbound services are intercepted after native Workers `fetch` runs.
+It checks request binding and rejects redirects without forwarding credentials.
+
+Workers requires the native `fetch` receiver to remain bound and does not support
+`redirect: "error"`. Shared HTTP clients use `redirect: "manual"` and reject
+non-success responses. Bun or Node tests with mocked fetch alone cannot catch
+these runtime differences.

@@ -76,6 +76,7 @@ export class AiIntegration {
       init?: RequestInit,
     ) => Promise<Response> = fetch,
   ) {
+    this.request = request.bind(globalThis);
     this.integrations = new Integrations(sql, secret);
     this.services = new Services(sql, secret);
   }
@@ -99,7 +100,7 @@ export class AiIntegration {
         `https://openrouter.ai/api/v1/${path}`,
         {
           method: body === undefined ? "GET" : "POST",
-          redirect: "error",
+          redirect: "manual",
           signal: AbortSignal.timeout(body === undefined ? 10000 : 60000),
           headers: {
             "Content-Type": "application/json",

@@ -75,6 +75,7 @@ export class Notifications {
     readonly send: typeof fetch = fetch,
     readonly clock: () => number = Date.now,
   ) {
+    this.send = send.bind(globalThis);
     this.secrets = new ServiceSecrets(`notifications:${secret}`);
   }
   async settingsRow() {
@@ -557,7 +558,7 @@ export class Notifications {
       );
       const response = await this.send("https://api.resend.com/emails", {
         method: "POST",
-        redirect: "error",
+        redirect: "manual",
         signal: AbortSignal.timeout(10000),
         headers: {
           authorization: `Bearer ${c.apiKey}`,

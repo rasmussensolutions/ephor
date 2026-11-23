@@ -57,7 +57,7 @@ export async function dnsRecords(
         `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(hostname)}&type=${type}`,
         {
           headers: { Accept: "application/dns-json" },
-          redirect: "error",
+          redirect: "manual",
           signal: AbortSignal.timeout(5000),
         },
       );

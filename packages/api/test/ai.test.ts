@@ -40,7 +40,7 @@ test("AI defaults, verification, encrypted storage, model changes and disconnect
   expect(requests[0]?.url).toBe(
     "https://openrouter.ai/api/v1/chat/completions",
   );
-  expect(requests[0]?.init?.redirect).toBe("error");
+  expect(requests[0]?.init?.redirect).toBe("manual");
   await ai.save({ ...input, apiKey: "", model: "example/other-model" });
   expect((await ai.status()).model).toBe("example/other-model");
   expect(new Headers(requests[1]?.init?.headers).get("Authorization")).toBe(

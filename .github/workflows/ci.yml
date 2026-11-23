@@ -37,6 +37,8 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: python3 -m unittest discover -s scripts/tests
       - run: bun run lint
+      - name: Test integrations in the Workers runtime
+        run: bun run test:worker
       - run: bun run test
       - run: bun run test
         env:

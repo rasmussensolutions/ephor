@@ -41,7 +41,7 @@ export async function githubSource(value: unknown): Promise<ServiceSource> {
     headers.Authorization = `Bearer ${v.readToken}`;
   const response = await fetch(`https://api.github.com/repos/${v.repository}`, {
     headers,
-    redirect: "error",
+    redirect: "manual",
     signal: AbortSignal.timeout(8000),
   });
   if (!response.ok) throw new AuthError("GITHUB_REPOSITORY_UNAVAILABLE", 400);

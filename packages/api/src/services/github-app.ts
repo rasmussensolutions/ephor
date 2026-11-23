@@ -91,6 +91,8 @@ export class GitHubApp {
     readonly request: typeof fetch = fetch,
     readonly purpose: "services" | "panel" = "services",
   ) {
+    // Native Workers fetch requires the global receiver, even when injected by panel updates.
+    this.request = request.bind(globalThis);
     this.integrations = new Integrations(sql, secret);
   }
   get configKey() {
@@ -109,7 +111,7 @@ export class GitHubApp {
   ): Promise<T> {
     const response = await this.request(`https://api.github.com${path}`, {
       method: method ?? (body === undefined ? "GET" : "POST"),
-      redirect: "error",
+      redirect: "manual",
       signal: AbortSignal.timeout(10000),
       headers: {
         Accept: "application/vnd.github+json",
@@ -185,7 +187,7 @@ export class GitHubApp {
       url.searchParams.set("s", "64");
       // The avatar is fetched separately, without forwarding any GitHub App credentials.
       const response = await this.request(url, {
-        redirect: "error",
+        redirect: "manual",
         signal: AbortSignal.timeout(5000),
         cache: "no-store",
         headers: {
@@ -455,7 +457,7 @@ export class GitHubApp {
       const response = await this.request(
         `https://api.github.com${base}${path}?ref=${sha}`,
         {
-          redirect: "error",
+          redirect: "manual",
           signal,
           headers: {
             Accept: accept,
