@@ -1,6 +1,0 @@
-tunnel: YOUR_TUNNEL_UUID
-credentials-file: /absolute/path/to/.cloudflared/YOUR_TUNNEL_UUID.json
-ingress:
-  - hostname: ephor-dev.example.com
-    service: http://127.0.0.1:3000
-  - service: http_status:404
