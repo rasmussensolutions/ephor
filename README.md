@@ -2,6 +2,9 @@
 
 A server-management panel for machines and the services running on them.
 
+[Connect an AI agent](docs/mcp.md) through the built-in remote MCP endpoint, with
+project-scoped credentials, write-only secrets, and passkey-approved changes.
+
 Install an official release on **Cloudflare Workers**, **Railway**, or **Docker/VPS**.
 No fork, repository copy, or host-side build is required. The installer connects
 updates once; afterward use **Updates → Update** in the panel.

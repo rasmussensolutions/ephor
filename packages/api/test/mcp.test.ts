@@ -1,0 +1,591 @@
+import { expect, test } from "bun:test";
+import { createHash } from "node:crypto";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { AuthStore, FRESH_MS, randomToken } from "../src/auth/store";
+import { MachineStore } from "../src/machines/store";
+import { AgentOperations } from "../src/mcp/operations";
+import { AgentAccess, policySchema } from "../src/mcp/policy";
+import { Services } from "../src/services/store";
+import { Browser, enrolled, origin, timestamp } from "./helpers";
+
+async function setup() {
+  const f = await enrolled();
+  const project = await (
+    await f.browser.request("/projects/create", { name: "Creatorical" })
+  ).json();
+  const other = await (
+    await f.browser.request("/projects/create", { name: "Private" })
+  ).json();
+  const machine = await new MachineStore(f.sql).create("Production");
+  await new MachineStore(f.sql).enroll(machine.token, randomToken());
+  const policy = policySchema.parse({
+    projectIds: [project.id],
+    machineIds: [machine.id],
+    manage: true,
+    logs: true,
+  });
+  const issued = await (
+    await f.browser.request("/mcp/connections", {
+      name: "Test agent",
+      policy,
+      days: 30,
+    })
+  ).json();
+  const operations = new AgentOperations(f.env);
+  return { ...f, project, other, machine, policy, issued, operations };
+}
+async function rpc(
+  f: Awaited<ReturnType<typeof setup>>,
+  method: string,
+  params: unknown = {},
+  token = f.issued.token,
+  extra: Record<string, string> = {},
+) {
+  const response = await f.app.request(`${origin}/mcp`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      "MCP-Protocol-Version": "2025-11-25",
+      ...extra,
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+  });
+  return { status: response.status, data: await response.json() };
+}
+const spec = {
+  image: "docker.io/library/nginx:latest",
+  port: 3000,
+  healthPath: "/",
+  memoryMb: 256,
+  cpus: 0.5,
+};
+test("real Bun HTTP transport accepts MCP JSON bodies", async () => {
+  const f = await setup();
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: (request) => f.app.fetch(request),
+  });
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.port}/mcp`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${f.issued.token}`,
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        "MCP-Protocol-Version": "2025-11-25",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "list_projects", arguments: {} },
+      }),
+    });
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.result?.isError).not.toBe(true);
+    expect(JSON.stringify(body)).toContain("Creatorical");
+  } finally {
+    await server.stop(true);
+  }
+});
+test("real MCP SDK connects, discovers tools, and scopes project discovery", async () => {
+  const f = await setup();
+  const client = new Client({ name: "integration-test", version: "1" });
+  const transport = new StreamableHTTPClientTransport(
+    new URL(`${origin}/mcp`),
+    {
+      requestInit: { headers: { authorization: `Bearer ${f.issued.token}` } },
+      fetch: async (input, init) =>
+        f.app.fetch(
+          new Request(input instanceof Request ? input : String(input), init),
+        ),
+    },
+  );
+  await client.connect(transport);
+  const tools = await client.listTools();
+  expect(tools.tools.some((t) => t.name === "deploy_service")).toBe(true);
+  expect(tools.tools.some((t) => t.name.includes("reveal"))).toBe(false);
+  const result = await client.callTool({
+    name: "list_projects",
+    arguments: {},
+  });
+  expect(JSON.stringify(result)).toContain("Creatorical");
+  expect(JSON.stringify(result)).not.toContain("Private");
+  await client.close();
+});
+test("MCP rejects browser cookies, foreign origins, invalid tokens and revoked connections", async () => {
+  const f = await setup();
+  expect((await rpc(f, "tools/list", {}, "bad")).status).toBe(401);
+  expect(
+    (
+      await rpc(f, "tools/list", {}, f.issued.token, {
+        origin: "https://evil.example",
+      })
+    ).status,
+  ).toBe(403);
+  expect(
+    (
+      await f.app.request(`${origin}/mcp`, {
+        method: "POST",
+        headers: {
+          cookie: [...f.browser.cookies]
+            .map(([k, v]) => `${k}=${v}`)
+            .join("; "),
+          "content-type": "application/json",
+        },
+        body: "{}",
+      })
+    ).status,
+  ).toBe(401);
+  const tokenRow = await f.sql.query<{ token_hash: string }>(
+    "SELECT token_hash FROM ephor_mcp_connection WHERE id=$1",
+    [f.issued.id],
+  );
+  expect(JSON.stringify(tokenRow)).not.toContain(f.issued.token);
+  await f.browser.request("/mcp/revoke", { id: f.issued.id });
+  expect((await rpc(f, "tools/list")).status).toBe(401);
+});
+test("create service requires owner approval, cannot be replayed, and deploy requires another approval", async () => {
+  const f = await setup();
+  const args = {
+    requestKey: "create-app-1",
+    projectId: f.project.id,
+    machineId: f.machine.id,
+    name: "Web",
+    source: { type: "image" },
+    spec,
+  };
+  const proposal = (await f.operations.call(
+    f.issued.id,
+    "create_service",
+    args,
+  )) as { operationId: string };
+  expect(await f.sql.query("SELECT id FROM ephor_service")).toHaveLength(0);
+  expect(
+    (
+      (await f.operations.call(f.issued.id, "create_service", args)) as {
+        operationId: string;
+      }
+    ).operationId,
+  ).toBe(proposal.operationId);
+  expect(
+    (
+      await new Browser(f.app).request("/mcp/decide", {
+        id: proposal.operationId,
+        approve: true,
+      })
+    ).status,
+  ).toBe(401);
+  expect(
+    (
+      await f.browser.request(
+        "/mcp/decide",
+        { id: proposal.operationId, approve: true },
+        { origin: "https://evil.example" },
+      )
+    ).status,
+  ).toBe(403);
+  const decisions = await Promise.all([
+    f.browser.request("/mcp/decide", {
+      id: proposal.operationId,
+      approve: true,
+    }),
+    f.browser.request("/mcp/decide", {
+      id: proposal.operationId,
+      approve: true,
+    }),
+  ]);
+  expect(decisions.map((r) => r.status).sort()).toEqual([200, 409]);
+  const services = await f.sql.query<{ id: string }>(
+    "SELECT id FROM ephor_service",
+  );
+  expect(services).toHaveLength(1);
+  const serviceId = services[0]?.id;
+  if (!serviceId) throw new Error("Service was not created");
+  expect(await f.sql.query("SELECT id FROM ephor_deployment")).toHaveLength(0);
+  const memberships = await f.sql.query(
+    "SELECT * FROM ephor_project_service WHERE service_id=$1",
+    [serviceId],
+  );
+  expect(memberships[0]?.project_id).toBe(f.project.id);
+  await expect(
+    f.operations.call(f.issued.id, "create_service", {
+      ...args,
+      name: "Different",
+    }),
+  ).rejects.toThrow("MCP_REQUEST_KEY_CONFLICT");
+  const deploy = (await f.operations.call(f.issued.id, "deploy_service", {
+    requestKey: "deploy-app-1",
+    serviceId,
+  })) as { operationId: string };
+  expect(
+    (await f.operations.status(f.issued.id, deploy.operationId)).status,
+  ).toBe("pending");
+  const executor = new Services(f.sql, f.env.secret);
+  const enrollment = await executor.issueWorker(f.machine.id);
+  await executor.enroll(enrollment, randomToken());
+  await executor.heartbeat(f.machine.id, 6);
+  expect(
+    (
+      await f.browser.request("/mcp/decide", {
+        id: deploy.operationId,
+        approve: true,
+      })
+    ).status,
+  ).toBe(200);
+  const claimed = await executor.next(f.machine.id, 6);
+  expect(claimed?.action).toBe("deploy");
+  await executor.report(f.machine.id, {
+    id: claimed?.id,
+    status: "succeeded",
+    digest: `docker.io/library/nginx@sha256:${"a".repeat(64)}`,
+  });
+  await executor.runtime(f.machine.id, {
+    id: serviceId,
+    status: "running",
+    container: "fixture",
+    logs: "",
+    metrics: null,
+  });
+  const verified = (await f.operations.call(f.issued.id, "inspect_service", {
+    serviceId,
+  })) as {
+    health: { status: string; stale: boolean };
+    deployments: { status: string }[];
+  };
+  expect(verified.health.stale).toBe(false);
+  expect(verified.deployments[0]?.status).toBe("succeeded");
+});
+test("project and machine boundaries, unknown fields, reference scopes and readonly grants fail closed", async () => {
+  const f = await setup();
+  await expect(
+    f.operations.call(f.issued.id, "list_services", { projectId: f.other.id }),
+  ).rejects.toThrow("MCP_SCOPE_DENIED");
+  await expect(
+    f.operations.call(f.issued.id, "machine_metrics", {
+      machineId: crypto.randomUUID(),
+    }),
+  ).rejects.toThrow("MCP_SCOPE_DENIED");
+  await expect(
+    f.operations.call(f.issued.id, "create_project", {
+      name: "Escape",
+      requestKey: "escape-01",
+    }),
+  ).rejects.toThrow("MCP_SCOPE_DENIED");
+  await expect(
+    f.operations.call(f.issued.id, "create_service", {
+      requestKey: "escape-02",
+      projectId: f.project.id,
+      machineId: f.machine.id,
+      name: "Web",
+      source: { type: "image" },
+      spec: { ...spec, environment: { ESCAPE: "secret" } },
+    }),
+  ).rejects.toThrow();
+  const readonly = await new AgentAccess(f.env).issue(
+    "Readonly",
+    policySchema.parse({ projectIds: [f.project.id] }),
+    1,
+  );
+  const denied = await rpc(
+    f,
+    "tools/call",
+    { name: "create_service", arguments: {} },
+    readonly.token,
+  );
+  expect(JSON.stringify(denied.data)).not.toContain("operationId");
+  await expect(
+    f.operations.call(readonly.id, "read_logs", {
+      requestKey: "logs-0001",
+      serviceId: crypto.randomUUID(),
+      kind: "runtime",
+    }),
+  ).rejects.toThrow("MCP_SCOPE_DENIED");
+});
+test("ordinary reads never expose environment, registry credentials or logs; disclosure needs approval", async () => {
+  const f = await setup(),
+    services = new Services(f.sql, f.env.secret);
+  const secret = "super-private-secret";
+  const created = await services.create(
+    {
+      machineId: f.machine.id,
+      name: "App",
+      spec: {
+        ...spec,
+        environment: { API_KEY: secret },
+        registry: {
+          server: "docker.io",
+          username: "user",
+          password: "registry-private",
+        },
+      },
+    },
+    { type: "image" },
+  );
+  await f.browser.request(`/projects/${f.project.id}/add`, {
+    serviceId: created.id,
+  });
+  await f.sql.query(
+    "UPDATE ephor_service SET runtime=$1,runtime_at=$2 WHERE id=$3",
+    [
+      JSON.stringify({
+        status: "running",
+        logs: `API_KEY=${secret}\nprivate output`,
+        metrics: null,
+      }),
+      Date.now(),
+      created.id,
+    ],
+  );
+  const inspection = await f.operations.call(f.issued.id, "inspect_service", {
+    serviceId: created.id,
+  });
+  for (const hidden of [secret, "registry-private", "private output"])
+    expect(JSON.stringify(inspection)).not.toContain(hidden);
+  const variables = (await f.operations.call(f.issued.id, "list_variables", {
+    serviceId: created.id,
+  })) as { revision: string };
+  expect(JSON.stringify(variables)).not.toContain(secret);
+  const update = (await f.operations.call(f.issued.id, "set_variables", {
+    requestKey: "variables-01",
+    serviceId: created.id,
+    revision: variables.revision,
+    set: { TOKEN: "new-private-secret" },
+  })) as { operationId: string };
+  expect(JSON.stringify(await f.operations.review())).not.toContain(
+    "new-private-secret",
+  );
+  expect(
+    JSON.stringify(
+      await f.sql.query("SELECT payload FROM ephor_mcp_operation"),
+    ),
+  ).not.toContain("new-private-secret");
+  const foreign = await services.create(
+    {
+      machineId: f.machine.id,
+      name: "Private",
+      spec: { ...spec, environment: {} },
+    },
+    { type: "image" },
+  );
+  await f.browser.request(`/projects/${f.other.id}/add`, {
+    serviceId: foreign.id,
+  });
+  await expect(
+    f.operations.call(f.issued.id, "set_variables", {
+      requestKey: "reference-1",
+      serviceId: created.id,
+      revision: variables.revision,
+      set: { DATABASE_URL: `\${{${foreign.id}.DATABASE_URL}}` },
+    }),
+  ).rejects.toThrow("MCP_SCOPE_DENIED");
+  await f.browser.request("/mcp/decide", {
+    id: update.operationId,
+    approve: true,
+  });
+  const logs = (await f.operations.call(f.issued.id, "read_logs", {
+    requestKey: "logs-001",
+    serviceId: created.id,
+    kind: "runtime",
+  })) as { operationId: string };
+  expect(
+    JSON.stringify(await f.operations.status(f.issued.id, logs.operationId)),
+  ).not.toContain("private output");
+  await f.browser.request("/mcp/decide", {
+    id: logs.operationId,
+    approve: true,
+  });
+  const output = JSON.stringify(
+    await f.operations.status(f.issued.id, logs.operationId),
+  );
+  expect(output).toContain("private output");
+  expect(output).not.toContain(secret);
+});
+test("expired, changed, denied and recovered-owner approvals cannot execute", async () => {
+  const f = await setup();
+  const created = await new Services(f.sql, f.env.secret).create(
+    {
+      machineId: f.machine.id,
+      name: "App",
+      spec: { ...spec, environment: {} },
+    },
+    { type: "image" },
+  );
+  await f.browser.request(`/projects/${f.project.id}/add`, {
+    serviceId: created.id,
+  });
+  const propose = async (requestKey: string) =>
+    (await f.operations.call(f.issued.id, "stop_service", {
+      requestKey,
+      serviceId: created.id,
+    })) as { operationId: string };
+  const changed = await propose("changed-01");
+  await f.sql.query("UPDATE ephor_service SET auto_deploy=1 WHERE id=$1", [
+    created.id,
+  ]);
+  expect(
+    (
+      await f.browser.request("/mcp/decide", {
+        id: changed.operationId,
+        approve: true,
+      })
+    ).status,
+  ).toBe(409);
+  const expired = await propose("expired-01");
+  await f.sql.query("UPDATE ephor_mcp_operation SET expires_at=0 WHERE id=$1", [
+    expired.operationId,
+  ]);
+  expect(
+    (
+      await f.browser.request("/mcp/decide", {
+        id: expired.operationId,
+        approve: true,
+      })
+    ).status,
+  ).toBe(409);
+  const denied = await propose("denied-001");
+  await f.browser.request("/mcp/decide", {
+    id: denied.operationId,
+    approve: false,
+  });
+  expect(
+    (
+      await f.browser.request("/mcp/decide", {
+        id: denied.operationId,
+        approve: true,
+      })
+    ).status,
+  ).toBe(409);
+  await new AuthStore(f.sql).change((s) => {
+    s.epoch++;
+  });
+  expect((await rpc(f, "tools/list")).status).toBe(401);
+});
+test("owner mutations require a fresh passkey and oversized MCP requests fail before dispatch", async () => {
+  const f = await setup();
+  await f.sql.query('UPDATE session SET "createdAt"=$1', [
+    timestamp(Date.now() - FRESH_MS - 1000),
+  ]);
+  expect(
+    (await f.browser.request("/mcp/revoke", { id: f.issued.id })).status,
+  ).toBe(403);
+  expect(
+    (
+      await f.browser.request("/mcp/connections", {
+        name: "No",
+        policy: f.policy,
+      })
+    ).status,
+  ).toBe(403);
+  const response = await f.app.request(`${origin}/mcp`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${f.issued.token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ data: "x".repeat(40000) }),
+  });
+  expect(response.status).toBe(413);
+});
+test("OAuth requires explicit consent and PKCE, exact redirect/resource binding, single-use codes", async () => {
+  const f = await setup();
+  const redirect = "http://127.0.0.1:9898/callback";
+  const registration = await f.app.request(`${origin}/oauth/register`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      client_name: "Test OAuth",
+      redirect_uris: [redirect],
+    }),
+  });
+  const { client_id } = await registration.json();
+  expect(registration.status).toBe(201);
+  const verifier = randomToken(),
+    challenge = createHash("sha256").update(verifier).digest("base64url");
+  const query = new URLSearchParams({
+    client_id,
+    redirect_uri: redirect,
+    response_type: "code",
+    code_challenge: challenge,
+    code_challenge_method: "S256",
+    state: "state123",
+    resource: `${origin}/mcp`,
+    scope: "ephor",
+  });
+  const authorize = await f.app.request(`${origin}/oauth/authorize?${query}`);
+  expect(authorize.status).toBe(302);
+  const pendingId = new URL(
+    authorize.headers.get("location") ?? "",
+  ).searchParams.get("authorization");
+  const consent = await f.browser.request("/mcp/authorize", {
+    id: pendingId,
+    approve: true,
+    name: "OAuth client",
+    policy: f.policy,
+    days: 30,
+  });
+  expect(consent.status).toBe(200);
+  const callback = new URL((await consent.json()).redirect);
+  expect(callback.searchParams.get("state")).toBe("state123");
+  const tokenRequest = (overrides: Record<string, string> = {}) =>
+    f.app.request(`${origin}/oauth/token`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        code: callback.searchParams.get("code") ?? "",
+        client_id,
+        redirect_uri: redirect,
+        resource: `${origin}/mcp`,
+        code_verifier: verifier,
+        ...overrides,
+      }).toString(),
+    });
+  expect((await tokenRequest({ code_verifier: randomToken() })).status).toBe(
+    400,
+  );
+  expect(
+    (await tokenRequest({ resource: "https://evil.example/mcp" })).status,
+  ).toBe(400);
+  expect(
+    (await tokenRequest({ redirect_uri: "https://evil.example/callback" }))
+      .status,
+  ).toBe(400);
+  const tokenResponse = await tokenRequest();
+  expect(tokenResponse.status).toBe(200);
+  expect((await tokenRequest()).status).toBe(400);
+  const tokens = await tokenResponse.json();
+  const token = tokens.access_token;
+  expect((await rpc(f, "tools/list", {}, token)).status).toBe(200);
+  const refresh = (value: string) =>
+    f.app.request(`${origin}/oauth/token`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: value,
+        client_id,
+        resource: `${origin}/mcp`,
+      }).toString(),
+    });
+  const rotated = await refresh(tokens.refresh_token);
+  expect(rotated.status).toBe(200);
+  const rotatedTokens = await rotated.json();
+  expect(rotatedTokens.refresh_token).not.toBe(tokens.refresh_token);
+  expect(
+    (await rpc(f, "tools/list", {}, rotatedTokens.access_token)).status,
+  ).toBe(200);
+  expect((await refresh(tokens.refresh_token)).status).toBe(400);
+  expect(
+    (await rpc(f, "tools/list", {}, rotatedTokens.access_token)).status,
+  ).toBe(401);
+  query.set("redirect_uri", "https://evil.example/callback");
+  expect(
+    (await f.app.request(`${origin}/oauth/authorize?${query}`)).status,
+  ).toBe(400);
+});

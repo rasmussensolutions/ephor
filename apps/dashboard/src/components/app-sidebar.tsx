@@ -78,6 +78,11 @@ const settingsNavigationGroups = [
         icon: BellIcon,
       },
       { title: "Integrations", to: "/settings/integrations", icon: PlugsIcon },
+      {
+        title: "AI connections",
+        to: "/settings/ai-connections",
+        icon: PlugsIcon,
+      },
       { title: "Backups", to: "/settings/backups", icon: ArchiveIcon },
     ],
   },

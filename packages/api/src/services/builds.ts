@@ -97,9 +97,13 @@ export class Builds {
     automatic = false,
     delivery?: string,
     pushedSha?: string,
+    approvedSha?: string,
+    approvedConfig?: string,
   ) {
     const row = await this.services.get(id),
       source = JSON.parse(row.source) as ServiceSource;
+    if (approvedConfig && approvedConfig !== row.config)
+      throw new AuthError("MCP_STATE_CHANGED", 409);
     if (!source.installationId)
       throw new AuthError("GITHUB_RECONNECT_REQUIRED", 409);
     if (automatic && !row.auto_deploy) return null;
@@ -174,6 +178,9 @@ export class Builds {
       automatic && pushedSha && /^[a-f0-9]{40}$/.test(pushedSha)
         ? pushedSha
         : await this.github.head(source);
+    // MCP approvals bind a deployment to the reviewed commit.
+    if (approvedSha && sha !== approvedSha)
+      throw new AuthError("MCP_STATE_CHANGED", 409);
     const variables =
       (
         await this.github.integrations.get<{
@@ -190,7 +197,7 @@ export class Builds {
     // Snapshot both build instructions and runtime settings. Build workers never receive runtime secrets.
     const now = Date.now();
     const inserted = await this.sql.query(
-      "INSERT INTO ephor_build (id,service_id,machine_id,source,config,domains,status,created_at,updated_at,delivery,automatic) SELECT $1,id,$3,$4,$5,$6,'queued',$7,$7,$8,$9 FROM ephor_service WHERE id=$2 AND ($9=0 OR auto_deploy=1) ON CONFLICT DO NOTHING RETURNING id",
+      "INSERT INTO ephor_build (id,service_id,machine_id,source,config,domains,status,created_at,updated_at,delivery,automatic) SELECT $1,id,$3,$4,$5,$6,'queued',$7,$7,$8,$9 FROM ephor_service WHERE id=$2 AND config=$10 AND source=$11 AND COALESCE(domains,'')=$12 AND ($9=0 OR auto_deploy=1) ON CONFLICT DO NOTHING RETURNING id",
       [
         buildId,
         row.id,
@@ -204,9 +211,15 @@ export class Builds {
         now,
         delivery ?? null,
         automatic ? 1 : 0,
+        row.config,
+        row.source,
+        row.domains ?? "",
       ],
     );
-    if (!inserted.length) return null;
+    if (!inserted.length) {
+      if (approvedSha) throw new AuthError("MCP_STATE_CHANGED", 409);
+      return null;
+    }
     // Webhooks can arrive out of order. Supersede only after comparing with
     // GitHub's current branch head at claim time, never by delivery time.
     await new AuthStore(this.sql).audit("service.build_queued", row.id);

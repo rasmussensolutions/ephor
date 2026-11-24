@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import { ZodError } from "zod";
 import { activityMiddleware } from "./activity/middleware";
 import { Activity } from "./activity/store";
 import { aiOwnerRoutes } from "./ai/routes";
@@ -26,6 +27,7 @@ import {
   maintenanceOwnerRoutes,
 } from "./machines/maintenance";
 import { machineMetricsHistory } from "./machines/metrics";
+import { mcpOwnerRoutes, mcpPublicRoutes } from "./mcp/routes";
 import { notificationOwnerRoutes } from "./notifications/routes";
 import {
   panelReleaseOwnerRoutes,
@@ -92,6 +94,11 @@ export function createApi(
   const updates = new Updates(env.sql, releases);
 
   app.onError((error, c) => {
+    if (error instanceof ZodError)
+      return c.json(
+        { code: "INVALID_ARGUMENTS", error: "invalid_request" },
+        400,
+      );
     if (error instanceof SyntaxError)
       return c.json({ code: "INVALID_JSON" }, 400);
     if (error instanceof AuthError) {
@@ -156,6 +163,7 @@ export function createApi(
     }
     await next();
   });
+  mcpPublicRoutes(app, env, clientIP);
   app.use("/api/*", async (c, next) =>
     bodyLimit({
       maxSize:
@@ -462,6 +470,7 @@ export function createApi(
   );
   maintenanceOwnerRoutes(app, env);
   projectOwnerRoutes(app, env);
+  mcpOwnerRoutes(app, env);
   serviceOwnerRoutes(app, env);
   backupOwnerRoutes(app, env);
   notificationOwnerRoutes(app, env);

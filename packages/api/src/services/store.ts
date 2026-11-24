@@ -366,9 +366,12 @@ export class Services {
       delivery?: string;
       run?: number;
       sha?: string;
+      approvedConfig?: string;
     } = {},
   ) {
     const row = await this.get(id);
+    if (options.approvedConfig && options.approvedConfig !== row.config)
+      throw new AuthError("MCP_STATE_CHANGED", 409);
     if (
       (
         await this.sql.query(
@@ -463,7 +466,7 @@ export class Services {
     const jobId = crypto.randomUUID(),
       now = Date.now();
     const inserted = await this.sql.query(
-      "INSERT INTO ephor_deployment (id,service_id,machine_id,action,spec,status,created_at,updated_at,source_ref,delivery,run_number,domains,protocol,backup_id) SELECT $1,id,machine_id,$3,$4,'queued',$5,$5,$6,$7,$8,$9,$10,$11 FROM ephor_service WHERE id=$2 AND EXISTS (SELECT 1 FROM ephor_machine WHERE id=machine_id AND state='active') AND ($8=CAST(0 AS BIGINT) OR (auto_deploy=1 AND NOT EXISTS (SELECT 1 FROM ephor_deployment WHERE service_id=$2 AND run_number >= $8))) ON CONFLICT DO NOTHING RETURNING id",
+      "INSERT INTO ephor_deployment (id,service_id,machine_id,action,spec,status,created_at,updated_at,source_ref,delivery,run_number,domains,protocol,backup_id) SELECT $1,id,machine_id,$3,$4,'queued',$5,$5,$6,$7,$8,$9,$10,$11 FROM ephor_service WHERE id=$2 AND config=$12 AND source=$13 AND COALESCE(domains,'')=$14 AND EXISTS (SELECT 1 FROM ephor_machine WHERE id=machine_id AND state='active') AND ($8=CAST(0 AS BIGINT) OR (auto_deploy=1 AND NOT EXISTS (SELECT 1 FROM ephor_deployment WHERE service_id=$2 AND run_number >= $8))) ON CONFLICT DO NOTHING RETURNING id",
       [
         jobId,
         row.id,
@@ -476,6 +479,9 @@ export class Services {
         JSON.stringify(domains),
         protocol,
         ["restore", "delete-backup"].includes(action) ? options.backupId : null,
+        row.config,
+        row.source,
+        row.domains ?? "",
       ],
     );
     if (!inserted.length)

@@ -34,6 +34,7 @@ import { Route as AuthenticatedProjectsProjectIdRouteImport } from './routes/_au
 import { Route as AuthenticatedServicesServiceIdRouteImport } from './routes/_authenticated.services_.$serviceId'
 import { Route as AuthenticatedServicesNewRouteImport } from './routes/_authenticated.services_.new'
 import { Route as AuthenticatedSettingsIndexRouteImport } from './routes/_authenticated.settings.index'
+import { Route as AuthenticatedSettingsAiConnectionsRouteImport } from './routes/_authenticated.settings.ai-connections'
 import { Route as AuthenticatedSettingsBackupsRouteImport } from './routes/_authenticated.settings.backups'
 import { Route as AuthenticatedSettingsIntegrationsRouteImport } from './routes/_authenticated.settings.integrations'
 import { Route as AuthenticatedSettingsNotificationsRouteImport } from './routes/_authenticated.settings.notifications'
@@ -170,6 +171,12 @@ const AuthenticatedSettingsIndexRoute =
     path: '/',
     getParentRoute: () => AuthenticatedSettingsRoute,
   } as any)
+const AuthenticatedSettingsAiConnectionsRoute =
+  AuthenticatedSettingsAiConnectionsRouteImport.update({
+    id: '/ai-connections',
+    path: '/ai-connections',
+    getParentRoute: () => AuthenticatedSettingsRoute,
+  } as any)
 const AuthenticatedSettingsBackupsRoute =
   AuthenticatedSettingsBackupsRouteImport.update({
     id: '/backups',
@@ -219,6 +226,7 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId': typeof AuthenticatedProjectsProjectIdRoute
   '/services/$serviceId': typeof AuthenticatedServicesServiceIdRoute
   '/services/new': typeof AuthenticatedServicesNewRoute
+  '/settings/ai-connections': typeof AuthenticatedSettingsAiConnectionsRoute
   '/settings/backups': typeof AuthenticatedSettingsBackupsRoute
   '/settings/integrations': typeof AuthenticatedSettingsIntegrationsRoute
   '/settings/notifications': typeof AuthenticatedSettingsNotificationsRoute
@@ -248,6 +256,7 @@ export interface FileRoutesByTo {
   '/projects/$projectId': typeof AuthenticatedProjectsProjectIdRoute
   '/services/$serviceId': typeof AuthenticatedServicesServiceIdRoute
   '/services/new': typeof AuthenticatedServicesNewRoute
+  '/settings/ai-connections': typeof AuthenticatedSettingsAiConnectionsRoute
   '/settings/backups': typeof AuthenticatedSettingsBackupsRoute
   '/settings/integrations': typeof AuthenticatedSettingsIntegrationsRoute
   '/settings/notifications': typeof AuthenticatedSettingsNotificationsRoute
@@ -280,6 +289,7 @@ export interface FileRoutesById {
   '/_authenticated/projects_/$projectId': typeof AuthenticatedProjectsProjectIdRoute
   '/_authenticated/services_/$serviceId': typeof AuthenticatedServicesServiceIdRoute
   '/_authenticated/services_/new': typeof AuthenticatedServicesNewRoute
+  '/_authenticated/settings/ai-connections': typeof AuthenticatedSettingsAiConnectionsRoute
   '/_authenticated/settings/backups': typeof AuthenticatedSettingsBackupsRoute
   '/_authenticated/settings/integrations': typeof AuthenticatedSettingsIntegrationsRoute
   '/_authenticated/settings/notifications': typeof AuthenticatedSettingsNotificationsRoute
@@ -312,6 +322,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId'
     | '/services/$serviceId'
     | '/services/new'
+    | '/settings/ai-connections'
     | '/settings/backups'
     | '/settings/integrations'
     | '/settings/notifications'
@@ -341,6 +352,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId'
     | '/services/$serviceId'
     | '/services/new'
+    | '/settings/ai-connections'
     | '/settings/backups'
     | '/settings/integrations'
     | '/settings/notifications'
@@ -372,6 +384,7 @@ export interface FileRouteTypes {
     | '/_authenticated/projects_/$projectId'
     | '/_authenticated/services_/$serviceId'
     | '/_authenticated/services_/new'
+    | '/_authenticated/settings/ai-connections'
     | '/_authenticated/settings/backups'
     | '/_authenticated/settings/integrations'
     | '/_authenticated/settings/notifications'
@@ -563,6 +576,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedSettingsIndexRouteImport
       parentRoute: typeof AuthenticatedSettingsRoute
     }
+    '/_authenticated/settings/ai-connections': {
+      id: '/_authenticated/settings/ai-connections'
+      path: '/ai-connections'
+      fullPath: '/settings/ai-connections'
+      preLoaderRoute: typeof AuthenticatedSettingsAiConnectionsRouteImport
+      parentRoute: typeof AuthenticatedSettingsRoute
+    }
     '/_authenticated/settings/backups': {
       id: '/_authenticated/settings/backups'
       path: '/backups'
@@ -595,6 +615,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface AuthenticatedSettingsRouteChildren {
+  AuthenticatedSettingsAiConnectionsRoute: typeof AuthenticatedSettingsAiConnectionsRoute
   AuthenticatedSettingsBackupsRoute: typeof AuthenticatedSettingsBackupsRoute
   AuthenticatedSettingsIntegrationsRoute: typeof AuthenticatedSettingsIntegrationsRoute
   AuthenticatedSettingsNotificationsRoute: typeof AuthenticatedSettingsNotificationsRoute
@@ -603,6 +624,8 @@ interface AuthenticatedSettingsRouteChildren {
 }
 
 const AuthenticatedSettingsRouteChildren: AuthenticatedSettingsRouteChildren = {
+  AuthenticatedSettingsAiConnectionsRoute:
+    AuthenticatedSettingsAiConnectionsRoute,
   AuthenticatedSettingsBackupsRoute: AuthenticatedSettingsBackupsRoute,
   AuthenticatedSettingsIntegrationsRoute:
     AuthenticatedSettingsIntegrationsRoute,

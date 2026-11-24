@@ -131,6 +131,24 @@ try {
         `One-use recovery code (replaces existing recovery codes):\n${await store.issueRecovery()}`,
       );
     if (command === "cleanup") {
+      await sql.query("DELETE FROM ephor_mcp_access WHERE expires_at<$1", [
+        Date.now(),
+      ]);
+      await sql.query("DELETE FROM ephor_mcp_refresh WHERE expires_at<$1", [
+        Date.now(),
+      ]);
+      await sql.query("DELETE FROM ephor_mcp_oauth WHERE expires_at<$1", [
+        Date.now(),
+      ]);
+      await sql.query(
+        "DELETE FROM ephor_mcp_client WHERE created_at<$1 AND NOT EXISTS(SELECT 1 FROM ephor_mcp_oauth WHERE client_id=ephor_mcp_client.id) AND NOT EXISTS(SELECT 1 FROM ephor_mcp_refresh WHERE client_id=ephor_mcp_client.id)",
+        [Date.now() - 86400000],
+      );
+      // Keep operation IDs as replay tombstones, but discard encrypted secrets/results.
+      await sql.query(
+        "UPDATE ephor_mcp_operation SET payload='',result=NULL,status=CASE WHEN status='pending' THEN 'expired' ELSE status END WHERE expires_at<$1",
+        [Date.now()],
+      );
       await sql.query("DELETE FROM ephor_auth_rate WHERE reset_at < $1", [
         Date.now(),
       ]);

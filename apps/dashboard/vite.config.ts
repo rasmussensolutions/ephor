@@ -19,6 +19,13 @@ export default defineConfig({
         }
       : undefined,
     proxy: {
+      "/mcp": { target: process.env.EPHOR_API_URL ?? "http://127.0.0.1:3002" },
+      "/oauth": {
+        target: process.env.EPHOR_API_URL ?? "http://127.0.0.1:3002",
+      },
+      "/.well-known": {
+        target: process.env.EPHOR_API_URL ?? "http://127.0.0.1:3002",
+      },
       "/daemon": {
         target: process.env.EPHOR_API_URL ?? "http://127.0.0.1:3002",
       },

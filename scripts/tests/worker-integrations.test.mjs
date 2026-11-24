@@ -261,6 +261,77 @@ test("released Worker enables machine enrollment updates without release variabl
       ),
     );
     assert.ok(script.includes("systemctl enable --now ephor-updater.timer"));
+    // Exercise the actual Worker route, MCP transport and D1 adapter together.
+    const metadata = await runtime.dispatchFetch(
+      "https://fixture.example/.well-known/oauth-protected-resource/mcp",
+    );
+    assert.equal(
+      (await metadata.json()).resource,
+      "https://fixture.example/mcp",
+    );
+    const anonymous = await runtime.dispatchFetch(
+      "https://fixture.example/mcp",
+      {
+        method: "POST",
+        body: "{}",
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+    assert.equal(anonymous.status, 401);
+    assert.ok(
+      anonymous.headers
+        .get("WWW-Authenticate")
+        .includes("oauth-protected-resource"),
+    );
+    const token = `ephor_${"a".repeat(64)}`;
+    const { createHash } = await import("node:crypto");
+    const state = JSON.parse(
+      (await db.prepare("SELECT data FROM ephor_auth_state WHERE id=1").first())
+        .data,
+    );
+    state.configured = true;
+    await db
+      .prepare("UPDATE ephor_auth_state SET data=? WHERE id=1")
+      .bind(JSON.stringify(state))
+      .run();
+    await db
+      .prepare(
+        "INSERT INTO ephor_mcp_connection(id,name,token_hash,policy,epoch,expires_at,created_at) VALUES(?,?,?,?,?,?,?)",
+      )
+      .bind(
+        "worker-test",
+        "Worker test",
+        createHash("sha256").update(token).digest("hex"),
+        JSON.stringify({ allProjects: true }),
+        state.epoch,
+        Date.now() + 60000,
+        Date.now(),
+      )
+      .run();
+    const mcp = async (method, params = {}) =>
+      runtime.dispatchFetch("https://fixture.example/mcp", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          Accept: "application/json, text/event-stream",
+          "MCP-Protocol-Version": "2025-11-25",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      });
+    const initialized = await mcp("initialize", {
+      protocolVersion: "2025-11-25",
+      capabilities: {},
+      clientInfo: { name: "worker-test", version: "1" },
+    });
+    assert.equal(initialized.status, 200, await initialized.clone().text());
+    const listed = await (await mcp("tools/list")).json();
+    assert.ok(listed.result.tools.some((t) => t.name === "list_projects"));
+    assert.ok(!listed.result.tools.some((t) => t.name === "deploy_service"));
+    const projects = await (
+      await mcp("tools/call", { name: "list_projects", arguments: {} })
+    ).json();
+    assert.equal(projects.result.isError, undefined);
   } finally {
     await runtime?.dispose();
     await rm(directory, { recursive: true, force: true });

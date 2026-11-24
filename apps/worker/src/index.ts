@@ -50,7 +50,13 @@ export default {
   },
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (!url.pathname.startsWith("/api/") && url.pathname !== "/health")
+    if (
+      !url.pathname.startsWith("/api/") &&
+      url.pathname !== "/health" &&
+      url.pathname !== "/mcp" &&
+      !url.pathname.startsWith("/oauth/") &&
+      !url.pathname.startsWith("/.well-known/")
+    )
       return env.ASSETS.fetch(request);
     const sql = database(env);
     // Never retain D1 bindings or request state in global scope.

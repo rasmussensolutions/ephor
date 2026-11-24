@@ -8,6 +8,13 @@ export interface SessionInfo {
   recoveryCodesRemaining: number;
 }
 const messages: Record<string, string> = {
+  MCP_SCOPE_DENIED:
+    "This connection does not have access to the selected resource.",
+  MCP_STATE_CHANGED:
+    "The service or selected commit changed. Ask the agent to submit a new request for review.",
+  MCP_APPROVAL_EXPIRED_OR_USED:
+    "This request expired or was already handled. Refresh to see its status.",
+  INVALID_MCP_REQUEST: "Check the connection permissions and try again.",
   DEPLOYMENT_METADATA_CHANGED:
     "Deployment details changed or the host is no longer active. Refresh and try again.",
   INVALID_DEPLOYMENT_METADATA:
