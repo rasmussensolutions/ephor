@@ -1,6 +1,5 @@
 import {
   createFileRoute,
-  Link,
   Outlet,
   redirect,
   useMatch,
@@ -26,11 +25,6 @@ export const Route = createFileRoute("/_authenticated")({
   component: DashboardLayout,
 });
 function DashboardLayout() {
-  const { auth } = Route.useRouteContext();
-  const securityPage = useMatch({
-    from: "/_authenticated/settings/security",
-    shouldThrow: false,
-  });
   const projectPage = useMatch({
     from: "/_authenticated/projects_/$projectId",
     shouldThrow: false,
@@ -101,24 +95,6 @@ function DashboardLayout() {
                 }
               >
                 {error}
-              </p>
-            )}
-            {auth.recoveryCodesRemaining === 0 && !securityPage && (
-              <p
-                className={
-                  projectPage
-                    ? "absolute bottom-16 left-4 right-4 z-10 max-w-lg rounded-lg border bg-card p-3 text-sm shadow-sm"
-                    : "mb-6 rounded-lg border border-border bg-muted/50 p-4 text-sm"
-                }
-              >
-                Protect against losing your passkey.{" "}
-                <Link
-                  to="/settings/security"
-                  className="font-medium underline underline-offset-4"
-                >
-                  Save your recovery codes
-                </Link>
-                .
               </p>
             )}
             <Outlet />
