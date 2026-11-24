@@ -8,6 +8,8 @@ export interface SessionInfo {
   recoveryCodesRemaining: number;
 }
 const messages: Record<string, string> = {
+  MCP_CONNECTION_CHANGED:
+    "This connection changed while you were editing. Cancel, reopen its permissions, and review the latest settings.",
   MCP_SCOPE_DENIED:
     "This connection does not have access to the selected resource.",
   MCP_STATE_CHANGED:

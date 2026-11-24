@@ -31,6 +31,23 @@ Connections created in the UI expire after 30 days; the owner API permits 1–90
 Revocation is checked on every request and before execution/result disclosure.
 Owner recovery and authentication-epoch changes invalidate existing connections.
 
+## Edit an existing connection
+
+In **Settings → AI connections → Connections**, choose **Edit permissions**.
+Change the selected projects, machines, or capabilities, then choose **Save
+permissions** and confirm with your passkey. The same OAuth connection or access
+token continues working, with its existing expiration date. Permissions are read
+again for subsequent requests and operation approvals; an edit does not stop work
+that has already started. If another edit happened meanwhile, reopen the editor
+and review the latest permissions before saving.
+
+**Read all current and future projects** includes projects created later.
+**Access all current and future machines** separately includes machines enrolled
+later. Both are explicit grants. Existing connections retain their original
+machine restrictions until you change them. Neither option bypasses approval for
+infrastructure changes or log disclosure. Clients that cache their tool list may
+need a tool refresh after capabilities such as changes or logs are enabled.
+
 ## Deploy a group of repositories
 
 For “deploy these repos in Creatorical, configure domains, and verify health”:
@@ -42,6 +59,7 @@ For “deploy these repos in Creatorical, configure domains, and verify health�
 2. Grant the agent Creatorical project access, the target machine, repository
    discovery, and permission to request changes. To let it create Creatorical
    itself, explicitly grant all-project access; otherwise create the project first.
+   You can grant all current and future machines instead of individual machines.
 3. The agent lists projects, machines and repositories, then calls `create_service`
    per repository with its source, build settings, resources and domains. It must
    supply a unique `requestKey` and reuse it for retries of the same request.

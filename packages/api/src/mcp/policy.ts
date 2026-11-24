@@ -8,6 +8,7 @@ export const policySchema = z
     projectIds: z.array(id).max(100).default([]),
     machineIds: z.array(id).max(100).default([]),
     allProjects: z.boolean().default(false),
+    allMachines: z.boolean().default(false),
     manage: z.boolean().default(false),
     logs: z.boolean().default(false),
     repositories: z.boolean().default(false),
@@ -99,7 +100,7 @@ export class AgentAccess {
     await this.project(policy, membership.project_id);
   }
   machine(policy: Policy, machineId: string) {
-    if (!policy.machineIds.includes(machineId))
+    if (!policy.allMachines && !policy.machineIds.includes(machineId))
       throw new AuthError("MCP_SCOPE_DENIED", 403);
   }
 }

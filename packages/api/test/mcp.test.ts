@@ -62,6 +62,208 @@ const spec = {
   memoryMb: 256,
   cpus: 0.5,
 };
+test("existing connections can opt into future machines and projects without replacing credentials", async () => {
+  const f = await setup();
+  const legacy = { ...f.policy, machineIds: [], allProjects: true };
+  delete (legacy as Partial<typeof legacy>).allMachines;
+  await f.sql.query("UPDATE ephor_mcp_connection SET policy=$1 WHERE id=$2", [
+    JSON.stringify(legacy),
+    f.issued.id,
+  ]);
+  expect(
+    (await new AgentAccess(f.env).connection(f.issued.id)).policy.allMachines,
+  ).toBe(false);
+  expect(
+    (await rpc(f, "tools/call", { name: "list_machines", arguments: {} })).data
+      .result.structuredContent.result,
+  ).toEqual([]);
+  const [before] = await f.sql.query<{
+    name: string;
+    policy: string;
+    expires_at: number;
+    token_hash: string;
+  }>(
+    "SELECT name,policy,expires_at,token_hash FROM ephor_mcp_connection WHERE id=$1",
+    [f.issued.id],
+  );
+  const update = {
+    id: f.issued.id,
+    name: "Updated agent",
+    policy: { ...legacy, allMachines: true },
+    previousName: before?.name,
+    previousPolicy: before?.policy,
+  };
+  expect(
+    (await f.browser.request("/mcp/connections/update", update)).status,
+  ).toBe(200);
+  expect(
+    (await f.browser.request("/mcp/connections/update", update)).status,
+  ).toBe(409);
+  const future = await new MachineStore(f.sql).create("Future machine");
+  const project = await (
+    await f.browser.request("/projects/create", { name: "Future project" })
+  ).json();
+  const machines = await rpc(f, "tools/call", {
+    name: "list_machines",
+    arguments: {},
+  });
+  expect(
+    machines.data.result.structuredContent.result.map(
+      (m: { id: string }) => m.id,
+    ),
+  ).toEqual(expect.arrayContaining([f.machine.id, future.id]));
+  expect(
+    (
+      await rpc(f, "tools/call", {
+        name: "machine_metrics",
+        arguments: { machineId: future.id },
+      })
+    ).data.result.isError,
+  ).not.toBe(true);
+  expect(
+    JSON.stringify(
+      (await rpc(f, "tools/call", { name: "list_projects", arguments: {} }))
+        .data,
+    ),
+  ).toContain(project.id);
+  const proposal = (await f.operations.call(f.issued.id, "create_project", {
+    name: "Needs approval",
+    requestKey: "future-project-approval",
+  })) as { operationId: string; status: string };
+  expect(proposal.status).toBe("pending");
+  expect(
+    await f.sql.query("SELECT id FROM ephor_project WHERE name=$1", [
+      "Needs approval",
+    ]),
+  ).toHaveLength(0);
+  const [after] = await f.sql.query<{
+    name: string;
+    policy: string;
+    expires_at: number;
+    token_hash: string;
+  }>(
+    "SELECT name,policy,expires_at,token_hash FROM ephor_mcp_connection WHERE id=$1",
+    [f.issued.id],
+  );
+  expect(after?.token_hash).toBe(before?.token_hash);
+  expect(Number(after?.expires_at)).toBe(Number(before?.expires_at));
+  expect(
+    (
+      await f.browser.request("/mcp/connections/update", {
+        ...update,
+        previousName: after?.name,
+        previousPolicy: after?.policy,
+        policy: { ...legacy, allMachines: false, manage: false, logs: false },
+      })
+    ).status,
+  ).toBe(200);
+  expect(
+    (await rpc(f, "tools/call", { name: "list_machines", arguments: {} })).data
+      .result.structuredContent.result,
+  ).toEqual([]);
+  expect(
+    (
+      await rpc(f, "tools/call", {
+        name: "machine_metrics",
+        arguments: { machineId: future.id },
+      })
+    ).data.result.isError,
+  ).toBe(true);
+  expect(
+    (
+      await f.browser.request("/mcp/decide", {
+        id: proposal.operationId,
+        approve: true,
+      })
+    ).status,
+  ).toBe(403);
+  expect(
+    await f.sql.query("SELECT id FROM ephor_project WHERE name=$1", [
+      "Needs approval",
+    ]),
+  ).toHaveLength(0);
+});
+test("permission edits require owner passkeys, reject agent credentials, and cannot revive revoked or expired connections", async () => {
+  const f = await setup();
+  const input = {
+    id: f.issued.id,
+    name: "Changed",
+    policy: { ...f.policy, allMachines: true },
+    previousName: "Test agent",
+    previousPolicy: JSON.stringify(f.policy),
+  };
+  expect(
+    (
+      await f.app.request(`${origin}/api/mcp/connections/update`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin,
+          authorization: `Bearer ${f.issued.token}`,
+        },
+        body: JSON.stringify(input),
+      })
+    ).status,
+  ).toBe(401);
+  expect(
+    (
+      await f.browser.request("/mcp/connections/update", input, {
+        Origin: "https://evil.example",
+      })
+    ).status,
+  ).toBe(403);
+  await f.sql.query('UPDATE session SET "createdAt"=$1', [
+    timestamp(Date.now() - FRESH_MS - 1000),
+  ]);
+  expect(
+    (await f.browser.request("/mcp/connections/update", input)).status,
+  ).toBe(403);
+  await f.sql.query('UPDATE session SET "createdAt"=$1', [
+    timestamp(Date.now()),
+  ]);
+  await f.sql.query(
+    "UPDATE ephor_mcp_connection SET expires_at=$1 WHERE id=$2",
+    [Date.now() - 1, f.issued.id],
+  );
+  expect(
+    (await f.browser.request("/mcp/connections/update", input)).status,
+  ).toBe(401);
+  await f.sql.query(
+    "UPDATE ephor_mcp_connection SET expires_at=$1,revoked=1 WHERE id=$2",
+    [Date.now() + 60000, f.issued.id],
+  );
+  expect(
+    (await f.browser.request("/mcp/connections/update", input)).status,
+  ).toBe(401);
+});
+test("permission changes during approval prevent stale authorization from claiming an operation", async () => {
+  const f = await setup();
+  const broad = { ...f.policy, allProjects: true };
+  await f.sql.query("UPDATE ephor_mcp_connection SET policy=$1 WHERE id=$2", [
+    JSON.stringify(broad),
+    f.issued.id,
+  ]);
+  const proposal = (await f.operations.call(f.issued.id, "create_project", {
+    name: "Race project",
+    requestKey: "permission-race-001",
+  })) as { operationId: string };
+  const authorize = f.operations.authorize.bind(f.operations);
+  f.operations.authorize = async (...args) => {
+    await authorize(...args);
+    await f.sql.query("UPDATE ephor_mcp_connection SET policy=$1 WHERE id=$2", [
+      JSON.stringify({ ...broad, manage: false }),
+      f.issued.id,
+    ]);
+  };
+  await expect(f.operations.decide(proposal.operationId, true)).rejects.toThrow(
+    "MCP_APPROVAL_EXPIRED_OR_USED",
+  );
+  expect(
+    await f.sql.query("SELECT id FROM ephor_project WHERE name=$1", [
+      "Race project",
+    ]),
+  ).toHaveLength(0);
+});
 test("real Bun HTTP transport accepts MCP JSON bodies", async () => {
   const f = await setup();
   const server = Bun.serve({
@@ -589,6 +791,39 @@ test("OAuth requires explicit consent and PKCE, exact redirect/resource binding,
   const tokens = await tokenResponse.json();
   const token = tokens.access_token;
   expect((await rpc(f, "tools/list", {}, token)).status).toBe(200);
+  const [connection] = await f.sql.query<{
+    id: string;
+    name: string;
+    policy: string;
+  }>("SELECT id,name,policy FROM ephor_mcp_connection WHERE name=$1", [
+    "OAuth client",
+  ]);
+  expect(
+    (
+      await f.browser.request("/mcp/connections/update", {
+        id: connection?.id,
+        name: "Edited OAuth client",
+        policy: { ...f.policy, allMachines: true },
+        previousName: connection?.name,
+        previousPolicy: connection?.policy,
+      })
+    ).status,
+  ).toBe(200);
+  const futureMachine = await new MachineStore(f.sql).create(
+    "OAuth future machine",
+  );
+  expect(
+    JSON.stringify(
+      (
+        await rpc(
+          f,
+          "tools/call",
+          { name: "list_machines", arguments: {} },
+          token,
+        )
+      ).data,
+    ),
+  ).toContain(futureMachine.id);
   const refresh = (value: string) =>
     f.app.request(`${origin}/oauth/token`, {
       method: "POST",

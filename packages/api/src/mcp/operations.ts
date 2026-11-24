@@ -311,7 +311,9 @@ export class AgentOperations {
         const rows = await this.env.sql.query<{ id: string }>(
           "SELECT m.id,m.name,m.state,m.last_seen,w.version AS worker_protocol FROM ephor_machine m LEFT JOIN ephor_service_worker w ON w.machine_id=m.id ORDER BY m.name LIMIT 1000",
         );
-        return rows.filter((r) => policy.machineIds.includes(r.id));
+        return rows.filter(
+          (r) => policy.allMachines || policy.machineIds.includes(r.id),
+        );
       }
       case "machine_metrics":
         return machineMetricsHistory(
@@ -525,7 +527,9 @@ export class AgentOperations {
       [operationId],
     );
     if (!r) throw new AuthError("NOT_FOUND", 404);
-    const { policy } = await this.access.connection(r.connection_id);
+    const { row: connection, policy } = await this.access.connection(
+      r.connection_id,
+    );
     const p = await this.secrets.open<Payload>(`mcp:${r.id}`, r.payload);
     await this.authorize(policy, r.tool, p.args);
     if (
@@ -535,8 +539,14 @@ export class AgentOperations {
     )
       throw new AuthError("MCP_STATE_CHANGED", 409);
     const claimed = await this.env.sql.query(
-      "UPDATE ephor_mcp_operation SET status=$1 WHERE id=$2 AND status='pending' AND expires_at>$3 RETURNING id",
-      [approve ? "executing" : "denied", r.id, Date.now()],
+      "UPDATE ephor_mcp_operation SET status=$1 WHERE id=$2 AND status='pending' AND expires_at>$3 AND EXISTS (SELECT 1 FROM ephor_mcp_connection c WHERE c.id=ephor_mcp_operation.connection_id AND c.policy=$4 AND c.revoked=0 AND c.expires_at>$3 AND c.epoch=$5) RETURNING id",
+      [
+        approve ? "executing" : "denied",
+        r.id,
+        Date.now(),
+        connection.policy,
+        connection.epoch,
+      ],
     );
     if (!claimed.length)
       throw new AuthError("MCP_APPROVAL_EXPIRED_OR_USED", 409);
@@ -547,7 +557,8 @@ export class AgentOperations {
     if (!approve) return { ok: true };
     try {
       // Recheck revocation after claiming; crashes leave 'executing', never automatically replay side effects.
-      await this.access.connection(r.connection_id);
+      const current = await this.access.connection(r.connection_id);
+      await this.authorize(current.policy, r.tool, p.args);
       const result = await this.execute(r.tool, p);
       await this.env.sql.query(
         "UPDATE ephor_mcp_operation SET status='completed',result=$1 WHERE id=$2",

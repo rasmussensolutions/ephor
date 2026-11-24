@@ -48,9 +48,13 @@ function Connections() {
     [token, setToken] = useState("");
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
+  const [editing, setEditing] = useState<Data["connections"][number] | null>(
+    null,
+  );
   const [projectIds, setProjects] = useState<string[]>([]),
     [machineIds, setMachines] = useState<string[]>([]);
   const [allProjects, setAll] = useState(false),
+    [allMachines, setAllMachines] = useState(false),
     [manage, setManage] = useState(false),
     [logs, setLogs] = useState(false),
     [repositories, setRepos] = useState(false);
@@ -58,6 +62,7 @@ function Connections() {
     projectIds,
     machineIds,
     allProjects,
+    allMachines,
     manage,
     logs,
     repositories,
@@ -100,6 +105,24 @@ function Connections() {
   function select(current: string[], value: string, checked: boolean) {
     return checked ? [...current, value] : current.filter((v) => v !== value);
   }
+  function editConnection(connection: Data["connections"][number] | null) {
+    const p = connection ? JSON.parse(connection.policy) : {};
+    setEditing(connection);
+    setName(connection?.name ?? "My AI agent");
+    setProjects(p.projectIds ?? []);
+    setMachines(p.machineIds ?? []);
+    setAll(p.allProjects ?? false);
+    setAllMachines(p.allMachines ?? false);
+    setManage(p.manage ?? false);
+    setLogs(p.logs ?? false);
+    setRepos(p.repositories ?? false);
+    setToken("");
+    setError("");
+    if (connection)
+      document
+        .getElementById("connection-permissions")
+        ?.scrollIntoView({ behavior: "smooth" });
+  }
   return (
     <SettingsPage
       title="AI connections"
@@ -120,8 +143,24 @@ function Connections() {
           through MCP.
         </p>
       </div>
-      <SettingsSection title="Connection permissions">
-        <div className="settings-surface space-y-4 rounded-xl p-5">
+      <SettingsSection
+        title={
+          editing
+            ? `Edit permissions: ${editing.name}`
+            : "Connection permissions"
+        }
+      >
+        <div
+          id="connection-permissions"
+          className="settings-surface space-y-4 rounded-xl p-5"
+        >
+          {editing && (
+            <p className="text-sm text-muted-foreground">
+              Save with your passkey to apply these permissions to the existing
+              connection. Its credentials and expiration date stay the same.
+              Changes do not cancel work already running.
+            </p>
+          )}
           <label
             htmlFor="mcp-connection-name"
             className="block space-y-2 text-sm"
@@ -153,18 +192,25 @@ function Connections() {
               ))}
             </fieldset>
           )}
-          <fieldset className="space-y-2">
-            <legend className="mb-2 text-sm font-medium">
-              Machines available for new services and machine metrics
-            </legend>
-            {machines.map((m) => (
-              <div key={m.id}>
-                {checkbox(m.name, machineIds.includes(m.id), (v) =>
-                  setMachines(select(machineIds, m.id, v)),
-                )}
-              </div>
-            ))}
-          </fieldset>
+          {checkbox(
+            "Access all current and future machines",
+            allMachines,
+            setAllMachines,
+          )}
+          {!allMachines && (
+            <fieldset className="space-y-2">
+              <legend className="mb-2 text-sm font-medium">
+                Machines available for new services and machine metrics
+              </legend>
+              {machines.map((m) => (
+                <div key={m.id}>
+                  {checkbox(m.name, machineIds.includes(m.id), (v) =>
+                    setMachines(select(machineIds, m.id, v)),
+                  )}
+                </div>
+              ))}
+            </fieldset>
+          )}
           {checkbox(
             "Request changes to authorized projects and services (approval required each time)",
             manage,
@@ -181,25 +227,54 @@ function Connections() {
             setRepos,
           )}
           <p className="text-xs text-muted-foreground">
-            Connections expire after 30 days. Project access includes services
-            added to those projects later. Deploying code gives that workload
-            access to its configured secrets; review repository, domains and
-            changes carefully.
+            New connections expire after 30 days. Project access includes
+            services added to those projects later. Deploying code gives that
+            workload access to its configured secrets; review repository,
+            domains and changes carefully.
           </p>
-          <Button
-            disabled={busy || !name.trim()}
-            onClick={() =>
-              void run(async () => {
-                const result = await api<{ token: string }>(
-                  "/mcp/connections",
-                  { name, policy, days: 30 },
-                );
-                setToken(result.token);
-              })
-            }
-          >
-            Create access token
-          </Button>
+          {editing ? (
+            <div className="flex gap-2">
+              <Button
+                disabled={busy || !name.trim()}
+                onClick={() =>
+                  void run(async () => {
+                    await api("/mcp/connections/update", {
+                      id: editing.id,
+                      name,
+                      policy,
+                      previousName: editing.name,
+                      previousPolicy: editing.policy,
+                    });
+                    editConnection(null);
+                  })
+                }
+              >
+                Save permissions
+              </Button>
+              <Button
+                variant="outline"
+                disabled={busy}
+                onClick={() => editConnection(null)}
+              >
+                Cancel editing
+              </Button>
+            </div>
+          ) : (
+            <Button
+              disabled={busy || !name.trim()}
+              onClick={() =>
+                void run(async () => {
+                  const result = await api<{ token: string }>(
+                    "/mcp/connections",
+                    { name, policy, days: 30 },
+                  );
+                  setToken(result.token);
+                })
+              }
+            >
+              Create access token
+            </Button>
+          )}
           {token && (
             <div className="space-y-3 rounded-lg border p-4">
               <p className="text-sm">
@@ -216,7 +291,7 @@ function Connections() {
           )}
         </div>
       </SettingsSection>
-      {data.authorizations.length > 0 && (
+      {!editing && data.authorizations.length > 0 && (
         <SettingsSection title="Clients requesting access">
           {data.authorizations.map((a) => {
             const q = JSON.parse(a.request) as { redirect_uri: string };
@@ -351,9 +426,58 @@ function Connections() {
                 ? "Revoked"
                 : `Expires ${new Date(Number(c.expires_at)).toLocaleString()}`}
             </p>
-            <pre className="overflow-auto text-xs">
-              {JSON.stringify(JSON.parse(c.policy), null, 2)}
-            </pre>
+            <div className="space-y-1 text-muted-foreground">
+              {(() => {
+                const p = JSON.parse(c.policy);
+                return (
+                  <>
+                    <p>
+                      Projects:{" "}
+                      {p.allProjects
+                        ? "All current and future projects"
+                        : projects
+                            .filter((project) =>
+                              p.projectIds.includes(project.id),
+                            )
+                            .map((project) => project.name)
+                            .join(", ") || "No available projects"}
+                    </p>
+                    <p>
+                      Machines:{" "}
+                      {p.allMachines
+                        ? "All current and future machines"
+                        : machines
+                            .filter((machine) =>
+                              p.machineIds.includes(machine.id),
+                            )
+                            .map((machine) => machine.name)
+                            .join(", ") || "No available machines"}
+                    </p>
+                    <p>
+                      Request changes:{" "}
+                      {p.manage ? "Allowed, with approval" : "Not allowed"}
+                    </p>
+                    <p>
+                      Request logs:{" "}
+                      {p.logs ? "Allowed, with approval" : "Not allowed"}
+                    </p>
+                    <p>
+                      Repository discovery:{" "}
+                      {p.repositories ? "Allowed" : "Not allowed"}
+                    </p>
+                  </>
+                );
+              })()}
+            </div>
+            {!c.revoked && Number(c.expires_at) > Date.now() && (
+              <Button
+                disabled={busy}
+                variant="outline"
+                onClick={() => editConnection(c)}
+              >
+                Edit permissions
+              </Button>
+            )}
             {!c.revoked && (
               <Button
                 disabled={busy}

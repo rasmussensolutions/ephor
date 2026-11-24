@@ -425,6 +425,32 @@ export function mcpOwnerRoutes(app: Hono, env: AuthEnvironment) {
     const b = grant.parse(await c.req.json());
     return c.json(await access.issue(b.name, b.policy, b.days), 201);
   });
+  app.post("/api/mcp/connections/update", async (c) => {
+    const b = grant
+      .omit({ days: true })
+      .extend({
+        id,
+        previousName: z.string().max(80),
+        previousPolicy: z.string().max(16000),
+      })
+      .parse(await c.req.json());
+    const { row } = await access.connection(b.id);
+    const updated = await env.sql.query(
+      "UPDATE ephor_mcp_connection SET name=$1,policy=$2 WHERE id=$3 AND name=$4 AND policy=$5 AND revoked=0 AND expires_at>$6 AND epoch=$7 RETURNING id",
+      [
+        b.name,
+        JSON.stringify(b.policy),
+        b.id,
+        b.previousName,
+        b.previousPolicy,
+        Date.now(),
+        row.epoch,
+      ],
+    );
+    if (!updated.length) throw new AuthError("MCP_CONNECTION_CHANGED", 409);
+    await store.audit("mcp.permissions_updated", b.id);
+    return c.json({ ok: true });
+  });
   app.post("/api/mcp/revoke", async (c) => {
     const b = z
       .object({ id })
