@@ -25,7 +25,10 @@ const name = z
   .trim()
   .min(1)
   .max(80)
-  .regex(/^[^\p{Cc}]+$/u);
+  // Cc is exactly C0 + DEL + C1. Explicit ranges preserve the validation while
+  // avoiding Unicode property escapes rejected by Python JSON Schema consumers.
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: reject control characters in infrastructure names
+  .regex(/^[^\u0000-\u001f\u007f-\u009f]+$/u);
 const range = z.enum(["1h", "6h", "24h"]).default("1h");
 const source = z.discriminatedUnion("type", [
   z.object({ type: z.literal("image") }).strict(),

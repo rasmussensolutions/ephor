@@ -4,7 +4,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { AuthStore, FRESH_MS, randomToken } from "../src/auth/store";
 import { MachineStore } from "../src/machines/store";
-import { AgentOperations } from "../src/mcp/operations";
+import { AgentOperations, schemas } from "../src/mcp/operations";
 import { AgentAccess, policySchema } from "../src/mcp/policy";
 import { Services } from "../src/services/store";
 import { Browser, enrolled, origin, timestamp } from "./helpers";
@@ -450,6 +450,64 @@ test("cached SDK discovery survives permission edits while calls and approvals e
     expect(await f.sql.query("SELECT id FROM ephor_service")).toHaveLength(0);
   } finally {
     await client.close();
+  }
+});
+test("advertised MCP patterns work in Python consumers and preserve name validation", async () => {
+  const f = await setup();
+  const listed = await rpc(f, "tools/list");
+  expect(listed.status).toBe(200);
+  // Python JSON Schema validators compile patterns with re. SDK-only tests
+  // miss JavaScript Unicode escapes that make clients reject the entire catalog.
+  const checked = Bun.spawnSync(
+    [
+      "python3",
+      "-c",
+      `import json, re, sys
+def check(node):
+    if isinstance(node, dict):
+        if "pattern" in node:
+            re.compile(node["pattern"])
+        for pattern in node.get("patternProperties", {}):
+            re.compile(pattern)
+        for value in node.values():
+            check(value)
+    elif isinstance(node, list):
+        for value in node:
+            check(value)
+tools = json.load(sys.stdin)["tools"]
+for tool in tools:
+    try:
+        check(tool["inputSchema"])
+    except re.error as error:
+        raise AssertionError(tool["name"] + ": " + str(error)) from error
+    if tool["name"] in ("create_project", "create_service", "create_catalog_service"):
+        pattern = re.compile(tool["inputSchema"]["properties"]["name"]["pattern"])
+        for value in ("Creatorical", "Café", "日本語 🚀", "App (prod)"):
+            assert pattern.search(value), (tool["name"], value)
+        for code in (*range(32), *range(127, 160)):
+            assert not pattern.search("A" + chr(code) + "Z"), (tool["name"], code)
+`,
+    ],
+    { stdin: Buffer.from(JSON.stringify(listed.data.result)) },
+  );
+  expect(checked.exitCode, checked.stderr.toString()).toBe(0);
+  for (const tool of [
+    "create_project",
+    "create_service",
+    "create_catalog_service",
+  ] as const) {
+    const name = schemas[tool].shape.name;
+    for (const value of ["Creatorical", "Café", "日本語 🚀", "App (prod)"])
+      expect(name.safeParse(value).success).toBe(true);
+    for (let code = 0; code < 160; code++) {
+      if (code >= 32 && code < 127) continue;
+      expect(name.safeParse(`A${String.fromCharCode(code)}Z`).success).toBe(
+        false,
+      );
+    }
+    expect(name.parse("  Creatorical  ")).toBe("Creatorical");
+    expect(name.safeParse(" ").success).toBe(false);
+    expect(name.safeParse("x".repeat(81)).success).toBe(false);
   }
 });
 test("MCP rejects browser cookies, foreign origins, invalid tokens and revoked connections", async () => {

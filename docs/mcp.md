@@ -60,6 +60,11 @@ client still exposes only the old tools, reimport the MCP server or recreate its
 plugin connection. This is a one-time discovery migration, not a requirement for
 subsequent permission edits. Revoke any superseded connection in Ephor.
 
+If importing or refreshing tools fails on 0.3.10 or earlier despite successful
+OAuth sign-in, update to 0.3.11 or later before refreshing again. Earlier creation
+tool schemas used a Unicode regex escape that Python JSON Schema validators
+reject. The portable pattern in 0.3.11 preserves the same name restrictions.
+
 ## Deploy a group of repositories
 
 For “deploy these repos in Creatorical, configure domains, and verify health”:
@@ -140,3 +145,5 @@ with PostgreSQL; otherwise they use SQLite. `bun run test:worker` exercises the
 actual Worker, D1 migrations, discovery, bearer authentication and MCP transport.
 These are local integration tests, not proof that a particular production instance,
 external DNS provider or AI client has been configured correctly.
+The MCP schema compatibility test also requires Python 3 (standard library only)
+to catch regex portability failures that JavaScript-only SDK tests miss.
