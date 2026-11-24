@@ -6,9 +6,22 @@ Install an official release on **Cloudflare Workers**, **Railway**, or **Docker/
 No fork, repository copy, or host-side build is required. The installer connects
 updates once; afterward use **Updates → Update** in the panel.
 
+For a fresh VPS, point a domain at the server and run this over SSH:
+
+```sh
+curl -fsSL --proto '=https' https://raw.githubusercontent.com/rasmussensolutions/ephor/panel-channel/install.sh | sudo sh -s -- vps --domain=panel.example.com
+```
+
+The installer sets up Docker, the panel, its database, automatic HTTPS and the
+panel updater. No Node.js or manual proxy configuration is needed on the VPS.
+Ubuntu 22.04/24.04/26.04 and Debian 12/13 are supported for automatic setup;
+allow inbound ports 80 and 443 in your provider's firewall.
+
+For Cloudflare or Railway, run the wizard on your own computer (Node.js 22+):
+
 ```sh
 curl -fL --proto '=https' https://raw.githubusercontent.com/rasmussensolutions/ephor/panel-channel/install.sh -o install-ephor.sh
-sh install-ephor.sh cloudflare  # or railway; use sudo for docker on Linux
+sh install-ephor.sh cloudflare  # or railway
 ```
 
 See the [installation guide](docs/panel-updates.md#install) for prerequisites,

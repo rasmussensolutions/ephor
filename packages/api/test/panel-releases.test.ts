@@ -93,6 +93,41 @@ test("signed releases reject tampering, another signer, executable paths and unt
     verify(signed({ ...r, worker: { ...r.worker, name: "../secret" } })),
   ).rejects.toThrow("Invalid");
 });
+test("standalone VPS installers and HTTPS image stay inside the signed artifact boundary", async () => {
+  const r = await release();
+  const vps = {
+    x64: {
+      ...r.installer,
+      name: "ephor-installer-linux-x64",
+      size: 100_000_000,
+    },
+    arm64: {
+      ...r.installer,
+      name: "ephor-installer-linux-arm64",
+      size: 100_000_000,
+    },
+    caddyImage: `docker.io/library/caddy@sha256:${"c".repeat(64)}`,
+  };
+  expect((await verify(signed({ ...r, vps }))).vps?.arm64.size).toBe(
+    100_000_000,
+  );
+  for (const invalid of [
+    { ...vps, caddyImage: "docker.io/attacker/caddy:latest" },
+    { ...vps, x64: { ...vps.x64, name: "../installer" } },
+    { ...vps, arm64: { ...vps.arm64, name: "ephor-installer-linux-x64" } },
+    { ...vps, x64: { ...vps.x64, size: 150 * 1024 * 1024 + 1 } },
+  ])
+    await expect(verify(signed({ ...r, vps: invalid }))).rejects.toThrow(
+      "Invalid",
+    );
+  const envelope = signed({ ...r, vps });
+  await expect(
+    verify({
+      ...envelope,
+      payload: envelope.payload.replace("100000000", "100000001"),
+    }),
+  ).rejects.toThrow("Untrusted");
+});
 test("downloads are bounded, credential-free and reject redirected credential exfiltration and bad hashes", async () => {
   await expect(bounded(new Response("x".repeat(10)), 9)).rejects.toThrow(
     "size limit",

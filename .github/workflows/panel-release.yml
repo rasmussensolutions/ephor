@@ -22,7 +22,10 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run lint && bun run test && bun run test:worker
       - run: bun run build:cloudflare && bun run --filter @ephor/worker build && bun run typecheck
-      - run: bun build scripts/install-panel.ts --target=node --outfile=dist/install.mjs
+      - run: |
+          bun build scripts/install-panel.ts --target=node --outfile=dist/install.mjs
+          bun build scripts/install-panel.ts --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --target=bun-linux-x64-baseline --outfile=dist/ephor-installer-linux-x64
+          bun build scripts/install-panel.ts --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --target=bun-linux-arm64 --outfile=dist/ephor-installer-linux-arm64
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: panel-web
@@ -30,7 +33,18 @@ jobs:
             apps/dashboard/dist/client
             apps/worker/dist/index.js
             dist/install.mjs
+            dist/ephor-installer-linux-*
           retention-days: 3
+  vps:
+    needs: verify
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version-file: .bun-version
+      - run: bun scripts/test-panel-vps.ts
   image:
     needs: verify
     strategy:
@@ -68,7 +82,7 @@ jobs:
           docker tag ephor-panel-test "ghcr.io/rasmussensolutions/ephor-panel:$RELEASE_TAG-$ARCH"
           docker push "ghcr.io/rasmussensolutions/ephor-panel:$RELEASE_TAG-$ARCH"
   publish:
-    needs: [verify, image]
+    needs: [verify, image, vps]
     runs-on: ubuntu-latest
     environment: daemon-release
     permissions:

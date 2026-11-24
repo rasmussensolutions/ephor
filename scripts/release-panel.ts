@@ -12,6 +12,8 @@ import {
   PANEL_VERSION,
 } from "../packages/api/src/panel/release/version";
 
+import { CADDY_IMAGE } from "./panel-vps";
+
 const output = process.argv[2] ?? "dist/panel-release";
 const image = process.env.EPHOR_PANEL_IMAGE;
 if (!image)
@@ -87,6 +89,17 @@ const release: PanelRelease = {
   image,
   worker: await artifact("apps/worker/dist/index.js", "worker.mjs"),
   installer: await artifact("dist/install.mjs", "install.mjs"),
+  vps: {
+    x64: await artifact(
+      "dist/ephor-installer-linux-x64",
+      "ephor-installer-linux-x64",
+    ),
+    arm64: await artifact(
+      "dist/ephor-installer-linux-arm64",
+      "ephor-installer-linux-arm64",
+    ),
+    caddyImage: CADDY_IMAGE,
+  },
   assets,
   migrations,
   compatibilityDate: "2026-11-12",

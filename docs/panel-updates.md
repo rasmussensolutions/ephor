@@ -12,21 +12,23 @@ machine's **Maintenance** tab.
 
 ## Install
 
-You need Node.js 22 or newer and curl on the computer running the installer.
-Download the small bootstrap, inspect it if desired, then run it for your host:
+For a **VPS**, use the [one-command setup below](#docker--vps). It installs its
+own dependencies and HTTPS; no Node.js is needed.
+
+For **Cloudflare or Railway**, you need Node.js 22 or newer and curl on your own
+computer. Download the small bootstrap, inspect it if desired, then run the wizard:
 
 ```sh
 curl -fL --proto '=https' https://raw.githubusercontent.com/rasmussensolutions/ephor/panel-channel/install.sh -o install-ephor.sh
 sh install-ephor.sh cloudflare
 # or: sh install-ephor.sh railway
-# on a Linux Docker host: sudo sh install-ephor.sh docker
 ```
 
 The bootstrap verifies the signed release and installer checksum before running
 it. Builds happen once in Ephor's release workflow. A release includes the pinned
 image digest, Worker code, assets, migrations, and installer/updater. Save the
-setup code and authentication secret printed by the installer in your password
-manager. Enter the setup code on the panel, register your passkey, and save your
+setup code in your password manager and keep the authentication secret safe
+(the VPS stores it in root-readable `/var/lib/ephor/.env`; cloud wizards print it). Enter the setup code on the panel, register your passkey, and save your
 recovery codes. The initial installer uses a terminal; subsequent updates happen
 in the panel. No repository connection is necessary.
 
@@ -78,10 +80,47 @@ Ephor refuses to start on Railway without it.
 
 ### Docker / VPS
 
-On a Linux host with Docker Engine, Compose v2, Node.js 22+, and systemd, run
-`sudo sh install-ephor.sh docker`. Supply the public HTTPS origin. Point your
-existing reverse proxy at `127.0.0.1:3002`. PostgreSQL is private to the Compose
-network. Configuration is root-readable under `/var/lib/ephor`.
+Start with an x86-64 or ARM64 VPS running **Ubuntu 22.04/24.04/26.04** or
+**Debian 12/13**, with systemd, root/sudo access, and enough disk space for Docker
+images and backups. Point a domain's A record (and AAAA only if IPv6 works) at
+the VPS. Allow inbound **TCP 80 and 443** in the provider and host firewall.
+Keep port 80 open for automatic certificate issuance/renewal. UDP 443 is optional
+for HTTP/3. Then run over SSH:
+
+```sh
+curl -fsSL --proto '=https' https://raw.githubusercontent.com/rasmussensolutions/ephor/panel-channel/install.sh | sudo sh -s -- vps --domain=panel.example.com
+```
+
+Replace `panel.example.com` with your domain. You can also download the script
+first and run `sudo sh install-ephor.sh vps`; it prompts for the domain. `docker`
+is an alias for `vps`.
+
+The bootstrap verifies the release signature and downloads the matching
+standalone Linux installer. It installs Docker Engine and Compose from Docker's
+signed package repository when missing, creates private PostgreSQL storage,
+starts the released panel and Caddy HTTPS proxy, waits for verified HTTPS, and
+prints the URL and one-time setup code. Open that URL, enter the code, and register
+your passkey. Certificates renew automatically. Neither Node.js nor a source
+checkout is needed on the host.
+
+Configuration and credentials are root-readable under `/var/lib/ephor`; Caddy's
+certificates persist in Docker volumes. The database has no public port, and the
+panel's direct port is bound only to `127.0.0.1:3002`. The updater and proxy image
+are included in signed panel releases, so updates continue through the panel.
+The host operating system and Docker Engine still need normal security updates.
+
+If setup is interrupted, rerun the same command: it resumes the same release,
+credentials and database. A completed installation reports its URL without
+reinitializing it. It refuses a different domain or occupied ports instead of
+replacing other services. DNS/provider firewall settings cannot be configured
+without access to your provider; certificate failures explain what to check.
+
+**Existing HTTPS proxy:** add `--external-proxy` to keep your current proxy and
+forward the domain to `127.0.0.1:3002`. This explicitly skips managed HTTPS and
+port 80/443 checks. Other systemd Linux distributions work when Docker and
+Compose v2 are already installed. The installer preserves an existing Docker
+engine; if Compose is missing, it tries the plugin available from existing
+trusted package sources.
 
 The installer creates an `ephor-updater` systemd timer. Every 30 seconds it checks
 for an owner-approved job. Only this host process has Docker authority. The web
@@ -120,11 +159,12 @@ removed.
   and `BETTER_AUTH_SECRET` values into root-readable `/var/lib/ephor/.env`.
   Run `sudo sh install-ephor.sh docker --adopt` and select the existing PostgreSQL
   volume. The installer refuses a volume still used by a running container and
-  preserves it as an external volume. For a custom/external database or a different
+  preserves it as an external volume. Adoption keeps your existing HTTPS proxy;
+  it does not take over ports 80/443. For a custom/external database or a different
   PostgreSQL major version, migrate into the managed layout using a verified
   backup first; do not point PostgreSQL 17 at another major version's data files.
 
-Installation failures print created resource IDs. Inspect those resources before
+Cloud installation failures print created resource IDs. Inspect those resources before
 retrying so you do not create duplicates. A failed initial Cloudflare install can
 be continued with `--adopt`; retain the original setup/authentication secrets.
 
@@ -178,6 +218,12 @@ Bump `PANEL_VERSION` and `PANEL_SEQUENCE` together in
 push a `panel-vX.Y.Z` tag. `panel-release.yml` runs the application and native
 Workers tests before building AMD64 and ARM64 images on Blacksmith. Each image
 must pass fresh install, restart, real backup, migration, health and UID checks.
+A separate disposable Linux host test starts without Docker or Node and checks
+automatic dependency installation, port conflicts, interrupted-install recovery,
+HTTPS routing, native systemd polling and preservation during updates. It uses a
+trusted local test certificate; public ACME issuance requires a real domain.
+Standalone installers are built for baseline x86-64 and ARM64 with local runtime
+configuration autoloading disabled.
 The protected signing job assembles the multi-platform digest and signs the
 release using the pinned Ed25519 key. Never overwrite versioned assets.
 

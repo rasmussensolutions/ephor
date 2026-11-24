@@ -1,20 +1,10 @@
-import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import {
-  mkdir,
-  open,
-  readFile,
-  rename,
-  stat,
-  unlink,
-  writeFile,
-} from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { stdin, stdout } from "node:process";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import {
   ReleaseSource,
-  type SignedRelease,
   verifyRelease,
 } from "../packages/api/src/panel/release/manifest";
 import { Providers } from "../packages/api/src/panel/release/providers";
@@ -22,25 +12,17 @@ import type {
   Hosting,
   ReleaseJob,
 } from "../packages/api/src/panel/release/types";
+import { PANEL_VERSION } from "../packages/api/src/panel/release/version";
 import { ServiceSecrets } from "../packages/api/src/services/crypto";
+import { dockerPoll, installVps } from "./panel-vps";
 
 const source = new ReleaseSource(),
   providers = new Providers();
-const directory = "/var/lib/ephor";
 function secretHex(bytes: number, distinct: number) {
   for (;;) {
     const value = randomBytes(bytes).toString("hex");
     if (new Set(value).size >= distinct) return value;
   }
-}
-function run(command: string, args: string[], cwd = directory): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, stdio: "inherit" });
-    child.once("error", reject);
-    child.once("exit", (c) =>
-      c === 0 ? resolve() : reject(new Error(`${command} failed (${c})`)),
-    );
-  });
 }
 function origin(value: string) {
   const u = new URL(value);
@@ -48,168 +30,11 @@ function origin(value: string) {
     throw new Error("Enter an HTTPS origin without a trailing slash.");
   return value;
 }
-async function atomic(path: string, text: string) {
-  await writeFile(`${path}.tmp`, text, { mode: 0o600 });
-  await rename(`${path}.tmp`, path);
-}
-function compose(image: string, databaseVolume?: string) {
-  return `services:
-  database:
-    image: postgres:17-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ephor
-      POSTGRES_DB: ephor
-      POSTGRES_PASSWORD: \${EPHOR_DB_PASSWORD}
-    volumes: ["database:/var/lib/postgresql/data"]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ephor"]
-      interval: 5s
-      timeout: 5s
-      retries: 30
-  panel:
-    image: ${image}
-    restart: unless-stopped
-    environment:
-      DATABASE_URL: postgresql://ephor:\${EPHOR_DB_PASSWORD}@database:5432/ephor
-      EPHOR_ORIGIN: \${EPHOR_ORIGIN}
-      BETTER_AUTH_SECRET: \${BETTER_AUTH_SECRET}
-      EPHOR_SETUP_CODE: \${EPHOR_SETUP_CODE}
-      EPHOR_PANEL_UPDATER_TOKEN: \${EPHOR_PANEL_UPDATER_TOKEN}
-    ports: ["127.0.0.1:3002:3002"]
-    volumes: ["./data:/data"]
-    depends_on:
-      database:
-        condition: service_healthy
-    read_only: true
-    tmpfs: [/tmp]
-    security_opt: ["no-new-privileges:true"]
-volumes:
-  database:
-${databaseVolume ? `    external: true\n    name: ${databaseVolume}\n` : ""}`;
-}
-async function dockerPoll() {
-  if (process.getuid?.() !== 0)
-    throw new Error("Run the Docker updater as root.");
-  const lockPath = `${directory}/updater.lock`;
-  let lock: Awaited<ReturnType<typeof open>>;
-  try {
-    lock = await open(lockPath, "wx", 0o600);
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-    const age = Date.now() - (await stat(lockPath)).mtimeMs;
-    if (age < 3600_000) return;
-    throw new Error(
-      "Stale updater lock. Inspect the previous process before removing /var/lib/ephor/updater.lock.",
-    );
-  }
-  try {
-    const config = JSON.parse(
-      await readFile(`${directory}/updater.json`, "utf8"),
-    );
-    const poll = async (body: unknown) => {
-      const response = await fetch(
-        "http://127.0.0.1:3002/api/panel-updater/poll",
-        {
-          method: "POST",
-          redirect: "error",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${config.token}`,
-          },
-          body: JSON.stringify(body),
-          signal: AbortSignal.timeout(15000),
-        },
-      );
-      if (!response.ok)
-        throw new Error(
-          `Panel updater authentication failed (${response.status}).`,
-        );
-      return response.json() as Promise<{
-        id: string;
-        stage: string;
-        envelope: SignedRelease;
-      } | null>;
-    };
-    const job = await poll({});
-    if (!job) return;
-    // Both the unprivileged panel and privileged updater verify the signed envelope.
-    const release = await verifyRelease(job.envelope);
-    let ledger: { sequence: number; job?: string; phase?: string } = JSON.parse(
-      await readFile(`${directory}/installed.json`, "utf8"),
-    );
-    if (
-      release.sequence < ledger.sequence ||
-      release.minimumSequence > ledger.sequence ||
-      (release.sequence === ledger.sequence &&
-        ledger.phase === "deployed" &&
-        ledger.job !== job.id)
-    )
-      throw new Error("Refusing an old release.");
-    if (job.stage === "verifying" && ledger.job !== job.id)
-      throw new Error("Unexpected deployment state; inspect before retrying.");
-    if (ledger.job === job.id && ledger.phase === "deployed") return;
-    try {
-      await run("docker", ["pull", release.image]);
-      const installer = await source.artifact(release, release.installer);
-      await atomic(
-        `${directory}/installed.json`,
-        JSON.stringify({
-          sequence: release.sequence,
-          job: job.id,
-          phase: "prepared",
-        }),
-      );
-      await poll({ id: job.id, stage: "verifying" });
-      await atomic(
-        `${directory}/compose.yaml`,
-        compose(release.image, config.databaseVolume),
-      );
-      await run("docker", [
-        "compose",
-        "--project-name",
-        "ephor",
-        "up",
-        "-d",
-        "--wait",
-        "--wait-timeout",
-        "300",
-        "panel",
-      ]);
-      for (let i = 0; i < 60; i++) {
-        const health = (await fetch("http://127.0.0.1:3002/health", {
-          signal: AbortSignal.timeout(3000),
-        })
-          .then((r) => r.json())
-          .catch(() => null)) as { version?: string } | null;
-        if (health?.version === release.version) {
-          await atomic(
-            `${directory}/installer.mjs`,
-            new TextDecoder().decode(installer),
-          );
-          ledger = {
-            sequence: release.sequence,
-            job: job.id,
-            phase: "deployed",
-          };
-          await atomic(`${directory}/installed.json`, JSON.stringify(ledger));
-          return;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-      }
-      throw new Error(
-        "The new panel did not become healthy. Database backups are in /var/lib/ephor/data/backups.",
-      );
-    } catch (error) {
-      await poll({ id: job.id, stage: "failed" }).catch(() => {});
-      throw error;
-    }
-  } finally {
-    await lock.close();
-    await unlink(lockPath);
-  }
-}
 async function main() {
+  if (process.argv.includes("--version")) {
+    console.info(PANEL_VERSION);
+    return;
+  }
   if (process.argv.includes("--docker-poll")) {
     await dockerPoll();
     return;
@@ -222,142 +47,33 @@ async function main() {
   try {
     const host =
       process.argv[2] || (await ask("Hosting: docker, cloudflare, or railway"));
-    const envelope = await source.latest(),
+    const releaseFile = process.argv
+      .find((a) => a.startsWith("--release-file="))
+      ?.slice(15);
+    const envelope = releaseFile
+        ? JSON.parse(await readFile(releaseFile, "utf8"))
+        : await source.latest(),
       release = await verifyRelease(envelope);
     console.info(
       `Verified Ephor ${release.version}. No repository or build is required.`,
     );
-    let secret = secretHex(48, 16);
+    const secret = secretHex(48, 16);
     const setup = secretHex(24, 12);
-    if (!process.argv.includes("--adopt"))
+    if (!["docker", "vps"].includes(host) && !process.argv.includes("--adopt"))
       console.info(
         `Save these in your password manager before continuing.\nOne-use setup code: ${setup}\nAuthentication secret: ${secret}`,
       );
-    if (host === "docker") {
-      if (process.platform !== "linux" || process.getuid?.() !== 0)
-        throw new Error(
-          "Docker installation requires a Linux host and root. Run with sudo.",
-        );
-      const adopting = process.argv.includes("--adopt");
-      await mkdir(directory, { recursive: true, mode: 0o700 });
-      let previous: Record<string, string> = {};
-      try {
-        const text = await readFile(`${directory}/.env`, "utf8");
-        if (!adopting)
-          throw new Error(
-            "An installation already exists. Use its Updates page, or --adopt for a source installation.",
-          );
-        previous = Object.fromEntries(
-          text
-            .split("\n")
-            .filter((l) => /^[A-Z_]+=/.test(l))
-            .map((l) => {
-              const i = l.indexOf("=");
-              return [l.slice(0, i), l.slice(i + 1)];
-            }),
-        );
-      } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
-        if (adopting)
-          throw new Error(
-            "First copy your existing private environment to /var/lib/ephor/.env; see the adoption guide.",
-          );
-      }
-      const url = origin(
-        previous.EPHOR_ORIGIN || (await ask("Public panel HTTPS origin")),
-      );
-      const token = randomBytes(32).toString("hex"),
-        db = previous.EPHOR_DB_PASSWORD || randomBytes(32).toString("hex");
-      if (adopting) secret = previous.BETTER_AUTH_SECRET || "";
-      if (
-        !/^[a-f0-9]{32,128}$/i.test(db) ||
-        !/^[a-f0-9]{64,128}$/i.test(secret)
-      )
-        throw new Error(
-          "Managed Docker installs require the existing secret and database password in hexadecimal form. Do not regenerate a secret for an existing installation; see manual migration guidance.",
-        );
-      let databaseVolume: string | undefined;
-      if (adopting) {
-        databaseVolume = await ask("Existing PostgreSQL 17 Docker volume name");
-        if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,150}$/.test(databaseVolume))
-          throw new Error("Invalid volume name");
-        await run("docker", [
-          "volume",
-          "inspect",
-          "--format",
-          "{{.Name}}",
-          databaseVolume,
-        ]);
-        const child = spawn(
-          "docker",
-          ["ps", "--filter", `volume=${databaseVolume}`, "--format", "{{.ID}}"],
-          { stdio: ["ignore", "pipe", "inherit"] },
-        );
-        const closed = new Promise<number | null>((resolve, reject) => {
-          child.once("close", resolve);
-          child.once("error", reject);
-        });
-        let used = "";
-        for await (const part of child.stdout) used += part.toString();
-        const code = await closed;
-        if (code !== 0 || used.trim())
-          throw new Error(
-            "Stop the existing panel and database containers first. Never mount a database volume in two database servers.",
-          );
-      }
-      await mkdir(`${directory}/data`, { recursive: true, mode: 0o700 });
-      await atomic(
-        `${directory}/.env`,
-        `EPHOR_ORIGIN=${url}\nEPHOR_DB_PASSWORD=${db}\nBETTER_AUTH_SECRET=${secret}\nEPHOR_SETUP_CODE=${setup}\nEPHOR_PANEL_UPDATER_TOKEN=${token}\n`,
-      );
-      await atomic(
-        `${directory}/updater.json`,
-        JSON.stringify({ token, databaseVolume }),
-      );
-      await atomic(
-        `${directory}/installed.json`,
-        JSON.stringify({ sequence: release.sequence }),
-      );
-      await atomic(
-        `${directory}/compose.yaml`,
-        compose(release.image, databaseVolume),
-      );
-      await atomic(
-        `${directory}/installer.mjs`,
-        new TextDecoder().decode(
-          await source.artifact(release, release.installer),
-        ),
-      );
-      const node = process.execPath;
-      if (!/^\/[a-zA-Z0-9_./-]+$/.test(node))
-        throw new Error(
-          "Node executable path contains unsupported characters.",
-        );
-      await writeFile(
-        "/etc/systemd/system/ephor-updater.service",
-        `[Unit]\nDescription=Ephor release updater\nAfter=docker.service network-online.target\n[Service]\nType=oneshot\nWorkingDirectory=${directory}\nExecStart=${node} ${directory}/installer.mjs --docker-poll\nUMask=0077\nTimeoutStartSec=1800\n`,
-        { mode: 0o644 },
-      );
-      await writeFile(
-        "/etc/systemd/system/ephor-updater.timer",
-        "[Unit]\nDescription=Check for approved Ephor panel updates\n[Timer]\nOnBootSec=30s\nOnUnitActiveSec=30s\n[Install]\nWantedBy=timers.target\n",
-        { mode: 0o644 },
-      );
-      await run("docker", [
-        "compose",
-        "--project-name",
-        "ephor",
-        "up",
-        "-d",
-        "--wait",
-        "--wait-timeout",
-        "300",
-      ]);
-      await run("systemctl", ["daemon-reload"]);
-      await run("systemctl", ["enable", "--now", "ephor-updater.timer"]);
-      console.info(
-        `Point your HTTPS reverse proxy at 127.0.0.1:3002, then open ${url}.`,
-      );
+    if (host === "docker" || host === "vps") {
+      const domain = process.argv
+        .find((a) => a.startsWith("--domain="))
+        ?.slice(9);
+      await installVps(envelope, {
+        domain,
+        externalProxy: process.argv.includes("--external-proxy"),
+        adopt: process.argv.includes("--adopt"),
+        ask,
+      });
+      return;
     } else if (host === "cloudflare") {
       const token = process.env.CLOUDFLARE_API_TOKEN;
       if (!token)

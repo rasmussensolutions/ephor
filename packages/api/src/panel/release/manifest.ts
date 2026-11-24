@@ -15,6 +15,7 @@ export interface PanelRelease {
   image: string;
   worker: Artifact;
   installer: Artifact;
+  vps?: { x64: Artifact; arm64: Artifact; caddyImage: string };
   assets: Record<string, Artifact & { hash: string; type: string }>;
   migrations: { name: string; sql: string }[];
   compatibilityDate: string;
@@ -112,7 +113,7 @@ export async function verifyRelease(
     !/^\d{4}-\d{2}-\d{2}$/.test(r.compatibilityDate)
   )
     throw new Error("Invalid panel release");
-  const artifact = (a: Artifact) => {
+  const artifact = (a: Artifact, maximum = 25 * 1024 * 1024) => {
     if (
       !a ||
       !/^[a-zA-Z0-9_.-]{1,160}$/.test(a.name) ||
@@ -120,7 +121,7 @@ export async function verifyRelease(
       !/^[a-f0-9]{64}$/.test(a.sha256) ||
       !Number.isSafeInteger(a.size) ||
       a.size < 1 ||
-      a.size > 25 * 1024 * 1024
+      a.size > maximum
     )
       throw new Error("Invalid release artifact");
   };
@@ -128,6 +129,17 @@ export async function verifyRelease(
     throw new Error("Invalid asset headers");
   artifact(r.worker);
   artifact(r.installer);
+  if (r.vps) {
+    for (const arch of ["x64", "arm64"] as const) {
+      artifact(r.vps[arch], 150 * 1024 * 1024);
+      if (r.vps[arch].name !== `ephor-installer-linux-${arch}`)
+        throw new Error("Invalid VPS installer");
+    }
+    if (
+      !/^docker\.io\/library\/caddy@sha256:[a-f0-9]{64}$/.test(r.vps.caddyImage)
+    )
+      throw new Error("Invalid HTTPS proxy image");
+  }
   if (
     !r.assets ||
     Object.keys(r.assets).length > 500 ||
@@ -183,7 +195,9 @@ export class ReleaseSource {
         throw new Error("Untrusted release redirect");
       const response = await this.request(u, {
         redirect: "manual",
-        signal: AbortSignal.timeout(30_000),
+        signal: AbortSignal.timeout(
+          limit > 25 * 1024 * 1024 ? 180_000 : 30_000,
+        ),
         headers: { "User-Agent": "Ephor" },
       });
       if ([301, 302, 303, 307, 308].includes(response.status)) {
