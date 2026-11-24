@@ -30,6 +30,7 @@ export interface ReleaseJob {
   deploymentId?: string;
   upload?: { jwt: string; hashes: string[]; expires: number };
   migration?: number;
+  routingRepair?: boolean;
 }
 export interface ReleaseState {
   hosting?: Hosting;

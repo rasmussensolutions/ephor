@@ -35,6 +35,32 @@ p.releases.artifact = async (_r, a) => {
   if ((await sha256(b)) !== a.sha256) throw Error("bad local artifact");
   return b;
 };
+async function checkMcpRoutes(origin: string) {
+  const metadata = await fetch(
+    `${origin}/.well-known/oauth-authorization-server`,
+  );
+  if (
+    !metadata.ok ||
+    !metadata.headers.get("content-type")?.includes("application/json")
+  )
+    throw new Error("OAuth discovery is being served as a dashboard asset");
+  if (((await metadata.json()) as { issuer: string }).issuer !== origin)
+    throw new Error("OAuth issuer mismatch");
+  const mcp = await fetch(`${origin}/mcp`);
+  if (
+    mcp.status !== 401 ||
+    !mcp.headers.get("www-authenticate")?.includes("resource_metadata")
+  )
+    throw new Error("MCP does not enforce bearer authentication");
+  const authorize = await fetch(`${origin}/oauth/authorize`, {
+    redirect: "manual",
+  });
+  if (
+    authorize.status !== 400 ||
+    !authorize.headers.get("content-type")?.includes("application/json")
+  )
+    throw new Error("OAuth requests are being served as dashboard assets");
+}
 try {
   const domain = await p.cf<{ subdomain: string }>(h, "/workers/subdomain");
   const origin = `https://${h.worker}.${domain.subdomain}.workers.dev`;
@@ -104,6 +130,7 @@ try {
       const index = await fetch(origin);
       if (!index.ok || !index.headers.get("content-security-policy"))
         throw Error("Assets or security headers missing");
+      if (r.sequence >= 9) await checkMcpRoutes(origin);
       console.info(
         "Cloudflare live test passed: signed bundle, asset upload, atomic migrations, preserved secrets, health and security headers.",
       );
@@ -197,6 +224,7 @@ try {
       throw new Error(
         "Updated Worker version does not match the approved release",
       );
+    if (targetRelease.sequence >= 9) await checkMcpRoutes(origin);
     console.info(
       "Cloudflare self-update and running-version acknowledgment passed.",
     );

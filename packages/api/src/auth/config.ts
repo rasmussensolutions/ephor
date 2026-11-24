@@ -12,6 +12,7 @@ export interface AuthEnvironment {
     runtime: "cloudflare-worker" | "node" | "bun";
     frontend: "same-runtime" | "unknown";
     host?: "railway" | "vps" | "other";
+    panelRoutes?: string;
   };
   panelUpdaterToken?: string;
   railwayApiToken?: string;

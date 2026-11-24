@@ -66,6 +66,12 @@ origin for the simplest install. For a custom domain, attach it to that same
 Worker in Cloudflare and use its exact HTTPS origin without a trailing slash.
 Existing custom domains remain attached during updates.
 
+The 0.3.8 update also enables MCP, OAuth and discovery routing. When upgrading
+from an older release, the new Worker finishes a second deployment with the
+updated routing before reporting completion. This reuses the approved signed
+release and preserves the original database recovery point; migrations are not
+repeated. The routing version binding is installed together with the routes.
+
 The built-in **Deploy to Cloudflare** repository button creates a deployment copy
 and builds source. It is no longer the recommended installation method. Native
 Workers do not need Cloudflare Containers.

@@ -3,7 +3,11 @@ import { AuthError } from "../../auth/store";
 import { ServiceSecrets } from "../../services/crypto";
 import { object } from "../../services/spec";
 import { OFFICIAL, ReleaseSource, verifyRelease } from "./manifest";
-import { ProviderError, Providers } from "./providers";
+import {
+  CLOUDFLARE_PANEL_ROUTES_VERSION,
+  ProviderError,
+  Providers,
+} from "./providers";
 import type { Hosting, ReleaseState, ReleaseStatus } from "./types";
 import { PANEL_SEQUENCE, PANEL_VERSION } from "./version";
 
@@ -244,17 +248,6 @@ export class PanelReleases {
       const j = s.job,
         h = s.hosting;
       if (!j || !h || !active(s)) return;
-      if (
-        j.stage === "verifying" &&
-        j.version === this.running.version &&
-        j.sequence === this.running.sequence
-      ) {
-        j.stage = "complete";
-        j.message = `Ephor ${j.version} is running.`;
-        delete j.upload;
-        await save();
-        return;
-      }
       if (Date.now() - j.createdAt > 60 * 60_000) {
         j.stage = "failed";
         j.message =
@@ -262,9 +255,36 @@ export class PanelReleases {
         await save();
         return;
       }
-      if (h.host === "docker") return;
       try {
         const r = await this.verify(j.envelope);
+        if (
+          j.stage === "verifying" &&
+          j.version === this.running.version &&
+          j.sequence === this.running.sequence
+        ) {
+          if (
+            h.host === "cloudflare" &&
+            this.env.deployment?.panelRoutes !==
+              `${CLOUDFLARE_PANEL_ROUTES_VERSION}:${this.running.version}`
+          ) {
+            // Older updaters deploy new code with their old assets routing. Reinstall
+            // this same signed release once, using the new code's routing metadata.
+            // A lost deployment response must wait for a new invocation, not loop.
+            if (j.routingRepair) return;
+            await this.providers.validate(h, this.env.origin, lease);
+            j.routingRepair = true;
+            j.stage = "queued";
+            delete j.upload;
+            await save();
+          } else {
+            j.stage = "complete";
+            j.message = `Ephor ${j.version} is running.`;
+            delete j.upload;
+            await save();
+            return;
+          }
+        }
+        if (h.host === "docker") return;
         if (j.stage === "queued")
           await this.providers.validate(h, this.env.origin, lease);
         if (j.stage === "verifying") {

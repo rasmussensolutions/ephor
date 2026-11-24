@@ -1,5 +1,7 @@
 import { bounded, type PanelRelease, ReleaseSource } from "./manifest";
 import type { Hosting, ReleaseJob } from "./types";
+// Installed atomically with assets routing, so the new invocation can acknowledge it.
+export const CLOUDFLARE_PANEL_ROUTES_VERSION = "1";
 export class ProviderError extends Error {
   constructor(readonly code: string) {
     super(code);
@@ -181,6 +183,13 @@ export class Providers {
         await save();
         return;
       }
+      if (job.routingRepair) {
+        // The old updater already migrated. Retain its pre-migration recovery point.
+        job.stage = "deploying";
+        job.message = "Installing MCP and OAuth routing.";
+        await save();
+        return;
+      }
       const recovery = await this.cf<{ bookmark: string }>(
         h,
         `${db}/time_travel/bookmark`,
@@ -243,16 +252,29 @@ export class Providers {
           compatibility_flags: ["nodejs_compat"],
           bindings: [
             ...settings.bindings
-              .filter((b) => b.type !== "assets")
+              .filter(
+                (b) => b.type !== "assets" && b.name !== "EPHOR_PANEL_ROUTES",
+              )
               .map((b) => ({ name: b.name, type: "inherit" })),
             { name: "ASSETS", type: "assets" },
+            {
+              name: "EPHOR_PANEL_ROUTES",
+              type: "plain_text",
+              text: `${CLOUDFLARE_PANEL_ROUTES_VERSION}:${r.version}`,
+            },
           ],
           assets: {
             jwt: job.upload?.jwt,
             config: {
               _headers: r.headers,
               not_found_handling: "single-page-application",
-              run_worker_first: ["/api/*", "/health"],
+              run_worker_first: [
+                "/api/*",
+                "/health",
+                "/mcp",
+                "/oauth/*",
+                "/.well-known/*",
+              ],
             },
           },
           observability: settings.observability,

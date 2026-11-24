@@ -34,7 +34,11 @@ export default {
       database: env.DB,
       origin: env.EPHOR_ORIGIN,
       secret: env.BETTER_AUTH_SECRET,
-      deployment: { runtime: "cloudflare-worker", frontend: "same-runtime" },
+      deployment: {
+        runtime: "cloudflare-worker",
+        frontend: "same-runtime",
+        panelRoutes: env.EPHOR_PANEL_ROUTES,
+      },
     });
     await processNotifications({
       sql: database(env),
@@ -63,7 +67,11 @@ export default {
     return createApi(
       {
         origin: env.EPHOR_ORIGIN,
-        deployment: { runtime: "cloudflare-worker", frontend: "same-runtime" },
+        deployment: {
+          runtime: "cloudflare-worker",
+          frontend: "same-runtime",
+          panelRoutes: env.EPHOR_PANEL_ROUTES,
+        },
         secret: env.BETTER_AUTH_SECRET,
         setupCode: env.EPHOR_SETUP_CODE || undefined,
         database: env.DB,

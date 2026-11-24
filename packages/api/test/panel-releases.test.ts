@@ -277,6 +277,7 @@ test("Cloudflare upload preserves secrets and security headers; migrations inclu
           { name: "DB", type: "d1" },
           { name: "BETTER_AUTH_SECRET", type: "secret_text" },
           { name: "ASSETS", type: "assets" },
+          { name: "EPHOR_PANEL_ROUTES", type: "plain_text" },
         ],
       };
     else if (init?.method === "PUT") {
@@ -287,6 +288,20 @@ test("Cloudflare upload preserves secrets and security headers; migrations inclu
         type: "inherit",
       });
       expect(m.assets.config._headers).toBe(r.headers);
+      expect(m.assets.config.run_worker_first).toEqual([
+        "/api/*",
+        "/health",
+        "/mcp",
+        "/oauth/*",
+        "/.well-known/*",
+      ]);
+      expect(
+        m.bindings.filter(
+          (b: { name: string }) => b.name === "EPHOR_PANEL_ROUTES",
+        ),
+      ).toEqual([
+        { name: "EPHOR_PANEL_ROUTES", type: "plain_text", text: "1:0.3.2" },
+      ]);
     }
     return Response.json({ success: true, result });
   }) as unknown as typeof fetch);
@@ -298,6 +313,112 @@ test("Cloudflare upload preserves secrets and security headers; migrations inclu
   expect(calls.filter((c) => c.path.endsWith("/assets/upload"))).toHaveLength(
     1,
   );
+});
+test("an upgrade installed by an older Cloudflare updater repairs routing before acknowledging success", async () => {
+  const { panel, r, envelope } = await setup();
+  const h: Extract<Hosting, { host: "cloudflare" }> = {
+    host: "cloudflare",
+    token: "private-token",
+    accountId: "a".repeat(32),
+    worker: "ephor",
+    databaseId: crypto.randomUUID(),
+  };
+  await panel.change(async (s, save) => {
+    s.hosting = h;
+    s.job = {
+      id: "upgrade",
+      version: r.version,
+      sequence: r.sequence,
+      envelope,
+      stage: "verifying",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      message: "",
+      recovery: "original pre-migration bookmark",
+    };
+    await save();
+  });
+  let uploads = 0,
+    deployments = 0,
+    mismatch = true;
+  const request = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const u = new URL(String(input));
+    if (u.hostname === "github.com") return new Response(bytes);
+    let result: unknown;
+    if (u.pathname.endsWith("/settings")) {
+      result = {
+        bindings: [
+          {
+            name: "DB",
+            type: "d1",
+            id: mismatch ? "wrong-database" : h.databaseId,
+          },
+          { name: "EPHOR_ORIGIN", type: "plain_text", text: panel.env.origin },
+          { name: "BETTER_AUTH_SECRET", type: "secret_text" },
+        ],
+      };
+    } else if (u.pathname.endsWith("/query")) {
+      const body = JSON.parse(String(init?.body));
+      // Repair must not re-run migrations or overwrite the original recovery point.
+      expect(body.sql).toBe("SELECT lease FROM ephor_panel_release WHERE id=1");
+      result = [{ results: await panel.env.sql.query(body.sql) }];
+    } else if (u.pathname.endsWith("/assets-upload-session")) {
+      uploads++;
+      result = { jwt: "fresh-upload-token", buckets: [] };
+    } else if (init?.method === "PUT") {
+      deployments++;
+      expect((await panel.state()).job?.stage).toBe("verifying");
+      const metadata = JSON.parse(
+        (init.body as FormData).get("metadata") as string,
+      );
+      expect(metadata.assets.config.run_worker_first).toContain("/mcp");
+      expect(metadata.bindings).toContainEqual({
+        name: "EPHOR_PANEL_ROUTES",
+        type: "plain_text",
+        text: "1:0.3.2",
+      });
+      // Simulate acceptance followed by loss of the HTTP response.
+      throw new Error("connection lost");
+    } else throw new Error(`Unexpected provider request: ${u.pathname}`);
+    return Response.json({ success: true, result });
+  }) as typeof fetch;
+  const env = {
+    ...panel.env,
+    deployment: {
+      runtime: "cloudflare-worker" as const,
+      frontend: "same-runtime" as const,
+      // An old updater can inherit the previous release's routing marker.
+      panelRoutes: "1:0.3.1",
+    },
+  };
+  const restarted = new PanelReleases(
+    env,
+    request,
+    { version: r.version, sequence: r.sequence },
+    verify,
+  );
+  await restarted.tick();
+  expect(uploads).toBe(0);
+  expect((await panel.state()).job?.message).toContain("HOST_TARGET_MISMATCH");
+  mismatch = false;
+  await restarted.tick();
+  expect(uploads).toBe(1);
+  expect(deployments).toBe(1);
+  expect((await panel.state()).job?.recovery).toBe(
+    "original pre-migration bookmark",
+  );
+  await restarted.tick();
+  expect(deployments).toBe(1);
+  expect((await panel.state()).job?.stage).toBe("verifying");
+  const routed = new PanelReleases(
+    { ...env, deployment: { ...env.deployment, panelRoutes: "1:0.3.2" } },
+    request,
+    restarted.running,
+    verify,
+  );
+  await routed.tick();
+  expect((await panel.state()).job?.stage).toBe("complete");
+  expect((await panel.state()).job?.upload).toBeUndefined();
 });
 test("credential-bearing provider redirects are never followed", async () => {
   let calls = 0;
