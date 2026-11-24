@@ -32,7 +32,9 @@ const requestSchema = z
     resource: z.string().max(2048),
     scope: z.literal("ephor").default("ephor"),
   })
-  .strict();
+  // OAuth clients may add hints such as ui_locales. RFC 6749 section 3.1
+  // requires ignoring unknown parameters; strip them from persisted requests.
+  .strip();
 type OAuthRequest = z.infer<typeof requestSchema>;
 interface OAuthRow extends Record<string, unknown> {
   id: string;
@@ -177,7 +179,12 @@ export function mcpPublicRoutes(
     );
   });
   app.get("/oauth/authorize", async (c) => {
-    const b = requestSchema.parse(c.req.query());
+    const query = new URL(c.req.url).searchParams;
+    for (const name of Object.keys(requestSchema.shape)) {
+      if (query.getAll(name).length > 1)
+        return c.json({ error: "invalid_request" }, 400);
+    }
+    const b = requestSchema.parse(Object.fromEntries(query));
     const [client] = await env.sql.query<{ redirects: string }>(
       "SELECT redirects FROM ephor_mcp_client WHERE id=$1",
       [b.client_id],

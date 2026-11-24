@@ -516,12 +516,39 @@ test("OAuth requires explicit consent and PKCE, exact redirect/resource binding,
     state: "state123",
     resource: `${origin}/mcp`,
     scope: "ephor",
+    ui_locales: "en-US",
+    // Extension fields must never become consent or permission inputs.
+    approve: "true",
+    policy: '{"allProjects":true,"manage":true}',
   });
+  for (const name of [
+    "client_id",
+    "redirect_uri",
+    "resource",
+    "state",
+    "code_challenge",
+    "scope",
+  ]) {
+    const duplicate = new URLSearchParams(query);
+    duplicate.append(name, query.get(name) ?? "");
+    expect(
+      (await f.app.request(`${origin}/oauth/authorize?${duplicate}`)).status,
+    ).toBe(400);
+  }
   const authorize = await f.app.request(`${origin}/oauth/authorize?${query}`);
   expect(authorize.status).toBe(302);
   const pendingId = new URL(
     authorize.headers.get("location") ?? "",
   ).searchParams.get("authorization");
+  const [pending] = await f.env.sql.query<{ request: string; status: string }>(
+    "SELECT request,status FROM ephor_mcp_oauth WHERE id=$1",
+    [pendingId],
+  );
+  expect(pending?.status).toBe("pending");
+  const stored = JSON.parse(pending?.request ?? "{}");
+  expect(stored.ui_locales).toBeUndefined();
+  expect(stored.approve).toBeUndefined();
+  expect(stored.policy).toBeUndefined();
   const consent = await f.browser.request("/mcp/authorize", {
     id: pendingId,
     approve: true,
