@@ -28,6 +28,7 @@ import { Route as AuthenticatedServicesRouteImport } from './routes/_authenticat
 import { Route as AuthenticatedSettingsRouteImport } from './routes/_authenticated.settings'
 import { Route as AuthenticatedUpdatesRouteImport } from './routes/_authenticated.updates'
 import { Route as AuthenticatedWorkflowsRouteImport } from './routes/_authenticated.workflows'
+import { Route as ConnectAiRouteImport } from './routes/connect.ai'
 import { Route as AuthenticatedMachinesMachineIdRouteImport } from './routes/_authenticated.machines_.$machineId'
 import { Route as AuthenticatedNotificationsSettingsRouteImport } from './routes/_authenticated.notifications_.settings'
 import { Route as AuthenticatedProjectsProjectIdRouteImport } from './routes/_authenticated.projects_.$projectId'
@@ -135,6 +136,11 @@ const AuthenticatedWorkflowsRoute = AuthenticatedWorkflowsRouteImport.update({
   path: '/workflows',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
+const ConnectAiRoute = ConnectAiRouteImport.update({
+  id: '/connect/ai',
+  path: '/connect/ai',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AuthenticatedMachinesMachineIdRoute =
   AuthenticatedMachinesMachineIdRouteImport.update({
     id: '/machines_/$machineId',
@@ -221,6 +227,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof AuthenticatedSettingsRouteWithChildren
   '/updates': typeof AuthenticatedUpdatesRoute
   '/workflows': typeof AuthenticatedWorkflowsRoute
+  '/connect/ai': typeof ConnectAiRoute
   '/machines/$machineId': typeof AuthenticatedMachinesMachineIdRoute
   '/notifications/settings': typeof AuthenticatedNotificationsSettingsRoute
   '/projects/$projectId': typeof AuthenticatedProjectsProjectIdRoute
@@ -250,6 +257,7 @@ export interface FileRoutesByTo {
   '/services': typeof AuthenticatedServicesRoute
   '/updates': typeof AuthenticatedUpdatesRoute
   '/workflows': typeof AuthenticatedWorkflowsRoute
+  '/connect/ai': typeof ConnectAiRoute
   '/': typeof AuthenticatedIndexRoute
   '/machines/$machineId': typeof AuthenticatedMachinesMachineIdRoute
   '/notifications/settings': typeof AuthenticatedNotificationsSettingsRoute
@@ -283,6 +291,7 @@ export interface FileRoutesById {
   '/_authenticated/settings': typeof AuthenticatedSettingsRouteWithChildren
   '/_authenticated/updates': typeof AuthenticatedUpdatesRoute
   '/_authenticated/workflows': typeof AuthenticatedWorkflowsRoute
+  '/connect/ai': typeof ConnectAiRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
   '/_authenticated/machines_/$machineId': typeof AuthenticatedMachinesMachineIdRoute
   '/_authenticated/notifications_/settings': typeof AuthenticatedNotificationsSettingsRoute
@@ -317,6 +326,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/updates'
     | '/workflows'
+    | '/connect/ai'
     | '/machines/$machineId'
     | '/notifications/settings'
     | '/projects/$projectId'
@@ -346,6 +356,7 @@ export interface FileRouteTypes {
     | '/services'
     | '/updates'
     | '/workflows'
+    | '/connect/ai'
     | '/'
     | '/machines/$machineId'
     | '/notifications/settings'
@@ -378,6 +389,7 @@ export interface FileRouteTypes {
     | '/_authenticated/settings'
     | '/_authenticated/updates'
     | '/_authenticated/workflows'
+    | '/connect/ai'
     | '/_authenticated/'
     | '/_authenticated/machines_/$machineId'
     | '/_authenticated/notifications_/settings'
@@ -397,6 +409,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   RecoverRoute: typeof RecoverRoute
   SetupRoute: typeof SetupRoute
+  ConnectAiRoute: typeof ConnectAiRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -533,6 +546,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/workflows'
       preLoaderRoute: typeof AuthenticatedWorkflowsRouteImport
       parentRoute: typeof AuthenticatedRoute
+    }
+    '/connect/ai': {
+      id: '/connect/ai'
+      path: '/connect/ai'
+      fullPath: '/connect/ai'
+      preLoaderRoute: typeof ConnectAiRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/_authenticated/machines_/$machineId': {
       id: '/_authenticated/machines_/$machineId'
@@ -696,6 +716,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   RecoverRoute: RecoverRoute,
   SetupRoute: SetupRoute,
+  ConnectAiRoute: ConnectAiRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

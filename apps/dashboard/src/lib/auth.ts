@@ -1,5 +1,6 @@
 import { passkeyClient } from "@better-auth/passkey/client";
 import { createAuthClient } from "better-auth/react";
+import { authorizationId } from "./mcp";
 
 export const authClient = createAuthClient({ plugins: [passkeyClient()] });
 export interface SessionInfo {
@@ -328,10 +329,18 @@ export async function api<T>(path: string, body?: unknown): Promise<T> {
         path.startsWith("/integrations") ||
         path.startsWith("/panel") ||
         path.startsWith("/backups") ||
+        path.startsWith("/mcp") ||
         path === "/session")
     ) {
       if (!location.pathname.match(/^\/(login|setup|recover)$/))
-        location.replace("/login");
+        location.replace(
+          location.pathname === "/connect/ai" &&
+            authorizationId(
+              new URLSearchParams(location.search).get("authorization"),
+            )
+            ? `/login?authorization=${encodeURIComponent(new URLSearchParams(location.search).get("authorization") ?? "")}`
+            : "/login",
+        );
     }
     throw new Error(errorMessage(data.code));
   }

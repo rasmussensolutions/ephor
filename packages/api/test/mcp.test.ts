@@ -62,6 +62,262 @@ const spec = {
   memoryMb: 256,
   cpus: 0.5,
 };
+test("an explicit direct grant executes, deploys and discloses authorized logs from MCP without panel actions", async () => {
+  const f = await setup();
+  const { row } = await new AgentAccess(f.env).connection(f.issued.id);
+  expect(
+    (
+      await f.browser.request("/mcp/connections/update", {
+        id: row.id,
+        name: row.name,
+        previousName: row.name,
+        previousPolicy: row.policy,
+        policy: {
+          ...f.policy,
+          allProjects: true,
+          execution: "direct",
+          logs: false,
+        },
+      })
+    ).status,
+  ).toBe(200);
+  // No fresh owner session is needed for later agent operations.
+  await f.sql.query('UPDATE session SET "createdAt"=$1', [
+    timestamp(Date.now() - FRESH_MS - 1000),
+  ]);
+  const call = async (name: string, args: unknown) => {
+    const response = await rpc(f, "tools/call", { name, arguments: args });
+    expect(response.data.result.isError).not.toBe(true);
+    const result = response.data.result.structuredContent.result;
+    expect(result.approvalUrl).toBeUndefined();
+    return result;
+  };
+  const projectArgs = { name: "From chat", requestKey: "direct-project-01" };
+  const attempts = await Promise.all([
+    call("create_project", projectArgs),
+    call("create_project", projectArgs),
+  ]);
+  expect(attempts[0].operationId).toBe(attempts[1].operationId);
+  const project = await call("create_project", projectArgs);
+  expect(project.status).toBe("completed");
+  expect(
+    await f.sql.query("SELECT id FROM ephor_project WHERE name=$1", [
+      "From chat",
+    ]),
+  ).toHaveLength(1);
+  const created = await call("create_service", {
+    name: "App",
+    projectId: project.result.id,
+    machineId: f.machine.id,
+    requestKey: "direct-service-01",
+    source: { type: "image" },
+    spec,
+  });
+  expect(created.status).toBe("completed");
+  const [service] = await f.sql.query<{ id: string }>(
+    "SELECT id FROM ephor_service",
+  );
+  if (!service) throw new Error("Service was not created");
+  const serviceId = service.id;
+  expect(await f.sql.query("SELECT id FROM ephor_deployment")).toHaveLength(0);
+  const vars = await call("list_variables", { serviceId });
+  const changed = await call("set_variables", {
+    serviceId,
+    requestKey: "direct-vars-01",
+    revision: vars.revision,
+    set: { PRIVATE: "direct-secret" },
+  });
+  expect(changed.status).toBe("completed");
+  expect(
+    JSON.stringify(await call("inspect_service", { serviceId })),
+  ).not.toContain("direct-secret");
+  expect(JSON.stringify(await f.operations.review())).not.toContain(
+    "direct-secret",
+  );
+  const denied = await rpc(f, "tools/call", {
+    name: "read_logs",
+    arguments: { serviceId, requestKey: "direct-logs-01", kind: "runtime" },
+  });
+  expect(denied.data.result.content[0].text).toBe("MCP_SCOPE_DENIED");
+  expect(
+    (
+      await rpc(f, "tools/call", {
+        name: "create_project",
+        arguments: { ...projectArgs, approved: true },
+      })
+    ).data.result.isError,
+  ).toBe(true);
+  const executor = new Services(f.sql, f.env.secret);
+  await executor.enroll(
+    await executor.issueWorker(f.machine.id),
+    randomToken(),
+  );
+  await executor.heartbeat(f.machine.id, 6);
+  const deployment = await call("deploy_service", {
+    serviceId,
+    requestKey: "direct-deploy-01",
+  });
+  expect(deployment.status).toBe("completed");
+  const claimed = await executor.next(f.machine.id, 6);
+  expect(claimed?.action).toBe("deploy");
+  await executor.report(f.machine.id, {
+    id: claimed?.id,
+    status: "succeeded",
+    digest: `docker.io/library/nginx@sha256:${"a".repeat(64)}`,
+  });
+  await executor.runtime(f.machine.id, {
+    id: serviceId,
+    status: "running",
+    container: "fixture",
+    logs: "PRIVATE=direct-secret\napplication output",
+    metrics: null,
+  });
+  expect((await call("inspect_service", { serviceId })).health.stale).toBe(
+    false,
+  );
+  await f.sql.query('UPDATE session SET "createdAt"=$1', [
+    timestamp(Date.now()),
+  ]);
+  const { row: current, policy } = await new AgentAccess(f.env).connection(
+    f.issued.id,
+  );
+  expect(
+    (
+      await f.browser.request("/mcp/connections/update", {
+        id: current.id,
+        name: current.name,
+        previousName: current.name,
+        previousPolicy: current.policy,
+        policy: { ...policy, logs: true },
+      })
+    ).status,
+  ).toBe(200);
+  const logs = await call("read_logs", {
+    serviceId,
+    requestKey: "direct-logs-01",
+    kind: "runtime",
+  });
+  expect(logs.status).toBe("completed");
+  expect(JSON.stringify(logs)).toContain("application output");
+  expect(JSON.stringify(logs)).not.toContain("direct-secret");
+  const failedArgs = {
+    serviceId,
+    requestKey: "direct-failed-log-01",
+    kind: "build",
+  };
+  const failure = await rpc(f, "tools/call", {
+    name: "read_logs",
+    arguments: failedArgs,
+  });
+  expect(failure.data.result.isError).toBe(true);
+  const failed = failure.data.result.structuredContent.result;
+  expect(failed.status).toBe("failed");
+  expect(failed.result.code).toBe("BUILD_ID_REQUIRED");
+  expect(failed.approvalUrl).toBeUndefined();
+  expect(
+    (await rpc(f, "tools/call", { name: "read_logs", arguments: failedArgs }))
+      .data,
+  ).toEqual(failure.data);
+  expect(
+    (
+      await rpc(f, "tools/call", {
+        name: "operation_status",
+        arguments: { operationId: failed.operationId },
+      })
+    ).data.result.isError,
+  ).toBe(true);
+  expect(
+    (await call("stop_service", { serviceId, requestKey: "direct-stop-01" }))
+      .status,
+  ).toBe("completed");
+  await f.browser.request("/mcp/revoke", { id: f.issued.id });
+  expect(
+    (
+      await rpc(f, "tools/call", {
+        name: "operation_status",
+        arguments: { operationId: logs.operationId },
+      })
+    ).status,
+  ).toBe(401);
+});
+
+test("direct execution cannot reuse legacy proposals or bypass a permission change during claim", async () => {
+  const f = await setup();
+  const access = new AgentAccess(f.env);
+  expect((await access.connection(f.issued.id)).policy.execution).toBe(
+    "approval",
+  );
+  const args = { name: "Legacy", requestKey: "legacy-project-01" };
+  await f.sql.query("UPDATE ephor_mcp_connection SET policy=$1 WHERE id=$2", [
+    JSON.stringify({ ...f.policy, allProjects: true }),
+    f.issued.id,
+  ]);
+  const pending = (await f.operations.call(
+    f.issued.id,
+    "create_project",
+    args,
+  )) as { status: string };
+  expect(pending.status).toBe("pending");
+  const broad = { ...f.policy, allProjects: true, execution: "direct" };
+  await f.sql.query("UPDATE ephor_mcp_connection SET policy=$1 WHERE id=$2", [
+    JSON.stringify(broad),
+    f.issued.id,
+  ]);
+  await expect(
+    f.operations.call(f.issued.id, "create_project", args),
+  ).rejects.toThrow("MCP_REQUEST_MODE_CHANGED");
+  let calls = 0;
+  const authorize = f.operations.authorize.bind(f.operations);
+  f.operations.authorize = async (...args) => {
+    await authorize(...args);
+    // call, status, then the atomic execution claim.
+    if (++calls === 3)
+      await f.sql.query(
+        "UPDATE ephor_mcp_connection SET policy=$1 WHERE id=$2",
+        [JSON.stringify({ ...broad, execution: "approval" }), f.issued.id],
+      );
+  };
+  await expect(
+    f.operations.call(f.issued.id, "create_project", {
+      name: "Race",
+      requestKey: "direct-race-001",
+    }),
+  ).rejects.toThrow();
+  expect(
+    await f.sql.query(
+      "SELECT id FROM ephor_project WHERE name IN ('Race','Legacy')",
+    ),
+  ).toHaveLength(0);
+  await f.sql.query("UPDATE ephor_mcp_connection SET policy=$1 WHERE id=$2", [
+    JSON.stringify(broad),
+    f.issued.id,
+  ]);
+  calls = 0;
+  f.operations.authorize = async (...args) => {
+    // Change the grant immediately after the claim, before execution.
+    if (++calls === 4)
+      await f.sql.query(
+        "UPDATE ephor_mcp_connection SET policy=$1 WHERE id=$2",
+        [JSON.stringify({ ...broad, manage: false }), f.issued.id],
+      );
+    const current = await access.connection(f.issued.id);
+    await authorize(current.policy, args[1], args[2]);
+  };
+  await expect(
+    f.operations.call(f.issued.id, "create_project", {
+      name: "After claim",
+      requestKey: "direct-race-002",
+    }),
+  ).rejects.toThrow("MCP_SCOPE_DENIED");
+  expect(
+    await f.sql.query("SELECT id FROM ephor_project WHERE name='After claim'"),
+  ).toHaveLength(0);
+  const [failed] = await f.sql.query<{ status: string }>(
+    "SELECT status FROM ephor_mcp_operation WHERE request_key=$1",
+    ["direct-race-002"],
+  );
+  expect(failed?.status).toBe("failed");
+});
 test("existing connections can opt into future machines and projects without replacing credentials", async () => {
   const f = await setup();
   const legacy = { ...f.policy, machineIds: [], allProjects: true };
@@ -929,6 +1185,9 @@ test("OAuth requires explicit consent and PKCE, exact redirect/resource binding,
   }
   const authorize = await f.app.request(`${origin}/oauth/authorize?${query}`);
   expect(authorize.status).toBe(302);
+  expect(new URL(authorize.headers.get("location") ?? "").pathname).toBe(
+    "/connect/ai",
+  );
   const pendingId = new URL(
     authorize.headers.get("location") ?? "",
   ).searchParams.get("authorization");
@@ -941,6 +1200,18 @@ test("OAuth requires explicit consent and PKCE, exact redirect/resource binding,
   expect(stored.ui_locales).toBeUndefined();
   expect(stored.approve).toBeUndefined();
   expect(stored.policy).toBeUndefined();
+  expect(
+    (await f.app.request(`${origin}/api/mcp/authorizations/${pendingId}`))
+      .status,
+  ).toBe(401);
+  const details = await f.browser.request(`/mcp/authorizations/${pendingId}`);
+  expect(details.status).toBe(200);
+  expect(await details.json()).toEqual({
+    id: pendingId,
+    clientName: "Test OAuth",
+    redirectUri: redirect,
+    expiresAt: expect.any(Number),
+  });
   const consent = await f.browser.request("/mcp/authorize", {
     id: pendingId,
     approve: true,
@@ -949,6 +1220,9 @@ test("OAuth requires explicit consent and PKCE, exact redirect/resource binding,
     days: 30,
   });
   expect(consent.status).toBe(200);
+  expect(
+    (await f.browser.request(`/mcp/authorizations/${pendingId}`)).status,
+  ).toBe(409);
   const callback = new URL((await consent.json()).redirect);
   expect(callback.searchParams.get("state")).toBe("state123");
   const tokenRequest = (overrides: Record<string, string> = {}) =>

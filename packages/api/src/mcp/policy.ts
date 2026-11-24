@@ -12,6 +12,8 @@ export const policySchema = z
     manage: z.boolean().default(false),
     logs: z.boolean().default(false),
     repositories: z.boolean().default(false),
+    // Old grants promised per-action approval; never silently widen them.
+    execution: z.enum(["approval", "direct"]).default("approval"),
   })
   .strict();
 export type Policy = z.infer<typeof policySchema>;

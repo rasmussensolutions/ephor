@@ -7,7 +7,13 @@ import { addPasskey, api, signIn } from "@/lib/auth";
 const authLinkClassName =
   "inline-block rounded-sm py-1 text-sm text-muted-foreground underline underline-offset-4 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none";
 
-export function AuthScreen({ mode }: { mode: "login" | "setup" | "recover" }) {
+export function AuthScreen({
+  mode,
+  authorization,
+}: {
+  mode: "login" | "setup" | "recover";
+  authorization?: string;
+}) {
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
   const [keyName, setKeyName] = useState("My passkey");
@@ -50,7 +56,11 @@ export function AuthScreen({ mode }: { mode: "login" | "setup" | "recover" }) {
         );
       if (mode === "login") {
         await signIn();
-        location.assign("/");
+        location.assign(
+          authorization
+            ? `/connect/ai?authorization=${encodeURIComponent(authorization)}`
+            : "/",
+        );
       } else if (enrolling) {
         await addPasskey(keyName.trim(), true);
         location.assign("/settings/security");

@@ -364,6 +364,48 @@ test("released Worker enables machine enrollment updates without release variabl
       await mcp("tools/call", { name: "list_projects", arguments: {} })
     ).json();
     assert.equal(projects.result.isError, undefined);
+    await db
+      .prepare("UPDATE ephor_mcp_connection SET policy=? WHERE id=?")
+      .bind(
+        JSON.stringify({
+          allProjects: true,
+          manage: true,
+          execution: "direct",
+        }),
+        "worker-test",
+      )
+      .run();
+    const staleProposal = await create();
+    assert.equal(staleProposal.result.isError, true);
+    assert.equal(
+      staleProposal.result.content[0].text,
+      "MCP_REQUEST_MODE_CHANGED",
+    );
+    const directCreate = () =>
+      mcp("tools/call", {
+        name: "create_project",
+        arguments: {
+          name: "Direct Worker project",
+          requestKey: "worker-direct-01",
+        },
+      }).then((response) => response.json());
+    const completed = await directCreate();
+    assert.equal(completed.result.isError, undefined);
+    assert.equal(completed.result.structuredContent.result.status, "completed");
+    assert.equal(
+      completed.result.structuredContent.result.approvalUrl,
+      undefined,
+    );
+    assert.deepEqual(await directCreate(), completed);
+    assert.equal(
+      (
+        await db
+          .prepare("SELECT count(*) AS n FROM ephor_project WHERE name=?")
+          .bind("Direct Worker project")
+          .first()
+      ).n,
+      1,
+    );
   } finally {
     await runtime?.dispose();
     await rm(directory, { recursive: true, force: true });

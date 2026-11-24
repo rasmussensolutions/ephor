@@ -1,9 +1,11 @@
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
+import { ConnectionPermissions } from "@/components/connection-permissions";
 import { SettingsPage, SettingsSection } from "@/components/settings-layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api, signIn } from "@/lib/auth";
+import { type ConnectionPolicy, readPolicy } from "@/lib/mcp";
 
 interface Data {
   endpoint: string;
@@ -19,6 +21,7 @@ interface Data {
     name: string;
     tool: string;
     status: string;
+    execution: "approval" | "direct";
     expiresAt: number;
     args: Record<string, unknown>;
     commit?: string;
@@ -51,22 +54,12 @@ function Connections() {
   const [editing, setEditing] = useState<Data["connections"][number] | null>(
     null,
   );
-  const [projectIds, setProjects] = useState<string[]>([]),
-    [machineIds, setMachines] = useState<string[]>([]);
-  const [allProjects, setAll] = useState(false),
-    [allMachines, setAllMachines] = useState(false),
-    [manage, setManage] = useState(false),
-    [logs, setLogs] = useState(false),
-    [repositories, setRepos] = useState(false);
-  const policy = {
-    projectIds,
-    machineIds,
-    allProjects,
-    allMachines,
-    manage,
-    logs,
-    repositories,
-  };
+  const [policy, setPolicy] = useState<ConnectionPolicy>(() =>
+    readPolicy(
+      projects.map((p) => p.id),
+      machines.map((m) => m.id),
+    ),
+  );
   useEffect(() => {
     const timer = window.setInterval(() => {
       if (!document.hidden && !busy) void router.invalidate();
@@ -86,36 +79,18 @@ function Connections() {
       setBusy(false);
     }
   }
-  const checkbox = (
-    label: string,
-    checked: boolean,
-    change: (v: boolean) => void,
-  ) => (
-    <label className="flex items-start gap-3 text-sm">
-      <input
-        type="checkbox"
-        className="mt-1"
-        checked={checked}
-        disabled={busy}
-        onChange={(e) => change(e.target.checked)}
-      />
-      {label}
-    </label>
-  );
-  function select(current: string[], value: string, checked: boolean) {
-    return checked ? [...current, value] : current.filter((v) => v !== value);
-  }
   function editConnection(connection: Data["connections"][number] | null) {
     const p = connection ? JSON.parse(connection.policy) : {};
     setEditing(connection);
     setName(connection?.name ?? "My AI agent");
-    setProjects(p.projectIds ?? []);
-    setMachines(p.machineIds ?? []);
-    setAll(p.allProjects ?? false);
-    setAllMachines(p.allMachines ?? false);
-    setManage(p.manage ?? false);
-    setLogs(p.logs ?? false);
-    setRepos(p.repositories ?? false);
+    setPolicy(
+      connection
+        ? { ...readPolicy(), ...p, execution: p.execution ?? "approval" }
+        : readPolicy(
+            projects.map((p) => p.id),
+            machines.map((m) => m.id),
+          ),
+    );
     setToken("");
     setError("");
     if (connection)
@@ -138,8 +113,8 @@ function Connections() {
         <code className="block break-all select-all">{data.endpoint}</code>
         <p className="text-muted-foreground">
           Add this URL to a client that supports remote MCP and OAuth, or create
-          a token below. All infrastructure changes and log disclosures require
-          your passkey approval here. Stored secret values cannot be read
+          a token below. Grant access once, then work from chat. Your client
+          controls confirmation prompts. Stored secret values cannot be read
           through MCP.
         </p>
       </div>
@@ -173,59 +148,13 @@ function Connections() {
               onChange={(e) => setName(e.target.value)}
             />
           </label>
-          {checkbox(
-            "Read all current and future projects",
-            allProjects,
-            setAll,
-          )}
-          {!allProjects && (
-            <fieldset className="space-y-2">
-              <legend className="mb-2 text-sm font-medium">
-                Projects this agent can access
-              </legend>
-              {projects.map((p) => (
-                <div key={p.id}>
-                  {checkbox(p.name, projectIds.includes(p.id), (v) =>
-                    setProjects(select(projectIds, p.id, v)),
-                  )}
-                </div>
-              ))}
-            </fieldset>
-          )}
-          {checkbox(
-            "Access all current and future machines",
-            allMachines,
-            setAllMachines,
-          )}
-          {!allMachines && (
-            <fieldset className="space-y-2">
-              <legend className="mb-2 text-sm font-medium">
-                Machines available for new services and machine metrics
-              </legend>
-              {machines.map((m) => (
-                <div key={m.id}>
-                  {checkbox(m.name, machineIds.includes(m.id), (v) =>
-                    setMachines(select(machineIds, m.id, v)),
-                  )}
-                </div>
-              ))}
-            </fieldset>
-          )}
-          {checkbox(
-            "Request changes to authorized projects and services (approval required each time)",
-            manage,
-            setManage,
-          )}
-          {checkbox(
-            "Request application/build logs (separate disclosure approval required)",
-            logs,
-            setLogs,
-          )}
-          {checkbox(
-            "Discover repositories in all connected GitHub installations",
-            repositories,
-            setRepos,
-          )}
+          <ConnectionPermissions
+            policy={policy}
+            onChange={setPolicy}
+            projects={projects}
+            machines={machines}
+            disabled={busy}
+          />
           <p className="text-xs text-muted-foreground">
             New connections expire after 30 days. Project access includes
             services added to those projects later. Deploying code gives that
@@ -291,69 +220,20 @@ function Connections() {
           )}
         </div>
       </SettingsSection>
-      {!editing && data.authorizations.length > 0 && (
+      {data.authorizations.length > 0 && (
         <SettingsSection title="Clients requesting access">
-          {data.authorizations.map((a) => {
-            const q = JSON.parse(a.request) as { redirect_uri: string };
-            return (
-              <div
-                key={a.id}
-                className="settings-surface space-y-3 rounded-xl p-5 text-sm"
-              >
-                <p className="font-medium">{a.name}</p>
-                <p>
-                  Only approve a connection you started. Client names are
-                  supplied by the client.
-                </p>
-                <p className="break-all">Return address: {q.redirect_uri}</p>
-                <p>
-                  The permissions selected above will apply to this connection.
-                </p>
-                <div className="flex gap-2">
-                  <Button
-                    disabled={busy}
-                    onClick={() =>
-                      void run(async () => {
-                        const result = await api<{ redirect: string }>(
-                          "/mcp/authorize",
-                          {
-                            id: a.id,
-                            approve: true,
-                            name: name || a.name,
-                            policy,
-                            days: 30,
-                          },
-                        );
-                        window.location.assign(result.redirect);
-                      })
-                    }
-                  >
-                    Approve connection
-                  </Button>
-                  <Button
-                    variant="outline"
-                    disabled={busy}
-                    onClick={() =>
-                      void run(async () => {
-                        await api("/mcp/authorize", {
-                          id: a.id,
-                          approve: false,
-                          name,
-                          policy,
-                          days: 30,
-                        });
-                      })
-                    }
-                  >
-                    Deny
-                  </Button>
-                </div>
-              </div>
-            );
-          })}
+          {data.authorizations.map((a) => (
+            <a
+              key={a.id}
+              className="settings-surface block rounded-xl p-5 text-sm underline"
+              href={`/connect/ai?authorization=${encodeURIComponent(a.id)}`}
+            >
+              Review connection from {a.name}
+            </a>
+          ))}
         </SettingsSection>
       )}
-      <SettingsSection title="Action approvals">
+      <SettingsSection title="Recent operations">
         {!data.operations.length && (
           <p className="px-5 text-sm text-muted-foreground">
             No recent requests. This page refreshes automatically.
@@ -372,7 +252,7 @@ function Connections() {
             </p>
             {o.tool === "read_logs" && (
               <p className="font-medium text-destructive">
-                Approval sends application output to the AI client and
+                Log access sends application output to the AI client and
                 potentially its model provider. Logs may contain secrets even
                 after redaction.
               </p>
@@ -386,7 +266,7 @@ function Connections() {
                 2,
               )}
             </pre>
-            {o.status === "pending" && (
+            {o.status === "pending" && o.execution === "approval" && (
               <div className="flex gap-2">
                 <Button
                   disabled={busy}
@@ -454,12 +334,14 @@ function Connections() {
                             .join(", ") || "No available machines"}
                     </p>
                     <p>
-                      Request changes:{" "}
-                      {p.manage ? "Allowed, with approval" : "Not allowed"}
+                      Manage and deploy: {p.manage ? "Allowed" : "Not allowed"}
                     </p>
+                    <p>Read logs: {p.logs ? "Allowed" : "Not allowed"}</p>
                     <p>
-                      Request logs:{" "}
-                      {p.logs ? "Allowed, with approval" : "Not allowed"}
+                      Execution:{" "}
+                      {p.execution === "direct"
+                        ? "From chat"
+                        : "Legacy panel approvals — edit permissions to enable actions from chat"}
                     </p>
                     <p>
                       Repository discovery:{" "}

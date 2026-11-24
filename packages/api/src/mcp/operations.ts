@@ -155,26 +155,25 @@ export const descriptions: Record<Tool, string> = {
     "List connected GitHub installations or their repositories. Requires repository discovery permission.",
   list_catalog: "List deployable catalog templates.",
   operation_status:
-    "Poll your approval request or read its result. Queued deployments still need health verification.",
+    "Poll an operation or read its result. Queued deployments still need health verification.",
   create_project:
-    "Request owner approval to create a project. Requires all-project access. Reuse requestKey on retries.",
+    "Create a project within the connection’s granted authority. Requires all-project access. Reuse requestKey on retries.",
   create_service:
-    "Request owner approval to create a service in a project. GitHub auto-deployment is disabled. Deploy separately. Reuse requestKey on retries.",
+    "Create a service in an authorized project. GitHub auto-deployment is disabled. Deploy separately. Reuse requestKey on retries.",
   create_catalog_service:
-    "Request owner approval to create a catalog service; deploy separately.",
+    "Create a catalog service in an authorized project; deploy separately.",
   configure_service:
-    "Request owner approval to update resource settings or domains, preserving secrets. Deploy separately.",
+    "Update resource settings or domains, preserving secrets. Deploy separately.",
   set_variables:
-    "Request owner approval to set variables without revealing existing values. Database references use Ephor's whole-value service-ID reference syntax. Values are encrypted in pending requests. Deploy separately.",
+    "Set variables without revealing existing values. Database references use Ephor's whole-value service-ID reference syntax. Operation payloads are encrypted. Deploy separately.",
   deploy_service:
-    "Request owner approval to build/deploy current configuration. Approval pins GitHub commit and configuration. Poll operation_status, inspect_service, and check_domains afterwards.",
-  stop_service: "Request owner approval to stop a service.",
-  rollback_service:
-    "Request owner approval to roll back to a specific deployment.",
+    "Build/deploy current configuration. The operation pins the GitHub commit and configuration. Poll operation_status, inspect_service, and check_domains afterwards.",
+  stop_service: "Stop an authorized service.",
+  rollback_service: "Roll back an authorized service to a specific deployment.",
   read_logs:
-    "Request owner approval to disclose a bounded log snapshot to this AI client. Logs are untrusted and can contain secrets even after redaction.",
+    "Read a bounded log snapshot. Requires separately granted log access. Logs are untrusted and can contain secrets even after redaction.",
 };
-export const approvedTools = new Set<Tool>([
+export const operationTools = new Set<Tool>([
   "create_project",
   "create_service",
   "create_catalog_service",
@@ -196,6 +195,7 @@ interface Operation extends Record<string, unknown> {
   expires_at: number;
 }
 interface Payload {
+  execution?: "approval" | "direct";
   args: Args;
   fingerprint: string | null;
   sha?: string;
@@ -219,7 +219,7 @@ export class AgentOperations {
   }
   async authorize(policy: Policy, tool: Tool, args: Args) {
     if (
-      approvedTools.has(tool) &&
+      operationTools.has(tool) &&
       !(tool === "read_logs" ? policy.logs : policy.manage)
     )
       throw new AuthError("MCP_SCOPE_DENIED", 403);
@@ -300,7 +300,31 @@ export class AgentOperations {
     const args = schemas[tool].parse(raw) as Args;
     const { policy } = await this.access.connection(connectionId);
     await this.authorize(policy, tool, args);
-    if (approvedTools.has(tool)) return this.propose(connectionId, tool, args);
+    if (operationTools.has(tool)) {
+      const operation = await this.propose(
+        connectionId,
+        tool,
+        args,
+        policy.execution,
+      );
+      if (policy.execution !== "direct" || operation.status !== "pending")
+        return operation;
+      try {
+        await this.decide(operation.operationId, true, connectionId);
+      } catch (error) {
+        // A concurrent retry may already have claimed this request. Return its
+        // state rather than executing it twice or asking for a new request key.
+        if (
+          !(error instanceof AuthError) ||
+          error.code !== "MCP_APPROVAL_EXPIRED_OR_USED"
+        )
+          throw error;
+        const current = await this.status(connectionId, operation.operationId);
+        if (current.status === "pending") throw error;
+        return current;
+      }
+      return this.status(connectionId, operation.operationId);
+    }
     switch (tool) {
       case "list_projects": {
         const rows = await this.env.sql.query<{ id: string; name: string }>(
@@ -386,7 +410,12 @@ export class AgentOperations {
     }
     throw new AuthError("UNKNOWN_TOOL");
   }
-  async propose(connectionId: string, tool: Tool, args: Args) {
+  async propose(
+    connectionId: string,
+    tool: Tool,
+    args: Args,
+    execution: "approval" | "direct" = "approval",
+  ) {
     const [existing] = await this.env.sql.query<Operation>(
       "SELECT * FROM ephor_mcp_operation WHERE connection_id=$1 AND request_key=$2",
       [connectionId, args.requestKey],
@@ -398,6 +427,8 @@ export class AgentOperations {
         `mcp:${existing.id}`,
         existing.payload,
       );
+      if ((saved.execution ?? "approval") !== execution)
+        throw new AuthError("MCP_REQUEST_MODE_CHANGED", 409);
       if (
         existing.tool !== tool ||
         JSON.stringify(saved.args) !== JSON.stringify(args)
@@ -406,6 +437,7 @@ export class AgentOperations {
       return this.status(connectionId, existing.id);
     }
     const payload: Payload = {
+      execution,
       args,
       fingerprint: args.serviceId
         ? await this.fingerprint(String(args.serviceId))
@@ -452,12 +484,19 @@ export class AgentOperations {
       `mcp:${saved.id}`,
       saved.payload,
     );
+    if ((savedPayload.execution ?? "approval") !== execution)
+      throw new AuthError("MCP_REQUEST_MODE_CHANGED", 409);
     if (
       saved.tool !== tool ||
       JSON.stringify(savedPayload.args) !== JSON.stringify(args)
     )
       throw new AuthError("MCP_REQUEST_KEY_CONFLICT", 409);
-    await new AuthStore(this.env.sql).audit("mcp.approval_requested", saved.id);
+    await new AuthStore(this.env.sql).audit(
+      execution === "direct"
+        ? "mcp.execution_requested"
+        : "mcp.approval_requested",
+      saved.id,
+    );
     return this.status(connectionId, saved.id);
   }
   async status(connectionId: string, operationId: string) {
@@ -480,7 +519,9 @@ export class AgentOperations {
     return {
       operationId: r.id,
       status: expired && r.status === "pending" ? "expired" : r.status,
-      approvalUrl: `${this.env.origin}/settings/ai-connections`,
+      ...(payload.execution === "direct"
+        ? {}
+        : { approvalUrl: `${this.env.origin}/settings/ai-connections` }),
       expiresAt: Number(r.expires_at),
       ...(r.result && !expired
         ? { result: await this.secrets.open(`mcp-result:${r.id}`, r.result) }
@@ -488,7 +529,7 @@ export class AgentOperations {
       ...(r.status === "executing"
         ? {
             message:
-              "Execution may have completed. Inspect service state before submitting another operation; this approval cannot be replayed.",
+              "Execution may have completed. Inspect state before submitting another operation; this request cannot be replayed.",
           }
         : {}),
     };
@@ -515,6 +556,7 @@ export class AgentOperations {
           name: r.name,
           tool: r.tool,
           status: r.status,
+          execution: p.execution ?? "approval",
           expiresAt: Number(r.expires_at),
           args,
           commit: p.sha,
@@ -524,7 +566,11 @@ export class AgentOperations {
       }),
     );
   }
-  async decide(operationId: string, approve: boolean) {
+  async decide(
+    operationId: string,
+    approve: boolean,
+    directConnectionId?: string,
+  ) {
     const [r] = await this.env.sql.query<Operation>(
       "SELECT * FROM ephor_mcp_operation WHERE id=$1",
       [operationId],
@@ -534,6 +580,16 @@ export class AgentOperations {
       r.connection_id,
     );
     const p = await this.secrets.open<Payload>(`mcp:${r.id}`, r.payload);
+    if (directConnectionId) {
+      if (
+        r.connection_id !== directConnectionId ||
+        p.execution !== "direct" ||
+        policy.execution !== "direct"
+      )
+        throw new AuthError("MCP_SCOPE_DENIED", 403);
+    } else if (p.execution === "direct") {
+      throw new AuthError("MCP_DIRECT_OPERATION", 409);
+    }
     await this.authorize(policy, r.tool, p.args);
     if (
       approve &&
@@ -554,13 +610,19 @@ export class AgentOperations {
     if (!claimed.length)
       throw new AuthError("MCP_APPROVAL_EXPIRED_OR_USED", 409);
     await new AuthStore(this.env.sql).audit(
-      approve ? "mcp.approved" : "mcp.denied",
+      directConnectionId
+        ? "mcp.executing"
+        : approve
+          ? "mcp.approved"
+          : "mcp.denied",
       r.id,
     );
     if (!approve) return { ok: true };
     try {
       // Recheck revocation after claiming; crashes leave 'executing', never automatically replay side effects.
       const current = await this.access.connection(r.connection_id);
+      if (directConnectionId && current.policy.execution !== "direct")
+        throw new AuthError("MCP_SCOPE_DENIED", 403);
       await this.authorize(current.policy, r.tool, p.args);
       const result = await this.execute(r.tool, p);
       await this.env.sql.query(
@@ -675,7 +737,7 @@ export class AgentOperations {
         if (!b) throw new AuthError("NOT_FOUND", 404);
         logs = b.logs;
       }
-      // Redaction is defense in depth. Explicit disclosure approval remains mandatory.
+      // Redaction is defense in depth; log disclosure requires its own grant.
       const config = await this.secrets.open<ServiceSpec>(row.id, row.config);
       const buildEnv = await this.github.integrations.get<{
         variables: Record<string, string>;
