@@ -320,6 +320,138 @@ test("real MCP SDK connects, discovers tools, and scopes project discovery", asy
   expect(JSON.stringify(result)).not.toContain("Private");
   await client.close();
 });
+test("cached SDK discovery survives permission edits while calls and approvals enforce current grants", async () => {
+  const f = await setup();
+  const readonly = policySchema.parse({ allProjects: true });
+  const update = async (policy: typeof readonly) => {
+    const { row } = await new AgentAccess(f.env).connection(f.issued.id);
+    expect(
+      (
+        await f.browser.request("/mcp/connections/update", {
+          id: row.id,
+          name: row.name,
+          previousName: row.name,
+          previousPolicy: row.policy,
+          policy,
+        })
+      ).status,
+    ).toBe(200);
+  };
+  await update(readonly);
+  const client = new Client({ name: "cached-discovery-test", version: "1" });
+  await client.connect(
+    new StreamableHTTPClientTransport(new URL(`${origin}/mcp`), {
+      requestInit: { headers: { authorization: `Bearer ${f.issued.token}` } },
+      fetch: async (input, init) =>
+        f.app.fetch(
+          new Request(input instanceof Request ? input : String(input), init),
+        ),
+    }),
+  );
+  try {
+    const cached = await client.listTools();
+    for (const name of ["create_project", "read_logs", "list_repositories"])
+      expect(cached.tools.some((t) => t.name === name)).toBe(true);
+    expect(
+      cached.tools.find((t) => t.name === "create_project")?.annotations
+        ?.readOnlyHint,
+    ).toBe(false);
+    const create = () =>
+      client.callTool({
+        name: "create_project",
+        arguments: { name: "Approved project", requestKey: "cached-create-01" },
+      });
+    const denied = (result: Awaited<ReturnType<typeof client.callTool>>) => {
+      expect(result.isError).toBe(true);
+      expect(result.content).toEqual([
+        { type: "text", text: "MCP_SCOPE_DENIED" },
+      ]);
+    };
+    denied(await create());
+    denied(await client.callTool({ name: "list_repositories", arguments: {} }));
+    denied(
+      await client.callTool({
+        name: "read_logs",
+        arguments: {
+          serviceId: crypto.randomUUID(),
+          kind: "runtime",
+          requestKey: "cached-logs-01",
+        },
+      }),
+    );
+    expect(
+      await f.sql.query("SELECT id FROM ephor_mcp_operation"),
+    ).toHaveLength(0);
+
+    const broad = { ...readonly, manage: true, logs: true, repositories: true };
+    // No client reconnect or discovery refresh between the edit and this call.
+    await update(broad);
+    const proposed = await create();
+    expect(proposed.isError).not.toBe(true);
+    const { result: proposal } = proposed.structuredContent as {
+      result: { operationId: string; status: string };
+    };
+    expect(proposal.status).toBe("pending");
+    expect(
+      await f.sql.query("SELECT id FROM ephor_project WHERE name=$1", [
+        "Approved project",
+      ]),
+    ).toHaveLength(0);
+    expect(await client.listTools()).toEqual(cached);
+
+    await update(readonly);
+    denied(await create());
+    expect(
+      (
+        await f.browser.request("/mcp/decide", {
+          id: proposal.operationId,
+          approve: true,
+        })
+      ).status,
+    ).toBe(403);
+    expect(await client.listTools()).toEqual(cached);
+
+    // Manage alone still cannot create a project outside the project grant.
+    await update({ ...broad, allProjects: false });
+    denied(await create());
+    await update(broad);
+    await f.sql.query('UPDATE session SET "createdAt"=$1', [
+      timestamp(Date.now() - FRESH_MS - 1000),
+    ]);
+    expect(
+      (
+        await f.browser.request("/mcp/decide", {
+          id: proposal.operationId,
+          approve: true,
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      await f.sql.query("SELECT id FROM ephor_project WHERE name=$1", [
+        "Approved project",
+      ]),
+    ).toHaveLength(0);
+    await f.sql.query('UPDATE session SET "createdAt"=$1', [
+      timestamp(Date.now()),
+    ]);
+    expect(
+      (
+        await f.browser.request("/mcp/decide", {
+          id: proposal.operationId,
+          approve: true,
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      await f.sql.query("SELECT id FROM ephor_project WHERE name=$1", [
+        "Approved project",
+      ]),
+    ).toHaveLength(1);
+    expect(await f.sql.query("SELECT id FROM ephor_service")).toHaveLength(0);
+  } finally {
+    await client.close();
+  }
+});
 test("MCP rejects browser cookies, foreign origins, invalid tokens and revoked connections", async () => {
   const f = await setup();
   expect((await rpc(f, "tools/list", {}, "bad")).status).toBe(401);

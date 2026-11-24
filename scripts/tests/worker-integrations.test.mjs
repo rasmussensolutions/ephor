@@ -327,7 +327,39 @@ test("released Worker enables machine enrollment updates without release variabl
     assert.equal(initialized.status, 200, await initialized.clone().text());
     const listed = await (await mcp("tools/list")).json();
     assert.ok(listed.result.tools.some((t) => t.name === "list_projects"));
-    assert.ok(!listed.result.tools.some((t) => t.name === "deploy_service"));
+    assert.ok(listed.result.tools.some((t) => t.name === "deploy_service"));
+    assert.ok(listed.result.tools.some((t) => t.name === "read_logs"));
+    assert.ok(listed.result.tools.some((t) => t.name === "list_repositories"));
+    const create = async () =>
+      (
+        await mcp("tools/call", {
+          name: "create_project",
+          arguments: { name: "Worker project", requestKey: "worker-create-01" },
+        })
+      ).json();
+    const denied = await create();
+    assert.equal(denied.result.isError, true);
+    assert.deepEqual(denied.result.content, [
+      { type: "text", text: "MCP_SCOPE_DENIED" },
+    ]);
+    await db
+      .prepare("UPDATE ephor_mcp_connection SET policy=? WHERE id=?")
+      .bind(JSON.stringify({ allProjects: true, manage: true }), "worker-test")
+      .run();
+    const proposed = await create();
+    assert.equal(proposed.result.isError, undefined);
+    assert.equal(proposed.result.structuredContent.result.status, "pending");
+    assert.deepEqual(
+      (await (await mcp("tools/list")).json()).result,
+      listed.result,
+    );
+    assert.equal(
+      await db
+        .prepare("SELECT id FROM ephor_project WHERE name=?")
+        .bind("Worker project")
+        .first(),
+      null,
+    );
     const projects = await (
       await mcp("tools/call", { name: "list_projects", arguments: {} })
     ).json();

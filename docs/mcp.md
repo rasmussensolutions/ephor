@@ -45,8 +45,20 @@ and review the latest permissions before saving.
 **Access all current and future machines** separately includes machines enrolled
 later. Both are explicit grants. Existing connections retain their original
 machine restrictions until you change them. Neither option bypasses approval for
-infrastructure changes or log disclosure. Clients that cache their tool list may
-need a tool refresh after capabilities such as changes or logs are enabled.
+infrastructure changes or log disclosure.
+
+Authenticated clients discover the same complete tool catalog regardless of
+their permissions. A listed tool does not grant access: every call checks the
+connection's current permissions, and writes/log disclosure still need owner
+approval. Missing permission returns `MCP_SCOPE_DENIED` without creating an
+approval request or disclosing protected data. Permission edits do not require
+reconnecting or refreshing the tool list.
+
+When upgrading from panel 0.3.9 or earlier, clients may retain the old, filtered
+tool list. Refresh the client's imported tools once after updating Ephor. If the
+client still exposes only the old tools, reimport the MCP server or recreate its
+plugin connection. This is a one-time discovery migration, not a requirement for
+subsequent permission edits. Revoke any superseded connection in Ephor.
 
 ## Deploy a group of repositories
 
@@ -119,7 +131,8 @@ credential management, secret reveal, or persistent-data deletion tool.
 
 ## Verification
 
-`bun test packages/api/test/mcp.test.ts` covers a real SDK client, scoped discovery,
+`bun test packages/api/test/mcp.test.ts` covers a real SDK client, stable tool discovery,
+permission edits with cached discovery, scoped data access,
 owner approval, create/deploy/worker-report/health flow, replay, revocation, stale
 state, fresh authentication, secret omission, log disclosure and OAuth/PKCE/refresh.
 Set `TEST_DATABASE_URL` to an isolated PostgreSQL database to run the same tests
