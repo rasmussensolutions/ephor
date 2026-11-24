@@ -1,13 +1,19 @@
 import { CaretDownIcon } from "@phosphor-icons/react/dist/csr/CaretDown";
+import { CaretRightIcon } from "@phosphor-icons/react/dist/csr/CaretRight";
 import { CheckIcon } from "@phosphor-icons/react/dist/csr/Check";
-import { FolderSimpleIcon } from "@phosphor-icons/react/dist/csr/FolderSimple";
-import { GitBranchIcon } from "@phosphor-icons/react/dist/csr/GitBranch";
+import { CircleNotchIcon } from "@phosphor-icons/react/dist/csr/CircleNotch";
 import { GithubLogoIcon } from "@phosphor-icons/react/dist/csr/GithubLogo";
-import { LockSimpleIcon } from "@phosphor-icons/react/dist/csr/LockSimple";
 import { MagnifyingGlassIcon } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
 import { PlusIcon } from "@phosphor-icons/react/dist/csr/Plus";
+import {
+  infiniteQueryOptions,
+  useInfiniteQuery,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useEffect, useId, useRef, useState } from "react";
+import { siGithub } from "simple-icons";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -17,7 +23,11 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { api, reauthenticate } from "@/lib/auth";
+
+import { api, reauthenticate, request } from "@/lib/auth";
+import { apiKey, queryClient } from "@/lib/query";
+
+import { prefetchRepositoryDirectory } from "./repository-directory-picker";
 
 export interface GitHubStatus {
   configured: boolean;
@@ -228,19 +238,38 @@ type RepositorySource = {
   branch: string;
 };
 
+export function RepositoryAccountIcon({
+  installationId,
+  account,
+}: {
+  installationId: string;
+  account: string;
+}) {
+  const version = useAvatarVersion();
+  return (
+    <AccountIcon
+      account={{ id: installationId, account }}
+      version={version}
+      bordered={false}
+    />
+  );
+}
+
 function AccountIcon({
   account,
   version,
+  bordered = true,
 }: {
   account: GitHubStatus["installations"][number];
   version: number;
+  bordered?: boolean;
 }) {
   const source = `/api/integrations/github/avatar?installation=${encodeURIComponent(account.id)}&v=${version}`;
   const [failedSource, setFailedSource] = useState("");
   return (
     <span
       aria-hidden="true"
-      className="relative flex size-6 shrink-0 items-center justify-center overflow-hidden rounded-full border bg-muted text-xs font-semibold uppercase text-foreground"
+      className={`relative flex size-6 shrink-0 items-center justify-center overflow-hidden rounded-full bg-muted text-xs font-semibold uppercase text-foreground ${bordered ? "border" : ""}`}
     >
       {account.account.slice(0, 1)}
       {failedSource !== source && (
@@ -277,127 +306,114 @@ function useAvatarVersion() {
   return version;
 }
 
-function pushedLabel(date?: string | null) {
-  if (!date) return null;
-  const pushed = new Date(date);
-  if (Number.isNaN(pushed.getTime())) return null;
-  return pushed.toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    ...(pushed.getFullYear() !== new Date().getFullYear()
-      ? { year: "numeric" }
-      : {}),
+function accountQueryOptions() {
+  return {
+    queryKey: apiKey("/integrations/github"),
+    queryFn: ({ signal }: { signal: AbortSignal }) =>
+      request<GitHubStatus>("/integrations/github", undefined, signal),
+    staleTime: 60_000,
+    gcTime: 30 * 60_000,
+    refetchOnWindowFocus: false,
+  };
+}
+export async function prefetchFirstRepositoryPage() {
+  const client = queryClient();
+  const accounts = await client.fetchQuery(accountQueryOptions());
+  const installationId = accounts.installations[0]?.id;
+  if (installationId) {
+    await client.prefetchInfiniteQuery(repositoryQueryOptions(installationId));
+  }
+}
+
+function repositoryQueryOptions(installationId: string) {
+  return infiniteQueryOptions({
+    queryKey: [...apiKey("/integrations/github/repositories"), installationId],
+    queryFn: ({ pageParam, signal }) =>
+      request<{ repositories: Repo[]; more: boolean }>(
+        `/integrations/github/repositories?installation=${encodeURIComponent(installationId ?? "")}&page=${pageParam}`,
+        undefined,
+        signal,
+      ),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage, pages) =>
+      lastPage.more ? pages.length + 1 : undefined,
+    staleTime: 60_000,
+    gcTime: 30 * 60_000,
+    refetchOnWindowFocus: false,
   });
+}
+function RepositoryLoading({ label }: { label: string }) {
+  return (
+    <span role="status" className="flex justify-center text-muted-foreground">
+      <CircleNotchIcon
+        aria-hidden="true"
+        className="size-5 motion-safe:animate-spin"
+      />
+      <span className="sr-only">{label}</span>
+    </span>
+  );
 }
 
 export function RepositoryPicker({
   value,
   onChange,
+  scrollable = false,
 }: {
   value: RepositorySource;
   onChange: (v: RepositorySource) => void;
+  scrollable?: boolean;
 }) {
-  const [status, setStatus] = useState<GitHubStatus | null>(null);
+  const accounts = useQuery(accountQueryOptions());
+  const status = accounts.data;
   const [accountId, setAccountId] = useState(value.installationId);
-  const [repos, setRepos] = useState<Repo[]>([]);
-  const [accountError, setAccountError] = useState("");
-  const [error, setError] = useState("");
   const [search, setSearch] = useState("");
-  const [page, setPage] = useState(1);
-  const [more, setMore] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [accountAttempt, setAccountAttempt] = useState(0);
-  const [repoAttempt, setRepoAttempt] = useState(0);
   const avatarVersion = useAvatarVersion();
   const account =
     status?.installations.find((i) => i.id === accountId) ??
     status?.installations[0];
   const installationId = account?.id;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: Retry reloads accounts.
-  useEffect(() => {
-    let active = true;
-    setAccountError("");
-    api<GitHubStatus>("/integrations/github")
-      .then((s) => {
-        if (active) setStatus(s);
-      })
-      .catch(() => {
-        if (active) setAccountError("Could not load GitHub accounts.");
-      });
-    return () => {
-      active = false;
-    };
-  }, [accountAttempt]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: Retry reloads the current repository page.
-  useEffect(() => {
-    if (!installationId) return;
-    let active = true;
-    setLoading(true);
-    setError("");
-    api<{ repositories: Repo[]; more: boolean }>(
-      `/integrations/github/repositories?installation=${encodeURIComponent(installationId)}&page=${page}`,
-    )
-      .then((r) => {
-        if (active) {
-          setRepos((old) =>
-            page === 1 ? r.repositories : [...old, ...r.repositories],
-          );
-          setMore(r.more);
-        }
-      })
-      .catch((e) => {
-        if (active)
-          setError(
-            e instanceof Error ? e.message : "Could not load repositories.",
-          );
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [installationId, page, repoAttempt]);
+  const client = useQueryClient();
+  const repositories = useInfiniteQuery({
+    ...repositoryQueryOptions(installationId ?? ""),
+    enabled: Boolean(installationId),
+  });
+  const repos =
+    repositories.data?.pages.flatMap((page) => page.repositories) ?? [];
+  const accountError = accounts.error?.message;
+  const error = repositories.error?.message;
+  const loading = repositories.isFetching;
+  const more = repositories.hasNextPage;
   const visible = repos
     .filter((repo) =>
       repo.name.toLowerCase().includes(search.trim().toLowerCase()),
     )
     .sort((a, b) => (b.pushedAt ?? "").localeCompare(a.pushedAt ?? ""));
   return (
-    <section className="space-y-4" aria-label="Import Git repository">
-      <div>
-        <h2
-          tabIndex={-1}
-          className="text-xl font-semibold tracking-tight outline-none"
-        >
-          Import Git Repository
-        </h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Select a repository to build and deploy.
-        </p>
-      </div>
-      {accountError ? (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-4">
+    <section
+      className={
+        scrollable ? "flex min-h-0 flex-1 flex-col gap-4" : "space-y-4"
+      }
+      aria-label="Import Git repository"
+    >
+      {accountError && !status ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 py-4">
           <p role="alert" className="text-sm text-destructive">
             {accountError}
           </p>
           <Button
             type="button"
             variant="outline"
-            onClick={() => setAccountAttempt((n) => n + 1)}
+            onClick={() => void accounts.refetch()}
           >
             Retry
           </Button>
         </div>
       ) : !status ? (
-        <div
-          role="status"
-          className="rounded-xl border bg-card p-6 text-sm text-muted-foreground"
-        >
-          Loading GitHub accounts…
+        <div className="py-6">
+          <RepositoryLoading label="Loading GitHub accounts" />
         </div>
       ) : !account ? (
-        <div className="flex flex-col items-start gap-4 rounded-xl border bg-card p-6 sm:flex-row sm:items-center">
+        <div className="flex flex-col items-start gap-4 py-6 sm:flex-row sm:items-center">
           <GithubLogoIcon aria-hidden="true" className="size-8 shrink-0" />
           <div className="flex-1">
             <p className="font-medium">Connect GitHub</p>
@@ -414,14 +430,26 @@ export function RepositoryPicker({
         </div>
       ) : (
         <>
-          <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
-            <DropdownMenu>
+          <div className="grid shrink-0 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)]">
+            <DropdownMenu
+              onOpenChange={(open) => {
+                if (!open) return;
+                for (const installation of status.installations) {
+                  if (installation.id !== installationId) {
+                    void client.prefetchInfiniteQuery(
+                      repositoryQueryOptions(installation.id),
+                    );
+                  }
+                }
+              }}
+            >
               <DropdownMenuTrigger
                 render={
                   <Button
                     type="button"
-                    variant="outline"
-                    className="h-11 w-full justify-start gap-2.5 px-3"
+                    variant="raised"
+                    size="action"
+                    className="w-full justify-start gap-2 px-2.5"
                   />
                 }
                 aria-label={`GitHub account: ${account.account}`}
@@ -443,11 +471,7 @@ export function RepositoryPicker({
                     onClick={() => {
                       if (item.id === installationId) return;
                       setAccountId(item.id);
-                      setRepos([]);
-                      setPage(1);
-                      setMore(false);
-                      setError("");
-                      setLoading(true);
+                      setSearch("");
                     }}
                   >
                     <AccountIcon account={item} version={avatarVersion} />
@@ -469,15 +493,16 @@ export function RepositoryPicker({
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-            <div className="relative min-w-0">
+            <div className="relative w-full min-w-0">
               <MagnifyingGlassIcon
                 aria-hidden="true"
-                className="pointer-events-none absolute top-1/2 left-3 size-5 -translate-y-1/2 text-muted-foreground"
+                className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
               />
               <Input
+                variant="toolbar"
                 aria-label="Search repositories"
                 placeholder="Search repositories…"
-                className="h-11 bg-card pl-10"
+                className="h-9 pl-9"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 onKeyDown={(e) => {
@@ -486,41 +511,53 @@ export function RepositoryPicker({
               />
             </div>
           </div>
-          <div
-            className="overflow-hidden rounded-xl border bg-card"
+          {accountError && (
+            <div
+              role="alert"
+              className="flex items-center justify-between gap-2 text-xs text-destructive"
+            >
+              <span>Could not refresh GitHub accounts.</span>
+              <Button
+                type="button"
+                variant="link"
+                size="sm"
+                onClick={() => void accounts.refetch()}
+              >
+                Retry
+              </Button>
+            </div>
+          )}
+          <ul
+            aria-label="Repositories"
             aria-busy={loading}
+            className={
+              scrollable
+                ? "-mx-2 min-h-0 flex-1 scroll-fade-y scroll-fade-3 overflow-y-auto overscroll-contain has-[:focus-visible]:scroll-fade-none"
+                : "-mx-2"
+            }
           >
             {visible.map((repo) => (
-              <div
-                key={repo.id}
-                className="flex min-h-[4.25rem] items-center gap-3 border-b px-4 py-3 last:border-b-0 sm:gap-4 sm:px-5"
-              >
-                <FolderSimpleIcon
-                  aria-hidden="true"
-                  className="size-6 shrink-0 text-muted-foreground"
-                />
-                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
-                  <span
-                    className="min-w-0 truncate font-medium"
-                    title={repo.name}
-                  >
-                    {repo.name.split("/").at(-1)}
-                  </span>
-                  {repo.private && (
-                    <LockSimpleIcon
-                      aria-label="Private repository"
-                      className="size-3.5 shrink-0 text-muted-foreground"
-                    />
-                  )}
-                  {pushedLabel(repo.pushedAt) && (
-                    <span className="text-sm text-muted-foreground">
-                      · {pushedLabel(repo.pushedAt)}
-                    </span>
-                  )}
-                </div>
-                <Button
+              <li key={repo.id}>
+                <button
                   type="button"
-                  className="h-9 bg-foreground px-4 text-background hover:bg-foreground/90"
+                  aria-label={`Select repository ${repo.name}`}
+                  onMouseEnter={() =>
+                    prefetchRepository({
+                      installationId: account.id,
+                      repositoryId: repo.id,
+                      repository: repo.name,
+                      branch: repo.branch,
+                    })
+                  }
+                  onFocus={() =>
+                    prefetchRepository({
+                      installationId: account.id,
+                      repositoryId: repo.id,
+                      repository: repo.name,
+                      branch: repo.branch,
+                    })
+                  }
+                  className="group flex min-h-12 w-full items-center gap-3 cursor-pointer rounded-lg px-2 py-3 text-left outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                   onClick={() =>
                     onChange({
                       installationId: account.id,
@@ -530,124 +567,146 @@ export function RepositoryPicker({
                     })
                   }
                 >
-                  Import
-                  <span className="sr-only"> {repo.name}</span>
-                </Button>
-              </div>
+                  <svg
+                    aria-hidden="true"
+                    focusable="false"
+                    viewBox="0 0 24 24"
+                    className="size-5 shrink-0 fill-current text-muted-foreground"
+                  >
+                    <path d={siGithub.path} />
+                  </svg>
+                  <span
+                    className="min-w-0 flex-1 truncate text-sm font-medium"
+                    title={repo.name}
+                  >
+                    {repo.name.split("/").at(-1)}
+                  </span>
+                  <CaretRightIcon
+                    aria-hidden="true"
+                    className="size-4 shrink-0 text-muted-foreground group-hover:text-foreground"
+                  />
+                </button>
+              </li>
             ))}
             {!visible.length && !error && (
-              <p
-                role="status"
-                className="px-5 py-10 text-center text-sm text-muted-foreground"
-              >
-                {loading
-                  ? "Loading repositories…"
-                  : search.trim()
-                    ? "No repositories match your search."
-                    : "No repositories available for this account."}
-              </p>
+              <li>
+                <div className="py-10 text-center text-sm text-muted-foreground">
+                  {repositories.isPending ? (
+                    <RepositoryLoading label="Loading repositories" />
+                  ) : (
+                    <p role="status">
+                      {search.trim()
+                        ? "No repositories match your search."
+                        : "No repositories available for this account."}
+                    </p>
+                  )}
+                </div>
+              </li>
             )}
             {error && (
-              <div className="flex flex-wrap items-center justify-between gap-3 p-4">
-                <p role="alert" className="text-sm text-destructive">
-                  {error}
-                </p>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setRepoAttempt((n) => n + 1)}
-                >
-                  Retry
-                </Button>
-              </div>
+              <li>
+                <div className="flex flex-wrap items-center justify-between gap-3 py-4">
+                  <p role="alert" className="text-sm text-destructive">
+                    {error}
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() =>
+                      void (repositories.isFetchNextPageError
+                        ? repositories.fetchNextPage()
+                        : repositories.refetch())
+                    }
+                  >
+                    Retry
+                  </Button>
+                </div>
+              </li>
             )}
             {more && (
-              <div className="border-t px-4 py-3 text-center">
+              <li className="py-3 text-center">
                 <Button
                   type="button"
                   variant="ghost"
                   disabled={loading || Boolean(error)}
-                  onClick={() => setPage((n) => n + 1)}
+                  onClick={() => void repositories.fetchNextPage()}
                 >
-                  {loading ? "Loading…" : "Load more repositories"}
+                  {loading ? (
+                    <RepositoryLoading label="Loading repositories" />
+                  ) : (
+                    "Load more repositories"
+                  )}
                 </Button>
-              </div>
+              </li>
             )}
-          </div>
-          <p className="text-sm text-muted-foreground">
-            Missing a repository?{" "}
-            <Link
-              to="/settings/integrations"
-              className="font-medium text-foreground underline underline-offset-4"
-            >
-              Manage GitHub access
-            </Link>
-            .
-          </p>
+          </ul>
         </>
       )}
     </section>
   );
 }
 
+function branchQueryOptions(installationId: string, repositoryId: string) {
+  return infiniteQueryOptions({
+    queryKey: [
+      ...apiKey("/integrations/github/branches"),
+      installationId,
+      repositoryId,
+    ],
+    initialPageParam: 1,
+    queryFn: ({ pageParam, signal }) =>
+      request<{ branches: string[]; more: boolean }>(
+        `/integrations/github/branches?${new URLSearchParams({ installation: installationId, repository: repositoryId, page: String(pageParam) })}`,
+        undefined,
+        signal,
+      ),
+    getNextPageParam: (last, pages) =>
+      last.more ? pages.length + 1 : undefined,
+    staleTime: 60_000,
+    gcTime: 30 * 60_000,
+    refetchOnWindowFocus: false,
+  });
+}
+function prefetchRepository(source: RepositorySource) {
+  void queryClient().prefetchInfiniteQuery(
+    branchQueryOptions(source.installationId, source.repositoryId),
+  );
+  void prefetchRepositoryDirectory(source);
+}
+
 export function RepositoryBranchPicker({
   value,
   onChange,
+  showRepository = true,
 }: {
   value: RepositorySource;
   onChange: (branch: string) => void;
+  showRepository?: boolean;
 }) {
   const formId = useId();
-  const [branches, setBranches] = useState<string[]>([]);
-  const [branchPage, setBranchPage] = useState(1);
-  const [branchMore, setBranchMore] = useState(false);
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [attempt, setAttempt] = useState(0);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: Retry reloads the current branch page.
-  useEffect(() => {
-    if (!value.repositoryId) {
-      setBranches([]);
-      return;
-    }
-    let active = true;
-    setLoading(true);
-    setError("");
-    api<{ branches: string[]; more: boolean }>(
-      `/integrations/github/branches?installation=${value.installationId}&repository=${value.repositoryId}&page=${branchPage}`,
-    )
-      .then((r) => {
-        if (active) {
-          setBranches((old) =>
-            branchPage === 1 ? r.branches : [...old, ...r.branches],
-          );
-          setBranchMore(r.more);
-        }
-      })
-      .catch((e) => {
-        if (active)
-          setError(e instanceof Error ? e.message : "Could not load branches.");
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [value.installationId, value.repositoryId, branchPage, attempt]);
+  const query = useInfiniteQuery({
+    ...branchQueryOptions(value.installationId, value.repositoryId),
+    enabled: Boolean(value.installationId && value.repositoryId),
+  });
+  const branches = query.data?.pages.flatMap((page) => page.branches) ?? [];
+  const branchMore = query.hasNextPage;
+  const loading = query.isFetching;
+  const error = query.error?.message;
   return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-3 rounded-xl border bg-card p-4">
-        <GithubLogoIcon aria-hidden="true" className="size-6 shrink-0" />
-        <div className="min-w-0">
-          <p className="text-xs text-muted-foreground">Importing from GitHub</p>
-          <p className="truncate font-medium">{value.repository}</p>
+    <div className="min-w-0 space-y-3">
+      {showRepository && (
+        <div className="flex items-center gap-3 border-b pb-4">
+          <GithubLogoIcon aria-hidden="true" className="size-6 shrink-0" />
+          <div className="min-w-0">
+            <p className="text-xs text-muted-foreground">
+              Importing from GitHub
+            </p>
+            <p className="truncate text-sm font-medium">{value.repository}</p>
+          </div>
         </div>
-      </div>
-      <label className="block space-y-1.5 text-sm" htmlFor={`${formId}-branch`}>
-        <span className="flex items-center gap-1.5">
-          <GitBranchIcon aria-hidden="true" /> Production branch
-        </span>
+      )}
+      <label className="grid gap-1.5 text-sm" htmlFor={`${formId}-branch`}>
+        <span>Production branch</span>
         <Select
           id={`${formId}-branch`}
           required
@@ -665,15 +724,11 @@ export function RepositoryBranchPicker({
             size="sm"
             variant="ghost"
             disabled={loading || Boolean(error)}
-            onClick={() => setBranchPage((p) => p + 1)}
+            onClick={() => void query.fetchNextPage()}
           >
             Load more branches
           </Button>
         )}
-        <span className="block text-xs text-muted-foreground">
-          Only pushes to this branch trigger production deployments. Pull
-          requests do not run automatically.
-        </span>
       </label>
       {error && (
         <div className="flex items-center justify-between gap-3">
@@ -683,7 +738,11 @@ export function RepositoryBranchPicker({
           <Button
             type="button"
             variant="outline"
-            onClick={() => setAttempt((n) => n + 1)}
+            onClick={() =>
+              void (query.isFetchNextPageError
+                ? query.fetchNextPage()
+                : query.refetch())
+            }
           >
             Retry
           </Button>

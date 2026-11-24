@@ -413,6 +413,120 @@ export class GitHubApp {
       more: branches.length === 100,
     };
   }
+  async directory(
+    installationId: string,
+    repositoryId: string,
+    branch: string,
+    path = ".",
+  ) {
+    if (path.startsWith("/")) throw new AuthError("INVALID_BUILD_PATH");
+    const context = buildSettings({
+      context: path.replace(/^\.\//, "").replace(/\/+$/, "") || ".",
+    }).context;
+    if (!branch || branch.length > 200 || /[\p{Cc}\s]/u.test(branch))
+      throw new AuthError("INVALID_REPOSITORY");
+    const { repo, token } = await this.repository(installationId, repositoryId);
+    const sha = await this.branchHead(repo.full_name, branch, token);
+    return this.readDirectory(repo.full_name, sha, token, context);
+  }
+  private async readDirectory(
+    repository: string,
+    sha: string,
+    token: string,
+    path: string,
+  ) {
+    const parts = path.split("/").filter((p) => p && p !== ".");
+    const canonical = parts.join("/") || ".";
+    const suffix = parts.length
+      ? `/${parts.map(encodeURIComponent).join("/")}`
+      : "";
+    const response = await this.request(
+      `https://api.github.com/repos/${repository}/contents${suffix}?ref=${sha}`,
+      {
+        redirect: "manual",
+        signal: AbortSignal.timeout(8000),
+        headers: {
+          Accept: "application/vnd.github+json",
+          Authorization: `Bearer ${token}`,
+          "User-Agent": "Ephor",
+          "X-GitHub-Api-Version": "2022-11-28",
+        },
+      },
+    );
+    if (!response.ok || !response.body) {
+      await response.body?.cancel();
+      throw new AuthError(
+        response.status === 404
+          ? "GITHUB_DIRECTORY_NOT_FOUND"
+          : "GITHUB_ACCESS_OR_RATE_LIMIT",
+        400,
+      );
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let text = "",
+      size = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > 2 * 1024 * 1024)
+          throw new AuthError("GITHUB_DIRECTORY_TOO_LARGE");
+        text += decoder.decode(value, { stream: true });
+      }
+    } finally {
+      await reader.cancel();
+    }
+    const entries: unknown = JSON.parse(text + decoder.decode());
+    if (!Array.isArray(entries))
+      throw new AuthError("GITHUB_DIRECTORY_NOT_FOUND");
+    const names = new Set(
+      entries
+        .filter((e) => e?.type === "file" && !e.submodule_git_url)
+        .map((e) => e.name),
+    );
+    const markers = [
+      ["Dockerfile", "Dockerfile"],
+      ["package.json", "Node.js"],
+      ["Cargo.toml", "Rust"],
+      ["go.mod", "Go"],
+      ["pyproject.toml", "Python"],
+      ["requirements.txt", "Python"],
+      ["Gemfile", "Ruby"],
+      ["composer.json", "PHP"],
+    ];
+    return {
+      path: canonical,
+      commit: sha,
+      hints: [
+        ...new Set(
+          markers.filter(([file]) => names.has(file)).map(([, label]) => label),
+        ),
+      ],
+      truncated: entries.length >= 1000,
+      directories: entries
+        .filter(
+          (e) =>
+            e?.type === "dir" &&
+            !e.submodule_git_url &&
+            typeof e.name === "string" &&
+            e.name !== ".git" &&
+            !/[/\p{Cc}]/u.test(e.name),
+        )
+        .map((e) => {
+          const child = [...parts, e.name].join("/");
+          let selectable = true;
+          try {
+            buildSettings({ context: child });
+          } catch {
+            selectable = false;
+          }
+          return { name: e.name as string, path: child, selectable };
+        })
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    };
+  }
   async source(value: unknown): Promise<ServiceSource> {
     const b = object(value);
     if (b.type === "image") return { type: "image" };
@@ -438,6 +552,13 @@ export class GitHubApp {
       ...buildSettings(b),
     };
     const sha = await this.branchHead(repo.full_name, branch, token);
+    if (source.context !== ".")
+      await this.readDirectory(
+        repo.full_name,
+        sha,
+        token,
+        source.context ?? ".",
+      );
     source.technology = await this.technology(source, sha, token);
     return source;
   }

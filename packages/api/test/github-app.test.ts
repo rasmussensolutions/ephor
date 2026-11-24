@@ -85,6 +85,23 @@ async function setup() {
       };
     else if (url.pathname === "/repos/acme/web/branches/main")
       body = { commit: { sha: head } };
+    else if (url.pathname === "/repos/acme/web/contents")
+      body = [
+        { type: "dir", name: "apps" },
+        { type: "dir", name: "folder with spaces" },
+        { type: "dir", name: ".git" },
+        { type: "symlink", name: "linked" },
+        {
+          type: "file",
+          name: "submodule",
+          submodule_git_url: "https://example.com/private",
+        },
+        { type: "file", name: "Dockerfile" },
+      ];
+    else if (url.pathname === "/repos/acme/web/contents/apps")
+      body = [{ type: "dir", name: "web" }];
+    else if (url.pathname === "/repos/acme/web/contents/file")
+      body = { type: "file", name: "file", content: "private file contents" };
     else if (url.pathname === "/repos/acme/web/contents/apps/web")
       body = [{ type: "file", name: "package.json" }];
     else if (url.pathname === "/repos/acme/web/contents/apps/web/package.json")
@@ -633,4 +650,83 @@ test("out-of-order webhook delivery cannot discard the current branch head", asy
   expect(await f.services.history()).toHaveLength(1);
   expect(await f.builds.next(f.machineId)).toBeNull();
   expect((await f.services.history())[0]?.source_ref).toBe(newer);
+});
+
+test("directory browsing is scoped, commit-pinned, lazy and contains only safe directory metadata", async () => {
+  const f = await setup();
+  f.requests.length = 0;
+  const root = await f.github.directory("99", "123", "main");
+  expect(root.path).toBe(".");
+  expect(root.hints).toEqual(["Dockerfile"]);
+  expect(root.directories).toEqual([
+    { name: "apps", path: "apps", selectable: true },
+    {
+      name: "folder with spaces",
+      path: "folder with spaces",
+      selectable: false,
+    },
+  ]);
+  expect(f.requests.filter((r) => r.path.includes("/contents"))).toHaveLength(
+    1,
+  );
+  expect(f.requests.at(-1)?.ref).toBe(sha);
+  expect(JSON.stringify(root)).not.toContain("ghs_");
+  f.setHead(newer);
+  const nested = await f.github.directory("99", "123", "main", "apps/web");
+  expect(nested.commit).toBe(newer);
+  expect(nested.hints).toEqual(["Node.js"]);
+  expect(nested.directories).toEqual([]);
+  expect(
+    (await f.github.directory("99", "123", "main", "./apps/web/")).path,
+  ).toBe("apps/web");
+  for (const path of ["../secret", "/etc", "apps/.git", "apps/../web"])
+    await expect(f.github.directory("99", "123", "main", path)).rejects.toThrow(
+      "INVALID_BUILD_PATH",
+    );
+  for (const path of ["missing", "file"])
+    await expect(f.github.directory("99", "123", "main", path)).rejects.toThrow(
+      "GITHUB_DIRECTORY_NOT_FOUND",
+    );
+  await expect(f.github.directory("100", "123", "main")).rejects.toThrow(
+    "GITHUB_INSTALLATION_UNAVAILABLE",
+  );
+  await expect(
+    f.github.source({
+      type: "github",
+      installationId: "99",
+      repositoryId: "123",
+      branch: "main",
+      context: "missing",
+    }),
+  ).rejects.toThrow("GITHUB_DIRECTORY_NOT_FOUND");
+  expect(
+    (
+      await f.app.request(
+        "/api/integrations/github/directories?installation=99&repository=123&branch=main",
+      )
+    ).status,
+  ).toBe(401);
+});
+
+test("directory browsing rejects oversized listings and does not follow redirects with credentials", async () => {
+  const f = await setup();
+  for (const response of [
+    new Response("x".repeat(2 * 1024 * 1024 + 1)),
+    new Response(null, {
+      status: 302,
+      headers: { Location: "https://other.example/" },
+    }),
+  ]) {
+    const client = new GitHubApp(f.sql, f.env.secret, f.env.origin, (async (
+      input,
+      init,
+    ) => {
+      if (String(input).includes("/contents")) {
+        expect(init?.redirect).toBe("manual");
+        return response;
+      }
+      return f.github.request(input, init);
+    }) as typeof fetch);
+    await expect(client.directory("99", "123", "main")).rejects.toThrow();
+  }
 });

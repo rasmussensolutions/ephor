@@ -11,6 +11,10 @@ export interface SessionInfo {
   recoveryCodesRemaining: number;
 }
 const messages: Record<string, string> = {
+  GITHUB_DIRECTORY_NOT_FOUND:
+    "This directory does not exist on the selected branch. Choose another folder.",
+  GITHUB_DIRECTORY_TOO_LARGE:
+    "This directory is too large to browse. Enter a more specific folder path.",
   MCP_CONNECTION_CHANGED:
     "This connection changed while you were editing. Cancel, reopen its permissions, and review the latest settings.",
   MCP_SCOPE_DENIED:

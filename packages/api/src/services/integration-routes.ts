@@ -80,6 +80,17 @@ export function integrationOwnerRoutes(app: Hono, env: AuthEnvironment) {
       ),
     ),
   );
+  app.get("/api/integrations/github/directories", async (c) => {
+    await store.limit("github-directory-browse", 120);
+    return c.json(
+      await github.directory(
+        c.req.query("installation") ?? "",
+        c.req.query("repository") ?? "",
+        c.req.query("branch") ?? "",
+        c.req.query("path") ?? ".",
+      ),
+    );
+  });
   app.post("/api/integrations/build-registry", async (c) => {
     await builds.registry(await c.req.json());
     return c.json({ ok: true });

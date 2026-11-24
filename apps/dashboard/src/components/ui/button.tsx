@@ -15,10 +15,10 @@ const buttonVariants = cva(
         default: "bg-primary text-primary-foreground hover:bg-primary/90",
         gradient: gradientButton,
         "destructive-gradient": `${gradientButton} [--button-gradient-base:var(--color-red-500)] dark:[--button-gradient-base:var(--color-red-600)]`,
-        raised: `${actionButton} bg-white text-neutral-900 ring-(--control-outline) transition-colors duration-100 enabled:hover:bg-neutral-100 focus-visible:ring-(--button-gradient-base) dark:bg-[oklch(0.17_0_0)] dark:text-neutral-100 dark:enabled:hover:bg-neutral-800`,
+        raised: `${actionButton} bg-white text-neutral-900 ring-(--control-outline) transition-colors duration-100 enabled:hover:bg-neutral-100 focus-visible:ring-ring dark:bg-[oklch(0.17_0_0)] dark:text-neutral-100 dark:enabled:hover:bg-neutral-800`,
         outline:
           "border-border bg-card text-card-foreground hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50",
-        "subtle-outline": `${actionButton} bg-transparent text-neutral-900 ring-(--control-outline) transition-colors duration-100 enabled:hover:text-neutral-950 enabled:hover:ring-(--button-outline-hover-edge) focus:ring-(--button-outline-focus-edge) focus-visible:ring-(--button-gradient-base) dark:text-neutral-100 dark:enabled:hover:text-neutral-50`,
+        "subtle-outline": `${actionButton} bg-transparent text-neutral-900 ring-(--control-outline) transition-colors duration-100 enabled:hover:text-neutral-950 enabled:hover:ring-(--button-outline-hover-edge) focus:ring-(--button-outline-focus-edge) focus-visible:ring-ring dark:text-neutral-100 dark:enabled:hover:text-neutral-50`,
         secondary:
           "bg-secondary text-secondary-foreground hover:bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)] aria-expanded:bg-secondary aria-expanded:text-secondary-foreground",
         ghost:

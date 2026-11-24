@@ -9,6 +9,7 @@ import {
 import { useEffect, useState } from "react";
 import { AppSidebar } from "@/components/app-sidebar";
 import { PanelUpdateProvider } from "@/components/panel-update-provider";
+import { DeploymentProvider } from "@/components/services/deployment-provider";
 import {
   SidebarInset,
   SidebarProvider,
@@ -72,52 +73,54 @@ function DashboardLayout() {
   return (
     <QueryClientProvider client={queryClient()}>
       <PanelUpdateProvider>
-        <SidebarProvider className="h-dvh min-h-0 overflow-hidden">
-          <AppSidebar signingOut={signingOut} onSignOut={signOut} />
-          <SidebarInset className="min-h-0 min-w-0 overflow-hidden">
-            <div
-              id="main"
-              tabIndex={-1}
-              data-scroll-restoration-id="dashboard-content"
-              className={
-                projectPage
-                  ? "min-h-0 flex-1 overflow-hidden"
-                  : "min-h-0 flex-1 overflow-y-auto overscroll-y-none"
-              }
-            >
+        <DeploymentProvider>
+          <SidebarProvider className="h-dvh min-h-0 overflow-hidden">
+            <AppSidebar signingOut={signingOut} onSignOut={signOut} />
+            <SidebarInset className="min-h-0 min-w-0 overflow-hidden">
               <div
+                id="main"
+                tabIndex={-1}
+                data-scroll-restoration-id="dashboard-content"
                 className={
                   projectPage
-                    ? "relative h-full w-full"
-                    : "mx-auto w-full max-w-6xl px-6 py-10 md:px-10 md:py-24"
+                    ? "min-h-0 flex-1 overflow-hidden"
+                    : "min-h-0 flex-1 overflow-y-auto overscroll-y-none"
                 }
               >
-                <SidebarTrigger
+                <div
                   className={
                     projectPage
-                      ? "absolute top-4 left-3 z-20 size-10 rounded-lg border bg-card shadow-sm md:hidden"
-                      : "mb-3 -ml-1.5 size-10 md:hidden"
+                      ? "relative h-full w-full"
+                      : "mx-auto w-full max-w-6xl px-6 py-10 md:px-10 md:py-24"
                   }
-                  aria-label="Open navigation"
-                  aria-haspopup="dialog"
-                />
-                {error && (
-                  <p
-                    role="alert"
+                >
+                  <SidebarTrigger
                     className={
                       projectPage
-                        ? "absolute bottom-16 left-4 z-20 rounded-lg border bg-card p-3 text-sm text-destructive"
-                        : "mb-4 text-sm text-destructive"
+                        ? "absolute top-4 left-3 z-20 size-10 rounded-lg border bg-card shadow-sm md:hidden"
+                        : "mb-3 -ml-1.5 size-10 shrink-0 md:hidden"
                     }
-                  >
-                    {error}
-                  </p>
-                )}
-                <Outlet />
+                    aria-label="Open navigation"
+                    aria-haspopup="dialog"
+                  />
+                  {error && (
+                    <p
+                      role="alert"
+                      className={
+                        projectPage
+                          ? "absolute bottom-16 left-4 z-20 rounded-lg border bg-card p-3 text-sm text-destructive"
+                          : "mb-4 text-sm text-destructive"
+                      }
+                    >
+                      {error}
+                    </p>
+                  )}
+                  <Outlet />
+                </div>
               </div>
-            </div>
-          </SidebarInset>
-        </SidebarProvider>
+            </SidebarInset>
+          </SidebarProvider>
+        </DeploymentProvider>
       </PanelUpdateProvider>
     </QueryClientProvider>
   );

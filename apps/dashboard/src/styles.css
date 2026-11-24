@@ -135,6 +135,54 @@
 @layer base {
   * {
     @apply border-border outline-ring/50;
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+  }
+
+  [data-scrolling] {
+    scrollbar-color: color-mix(
+        in oklab,
+        var(--muted-foreground) 30%,
+        transparent
+      )
+      transparent;
+  }
+
+  @supports selector(::-webkit-scrollbar) {
+    *,
+    [data-scrolling] {
+      scrollbar-width: auto;
+      scrollbar-color: auto;
+    }
+
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+
+    ::-webkit-scrollbar-track,
+    ::-webkit-scrollbar-corner {
+      background: transparent;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      border: 1px solid transparent;
+      border-radius: 999px;
+      background: transparent;
+      background-clip: padding-box;
+    }
+
+    [data-scrolling]::-webkit-scrollbar-thumb {
+      background-color: color-mix(
+        in oklab,
+        var(--muted-foreground) 30%,
+        transparent
+      );
+    }
+
+    ::-webkit-scrollbar-button {
+      display: none;
+    }
   }
   body {
     @apply bg-background text-foreground;
@@ -219,7 +267,7 @@
   }
 
   .control-surface {
-    @apply h-9 rounded-lg bg-white px-2.5 text-sm text-foreground shadow-xs ring ring-(--control-outline) outline-none transition-colors focus-visible:ring-2 focus-visible:ring-(--button-gradient-base) disabled:opacity-50 dark:bg-[oklch(0.17_0_0)];
+    @apply h-9 rounded-lg bg-white px-2.5 text-sm text-foreground shadow-xs ring ring-(--control-outline) outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 dark:bg-[oklch(0.17_0_0)];
   }
 
   .select-control {

@@ -347,11 +347,20 @@ export function serviceOwnerRoutes(app: Hono, env: AuthEnvironment) {
     const body = object(await c.req.json());
     if (body.buildEnvironment !== undefined)
       builds.validateEnvironment(body.buildEnvironment);
-    await services.configure(
-      c.req.param("id"),
-      body,
-      body.source ? await github.source(body.source) : undefined,
-    );
+    let source = body.source;
+    if (!source && body.buildSettings) {
+      const current = JSON.parse(
+        (await services.get(c.req.param("id"))).source,
+      );
+      if (current.installationId) source = current;
+    }
+    const replacement = source
+      ? await github.source({
+          ...object(source),
+          ...(body.buildSettings ? object(body.buildSettings) : {}),
+        })
+      : undefined;
+    await services.configure(c.req.param("id"), body, replacement);
     if (body.buildEnvironment !== undefined)
       await builds.setEnvironment(c.req.param("id"), body.buildEnvironment);
     return c.json({ ok: true });

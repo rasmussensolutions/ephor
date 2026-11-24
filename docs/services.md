@@ -4,12 +4,14 @@ Ephor runs multiple HTTP applications and reviewed stateful catalog apps on an e
 
 ## First deployment
 
+**Deploy service** opens a dialog over Home, Services, a machine, or a project. Closing it preserves the underlying screen. Opening it from a machine selects that machine; opening it from a project adds the created service to that project.
+
 1. Open **Machines → Add machine** and run the enrollment command. It installs monitoring and the deployment worker together, with Docker Engine 28+, Buildx, Git, and a checksummed Railpack executable. Ubuntu and Debian support automatic dependency installation; other systemd Linux distributions need those tools preinstalled. Existing Docker installations are checked and preserved.
 2. For an older machine or an interrupted install, open **Machines → your machine → Maintenance** and get the unified setup or repair command. Confirm your passkey and run it on that machine within ten minutes. Monitoring stays unprivileged; the separate root-owned worker manages deployments and keeps its identity and running applications when updated.
 3. For repositories, open **Settings → Integrations → GitHub**. On the first connection, GitHub guides you through creating a GitHub App owned by you for this Ephor instance. Return to Ephor and finish connecting, then install it on your account or organization with access to **only selected repositories**. No personal access token, manually copied key, or workflow commit is needed. Organization policy may require an administrator to approve the installation.
 4. Open **Services → Deploy service**. Choose a repository and production branch, or an existing full image reference. Select its destination machine. The default build runs on that same VPS; no registry is needed.
-5. Enter a root domain or subdomain if the app should be public, runtime variables, application port, and health path. Advanced settings cover project directory for monorepos, Dockerfile/Railpack selection, build resources, build-only variables, private image credentials, and an optional separate build machine.
-6. Review and **Deploy service**, then confirm with your passkey. If the worker needs setup, Ephor saves your service settings and explains how to enable it. Once connected, choose Deploy. Follow build logs, deployment history, health, and runtime logs in Details.
+5. Enter a root domain or subdomain if the app should be public, runtime variables, application port, and health path. Choose the project directory next to the branch selector. Configure app resources, Dockerfile or Railpack builds, build variables, private image credentials, or a separate build machine as needed.
+6. Choose **Deploy service** from the configuration step, then confirm with your passkey. If the worker needs setup, Ephor saves your service settings and explains how to enable it. Once connected, choose Deploy. Follow build logs, deployment history, health, and runtime logs in Details.
 
 The first GitHub connection requires a stable, publicly reachable HTTPS panel address. For local development, keep `bun run dev:tunnel` running at your configured stable domain. Self-hosters own their App and its installations; there is no Ephor cloud account or shared GitHub credential. The App is installable on other accounts so organizations work too; **Ephor only accepts installations explicitly connected by its authenticated owner**. The App asks for read-only repository contents/metadata and push events, without workflow or repository write permission.
 
@@ -68,6 +70,10 @@ another catalog app are not offered.
 ## Builds and automatic deployment
 
 **Automatic** uses a Dockerfile when present in the selected project directory; otherwise Railpack detects the framework. You can explicitly select either method. A Dockerfile path is relative to the project directory. Each service can select a different directory in the same repository.
+
+**Project directory → Browse** opens an expandable folder picker for the selected repository and branch. Folders load on demand and are cached briefly; inspected folders show project-file hints such as Node.js or Dockerfile. Select repository root (`./`) or a nested folder, or enter a path manually. Cancel keeps the previous selection. The API checks a nested directory against the current branch before saving a GitHub source. Symlinks and submodules are not offered as project folders.
+
+The selected directory remains the build context. For a Docker app that needs shared workspace packages or a root lockfile, select repository root and set a nested Dockerfile path (for example `apps/api/Dockerfile`) in build settings. Docker `COPY` paths are relative to that context. Railpack receives only the selected directory; the picker does not automatically make sibling packages available.
 
 GitHub sends an HMAC-signed webhook. Ephor binds it to the approved installation, numeric repository identity, and selected branch, then stores an encrypted build snapshot. Duplicate deliveries are idempotent. Only branch pushes trigger production builds; PR/fork previews and arbitrary branches do not. The worker obtains a short-lived, repository-scoped read token when claiming the build. Source fetching uses a fixed GitHub HTTPS origin, checks out the exact commit, and removes Git credentials and `.git` before building. Git submodules and Git LFS downloads are not enabled.
 

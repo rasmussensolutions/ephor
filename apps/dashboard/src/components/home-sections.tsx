@@ -8,6 +8,10 @@ import { WarningCircleIcon } from "@phosphor-icons/react/dist/csr/WarningCircle"
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { MachineStatus } from "@/components/machines/machine-status";
+import {
+  prefetchDeployment,
+  useDeploymentDialog,
+} from "@/components/services/deployment-provider";
 import { StatusIndicator } from "@/components/status-indicator";
 import { Button } from "@/components/ui/button";
 import {
@@ -330,6 +334,7 @@ export function HomeSetup({
   deployed: boolean;
   configured: boolean;
 }) {
+  const openDeployment = useDeploymentDialog();
   const steps = [
     {
       title: "Connect your first machine",
@@ -391,9 +396,10 @@ export function HomeSetup({
             </Button>
           ) : !deployed ? (
             <Button
-              nativeButton={false}
               variant="gradient"
-              render={<Link to="/services/new" />}
+              onMouseEnter={() => prefetchDeployment()}
+              onFocus={() => prefetchDeployment()}
+              onClick={() => openDeployment()}
             >
               Deploy service
             </Button>

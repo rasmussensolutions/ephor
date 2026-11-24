@@ -1,7 +1,11 @@
 import type { MachineList } from "@ephor/api/machines";
 import { PlusIcon } from "@phosphor-icons/react/dist/csr/Plus";
-import { createFileRoute, Link, redirect } from "@tanstack/react-router";
-import { useState } from "react";
+import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
+import { useEffect, useRef, useState } from "react";
+import {
+  prefetchDeployment,
+  useDeploymentDialog,
+} from "@/components/services/deployment-provider";
 import { ServiceSummaryCards } from "@/components/services/service-summary-cards";
 import { ServicesTable } from "@/components/services/services-table";
 import { Button } from "@/components/ui/button";
@@ -9,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { useServices } from "@/hooks/use-services";
 import { api } from "@/lib/auth";
+import { deploymentSearch } from "@/lib/deployment-sources";
 import {
   currentMetrics,
   type ServiceList,
@@ -16,15 +21,17 @@ import {
   serviceStatus,
 } from "@/lib/services";
 export const Route = createFileRoute("/_authenticated/services")({
-  validateSearch: (search: Record<string, unknown>): { deploy?: boolean } => ({
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): ReturnType<typeof deploymentSearch> & { deploy?: boolean } => ({
+    ...deploymentSearch(search),
     deploy:
       search.deploy === true || search.deploy === "true" ? true : undefined,
   }),
-  beforeLoad: ({ location, search }) => {
+  beforeLoad: ({ location }) => {
     // Existing GitHub Apps may still have /services registered as their callback.
     if (new URLSearchParams(location.searchStr).has("github"))
       throw redirect({ href: `/settings/integrations${location.searchStr}` });
-    if (search.deploy) throw redirect({ to: "/services/new", replace: true });
   },
   head: () => ({ meta: [{ title: "Services — Ephor" }] }),
   loader: async () => {
@@ -37,6 +44,25 @@ export const Route = createFileRoute("/_authenticated/services")({
   component: ServicesPage,
 });
 function ServicesPage() {
+  const openDeployment = useDeploymentDialog();
+  const deployment = Route.useSearch();
+  const navigate = useNavigate();
+  const openedLink = useRef(false);
+  useEffect(() => {
+    if (!deployment.deploy) {
+      openedLink.current = false;
+      return;
+    }
+    if (openedLink.current) return;
+    openedLink.current = true;
+    openDeployment(deployment);
+    void navigate({
+      to: "/services",
+      search: {},
+      replace: true,
+      resetScroll: false,
+    });
+  }, [deployment, navigate, openDeployment]);
   const { data, machines, error } = useServices(Route.useLoaderData());
   const [filter, setFilter] = useState("All"),
     [search, setSearch] = useState(""),
@@ -83,7 +109,9 @@ function ServicesPage() {
           <Button
             variant="gradient"
             size="action"
-            render={<Link to="/services/new" />}
+            onMouseEnter={() => prefetchDeployment()}
+            onFocus={() => prefetchDeployment()}
+            onClick={() => openDeployment()}
           >
             <PlusIcon
               aria-hidden="true"

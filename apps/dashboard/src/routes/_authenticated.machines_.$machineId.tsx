@@ -13,6 +13,10 @@ import { MachineSettings } from "@/components/machines/machine-settings";
 import { MachineStatus } from "@/components/machines/machine-status";
 import { ProviderIcon } from "@/components/provider-label";
 import { SecurityWorkspace } from "@/components/security/security-workspace";
+import {
+  prefetchDeployment,
+  useDeploymentDialog,
+} from "@/components/services/deployment-provider";
 import { Button } from "@/components/ui/button";
 import { Usage } from "@/components/usage-meter";
 import { useApiQuery } from "@/hooks/use-api-query";
@@ -50,6 +54,7 @@ function MachineRoute() {
 }
 function MachinePage({ initial }: { initial: MachineDetail }) {
   const navigate = useNavigate();
+  const openDeployment = useDeploymentDialog();
   const inventory = useApiQuery(`/machines/${initial.machine.id}`, initial);
   const data = inventory.data;
   const now = inventory.dataUpdatedAt;
@@ -194,9 +199,9 @@ function MachinePage({ initial }: { initial: MachineDetail }) {
             variant="gradient"
             size="action"
             disabled={busy || machine.status === "revoked"}
-            onClick={() =>
-              void navigate({ to: "/services/new", search: { machineId: id } })
-            }
+            onMouseEnter={() => prefetchDeployment({ machineId: id })}
+            onFocus={() => prefetchDeployment({ machineId: id })}
+            onClick={() => openDeployment({ machineId: id })}
           >
             <PlusIcon
               aria-hidden="true"

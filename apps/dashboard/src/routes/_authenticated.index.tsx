@@ -3,13 +3,17 @@ import { HardDrivesIcon } from "@phosphor-icons/react/dist/csr/HardDrives";
 import { PlusIcon } from "@phosphor-icons/react/dist/csr/Plus";
 import { RocketLaunchIcon } from "@phosphor-icons/react/dist/csr/RocketLaunch";
 import { StackIcon } from "@phosphor-icons/react/dist/csr/Stack";
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
   HomeActivity,
   HomeAttention,
   HomeMachines,
   HomeSetup,
 } from "@/components/home-sections";
+import {
+  prefetchDeployment,
+  useDeploymentDialog,
+} from "@/components/services/deployment-provider";
 
 import { SummaryCards } from "@/components/summary-cards";
 import { Button } from "@/components/ui/button";
@@ -23,6 +27,7 @@ export const Route = createFileRoute("/_authenticated/")({
 });
 
 function HomePage() {
+  const openDeployment = useDeploymentDialog();
   const { data, now } = useHomeOverview(Route.useLoaderData());
   const navigate = useNavigate();
   const machines = data.machines.data?.machines ?? [];
@@ -53,10 +58,11 @@ function HomePage() {
           </p>
         </div>
         <Button
-          nativeButton={false}
           variant="gradient"
           size="action"
-          render={<Link to="/services/new" />}
+          onMouseEnter={() => prefetchDeployment()}
+          onFocus={() => prefetchDeployment()}
+          onClick={() => openDeployment()}
         >
           <PlusIcon
             aria-hidden

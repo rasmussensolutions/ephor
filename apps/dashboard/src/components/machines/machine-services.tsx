@@ -1,7 +1,10 @@
 import { PlusIcon } from "@phosphor-icons/react/dist/csr/Plus";
-import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { MachineServicesMap } from "@/components/machines/machine-services-map";
+import {
+  prefetchDeployment,
+  useDeploymentDialog,
+} from "@/components/services/deployment-provider";
 import { ServiceDrawer } from "@/components/services/service-drawer";
 import { ServicesTable } from "@/components/services/services-table";
 import { Button } from "@/components/ui/button";
@@ -25,7 +28,7 @@ export function MachineServices({
   id: string;
   view: "table" | "canvas";
 }) {
-  const navigate = useNavigate();
+  const openDeployment = useDeploymentDialog();
   const [data, setData] = useState<ServiceList | null>(null);
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [projectError, setProjectError] = useState("");
@@ -133,12 +136,9 @@ export function MachineServices({
               size="sm"
               variant="outline"
               className="absolute top-4 right-4 shadow-sm"
-              onClick={() =>
-                void navigate({
-                  to: "/services/new",
-                  search: { machineId: id },
-                })
-              }
+              onMouseEnter={() => prefetchDeployment({ machineId: id })}
+              onFocus={() => prefetchDeployment({ machineId: id })}
+              onClick={() => openDeployment({ machineId: id })}
             >
               <PlusIcon aria-hidden="true" />
               Deploy service
@@ -152,12 +152,13 @@ export function MachineServices({
               <ContextMenuItem
                 key={mode}
                 className="gap-3 px-2 py-2"
-                onClick={() =>
-                  void navigate({
-                    to: "/services/new",
-                    search: { machineId: id, source: mode },
-                  })
+                onMouseEnter={() =>
+                  prefetchDeployment({ machineId: id, source: mode })
                 }
+                onFocus={() =>
+                  prefetchDeployment({ machineId: id, source: mode })
+                }
+                onClick={() => openDeployment({ machineId: id, source: mode })}
               >
                 <Icon aria-hidden="true" />
                 {label}

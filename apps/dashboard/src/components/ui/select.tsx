@@ -2,11 +2,13 @@ import { Select as SelectPrimitive } from "@base-ui/react/select";
 import { CaretDownIcon } from "@phosphor-icons/react/dist/csr/CaretDown";
 import { CheckIcon } from "@phosphor-icons/react/dist/csr/Check";
 import { cn } from "cn";
+import type { ReactNode } from "react";
 
 type SelectOption = {
   value: string;
   label: string;
   disabled?: boolean;
+  icon?: ReactNode;
 };
 
 type SelectProps = Pick<
@@ -48,7 +50,28 @@ export function Select({
           data-slot="select-value"
           className="min-w-0 flex-1 truncate text-left"
           placeholder={placeholder}
-        />
+        >
+          {options.some((option) => option.icon)
+            ? (selected: string | null) => {
+                const option = options.find((item) => item.value === selected);
+                return (
+                  <span className="flex min-w-0 items-center gap-2">
+                    {option?.icon && (
+                      <span
+                        aria-hidden="true"
+                        className="flex shrink-0 items-center text-muted-foreground"
+                      >
+                        {option.icon}
+                      </span>
+                    )}
+                    <span className="truncate">
+                      {option?.label ?? placeholder}
+                    </span>
+                  </span>
+                );
+              }
+            : undefined}
+        </SelectPrimitive.Value>
         <SelectPrimitive.Icon aria-hidden="true" className="shrink-0">
           <CaretDownIcon className="size-3.5 text-muted-foreground" />
         </SelectPrimitive.Icon>
@@ -65,7 +88,7 @@ export function Select({
             className="floating-surface flex max-w-(--available-width) min-w-(--anchor-width) flex-col p-1.5 shadow-lg"
           >
             <SelectPrimitive.List className="min-h-0 overflow-y-auto overscroll-contain">
-              {options.map(({ value, label, disabled }) => (
+              {options.map(({ value, label, disabled, icon }) => (
                 <SelectPrimitive.Item
                   key={value}
                   value={value}
@@ -73,9 +96,19 @@ export function Select({
                   data-slot="select-item"
                   className="floating-item justify-between"
                 >
-                  <SelectPrimitive.ItemText className="min-w-0 break-words">
-                    {label}
-                  </SelectPrimitive.ItemText>
+                  <span className="flex min-w-0 items-center gap-2">
+                    {icon && (
+                      <span
+                        aria-hidden="true"
+                        className="flex shrink-0 items-center text-muted-foreground"
+                      >
+                        {icon}
+                      </span>
+                    )}
+                    <SelectPrimitive.ItemText className="min-w-0 break-words">
+                      {label}
+                    </SelectPrimitive.ItemText>
+                  </span>
                   <SelectPrimitive.ItemIndicator className="shrink-0">
                     <CheckIcon aria-hidden="true" className="size-4" />
                   </SelectPrimitive.ItemIndicator>

@@ -5,6 +5,7 @@ import {
   Outlet,
   Scripts,
 } from "@tanstack/react-router";
+import { useEffect } from "react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { themeScript } from "@/lib/theme";
 import stylesheet from "../styles.css?url";
@@ -40,6 +41,35 @@ export const Route = createRootRoute({
 });
 
 function RootLayout() {
+  useEffect(() => {
+    const timers = new Map<Element, ReturnType<typeof setTimeout>>();
+    const onScroll = (event: Event) => {
+      const target =
+        event.target === document ? document.documentElement : event.target;
+      if (!(target instanceof Element)) return;
+      clearTimeout(timers.get(target));
+      target.setAttribute("data-scrolling", "");
+      timers.set(
+        target,
+        setTimeout(() => {
+          target.removeAttribute("data-scrolling");
+          timers.delete(target);
+        }, 800),
+      );
+    };
+    // Capture scroll events from nested containers and portalled dialogs too.
+    document.addEventListener("scroll", onScroll, {
+      capture: true,
+      passive: true,
+    });
+    return () => {
+      document.removeEventListener("scroll", onScroll, true);
+      for (const [target, timer] of timers) {
+        clearTimeout(timer);
+        target.removeAttribute("data-scrolling");
+      }
+    };
+  }, []);
   return (
     <html lang="en" suppressHydrationWarning>
       <head>

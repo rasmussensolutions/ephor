@@ -1,3 +1,4 @@
+import { Slider } from "@base-ui/react/slider";
 import type { MachineList } from "@ephor/api/machines";
 import type {
   ServiceDomains,
@@ -17,6 +18,7 @@ import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { api, errorMessage, reauthenticate } from "@/lib/auth";
 import { RepositoryBranchPicker, RepositoryPicker } from "./github-source";
+import { RepositoryDirectoryPicker } from "./repository-directory-picker";
 
 export interface EditableService {
   id: string;
@@ -32,7 +34,81 @@ export interface EditableService {
     registry: { server: string; username: string } | null;
   };
 }
-const control = "w-full rounded-lg border bg-background px-3 py-2 text-sm";
+function ResourceLimit({
+  label,
+  unit,
+  value,
+  min,
+  inputMin = min,
+  max,
+  step,
+  onChange,
+}: {
+  label: string;
+  unit: "vCPU" | "GB";
+  value: number;
+  min: number;
+  inputMin?: number;
+  max: number;
+  step: number;
+  onChange: (value: number) => void;
+}) {
+  const id = useId();
+  const [inputValue, setInputValue] = useState<string>();
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between gap-2 text-sm">
+        <label htmlFor={id}>{label}</label>
+        <div className="flex items-center gap-2">
+          <Input
+            id={id}
+            variant="toolbar"
+            type="number"
+            className="w-24 text-right tabular-nums"
+            min={inputMin}
+            max={max}
+            step="any"
+            required
+            value={inputValue ?? value}
+            onChange={(event) => {
+              setInputValue(event.target.value);
+              onChange(Number(event.target.value));
+            }}
+            onBlur={() => setInputValue(undefined)}
+            aria-describedby={`${id}-unit`}
+          />
+          <span id={`${id}-unit`} className="w-9 text-xs text-muted-foreground">
+            {unit}
+          </span>
+        </div>
+      </div>
+      <Slider.Root
+        min={min}
+        max={max}
+        step={step}
+        largeStep={step * 10}
+        thumbAlignment="edge"
+        value={Math.min(max, Math.max(min, value))}
+        onValueChange={(next) => {
+          setInputValue(undefined);
+          onChange(next);
+        }}
+      >
+        <Slider.Control className="flex h-8 w-full cursor-pointer touch-pan-y items-center">
+          <Slider.Track className="relative h-1.5 w-full rounded-full bg-border">
+            <Slider.Indicator className="rounded-full bg-(--button-gradient-base)" />
+            <Slider.Thumb
+              className="size-4 rounded-full border border-input bg-card shadow-xs has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring has-[:focus-visible]:ring-offset-2 has-[:focus-visible]:ring-offset-card"
+              getAriaLabel={() => label}
+              getAriaValueText={(formatted) => `${formatted} ${unit}`}
+            />
+          </Slider.Track>
+        </Slider.Control>
+      </Slider.Root>
+    </div>
+  );
+}
+
 export function variables(text: string) {
   if (text.trim().startsWith("{"))
     return JSON.parse(text) as Record<string, string>;
@@ -53,6 +129,9 @@ export function ServiceForm({
   machines,
   onSaved,
   onBusyChange,
+  onRepositoryChange,
+  onImageChange,
+  onSourceStepChange,
   initialMachineId,
   initialSourceType = "github",
   fixedSource = false,
@@ -62,6 +141,9 @@ export function ServiceForm({
   machines: MachineList["machines"];
   onSaved: (id: string, message: string) => Promise<void>;
   onBusyChange?: (busy: boolean) => void;
+  onRepositoryChange?: (repository: string, installationId?: string) => void;
+  onImageChange?: (image: string) => void;
+  onSourceStepChange?: (isSourceStep: boolean) => void;
   className?: string;
   initialMachineId?: string;
   initialSourceType?: "github" | "image";
@@ -75,7 +157,12 @@ export function ServiceForm({
   const previousStep = useRef(step);
   useEffect(() => {
     if (fixedSource && previousStep.current !== step) {
-      formRef.current?.querySelector<HTMLElement>("h2")?.focus();
+      const form = formRef.current;
+      const focusTarget = form?.querySelector<HTMLElement>("h2") ?? form;
+      focusTarget?.focus({ preventScroll: true });
+      formRef.current
+        ?.querySelector("[data-deployment-scroll]")
+        ?.scrollTo({ top: 0, behavior: "instant" });
     }
     previousStep.current = step;
   }, [fixedSource, step]);
@@ -97,7 +184,7 @@ export function ServiceForm({
     redirect: service?.domains?.redirect ?? true,
     port: service?.spec.port ?? 3000,
     healthPath: service?.spec.healthPath ?? "/",
-    memoryMb: service?.spec.memoryMb ?? 256,
+    memoryMb: service?.spec.memoryMb ?? 512,
     cpus: service?.spec.cpus ?? 0.5,
     volumes:
       service?.spec.volumes
@@ -117,13 +204,33 @@ export function ServiceForm({
   });
   const update = (key: string, value: string | number | boolean) =>
     setDraft((d) => ({ ...d, [key]: value }));
+  const hasNextStep = step === 0 || (service !== null && step === 1);
+  function goToStep(nextStep: number) {
+    setError("");
+    setStep(nextStep);
+    onSourceStepChange?.(nextStep === 0);
+  }
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (busy) return;
     setError("");
-    if (step < 2) {
+    if (hasNextStep) {
       if (step === 0 && draft.type === "github") return;
-      setStep(step + 1);
+      if (step === 0 && draft.type === "image") {
+        const image = draft.image.trim();
+        if (!image) {
+          setError("Enter a container image.");
+          return;
+        }
+        const imageName = image.split("/").at(-1)?.split(/[:@]/)[0] ?? "";
+        setDraft((previous) => ({
+          ...previous,
+          image,
+          name: previous.name || imageName,
+        }));
+        onImageChange?.(image);
+      }
+      goToStep(step + 1);
       return;
     }
     setBusy(true);
@@ -255,486 +362,453 @@ export function ServiceForm({
       onSubmit={submit}
       className={className}
       aria-busy={busy}
+      aria-label={fixedSource ? "Service deployment" : undefined}
+      tabIndex={fixedSource ? -1 : undefined}
     >
-      {(!fixedSource || step > 0) && (
-        <ol
-          className="flex gap-3 text-xs text-muted-foreground"
-          aria-label="Setup progress"
-        >
-          {["Source", "Configuration", "Review & deploy"].map((title, i) => (
-            <li
-              key={title}
-              className={i === step ? "font-medium text-primary" : ""}
-              aria-current={i === step ? "step" : undefined}
-            >
-              {i + 1}. {title}
-            </li>
-          ))}
-        </ol>
-      )}
-      {step === 0 && (
-        <>
-          {!fixedSource && (
-            <div className="grid grid-cols-2 gap-2">
-              <Button
-                type="button"
-                variant={draft.type === "github" ? "raised" : "subtle-outline"}
-                size="action"
-                aria-pressed={draft.type === "github"}
-                disabled={!!service}
-                onClick={() => update("type", "github")}
+      <div
+        data-deployment-scroll={fixedSource || undefined}
+        className={
+          fixedSource
+            ? step === 0 && draft.type === "github"
+              ? "-mx-1 -mt-1 flex min-h-0 flex-1 flex-col gap-5 px-1 pt-1 pb-5"
+              : "-mx-1 -mt-1 min-h-0 flex-1 space-y-5 scroll-fade-y scroll-fade-3 overflow-y-auto overscroll-contain px-1 pt-1 pb-5"
+            : "space-y-5"
+        }
+      >
+        {!fixedSource && (
+          <ol
+            className="flex gap-3 text-xs text-muted-foreground"
+            aria-label="Setup progress"
+          >
+            {["Source", "Configuration", "Review & deploy"].map((title, i) => (
+              <li
+                key={title}
+                className={i === step ? "font-medium text-primary" : ""}
+                aria-current={i === step ? "step" : undefined}
               >
-                GitHub repository
-              </Button>
-              <Button
-                type="button"
-                variant={draft.type === "image" ? "raised" : "subtle-outline"}
-                size="action"
-                aria-pressed={draft.type === "image"}
-                disabled={!!service}
-                onClick={() => update("type", "image")}
-              >
-                Container image
-              </Button>
-            </div>
-          )}
-          {draft.type === "github" ? (
-            <RepositoryPicker
-              value={draft}
-              onChange={(v) => {
-                setDraft((d) => ({
-                  ...d,
-                  ...v,
-                  branch:
-                    d.repositoryId === v.repositoryId &&
-                    d.installationId === v.installationId
-                      ? d.branch
-                      : v.branch,
-                  name:
-                    d.name && d.name !== d.repository.split("/").at(-1)
-                      ? d.name
-                      : v.repository.split("/").at(-1) || "",
-                }));
-                setStep(1);
-              }}
-            />
-          ) : (
-            <div className="space-y-4">
-              {fixedSource && (
-                <h2
-                  tabIndex={-1}
-                  className="text-xl font-semibold tracking-tight outline-none"
+                {i + 1}. {title}
+              </li>
+            ))}
+          </ol>
+        )}
+        {step === 0 && (
+          <>
+            {!fixedSource && (
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  type="button"
+                  variant={
+                    draft.type === "github" ? "raised" : "subtle-outline"
+                  }
+                  size="action"
+                  aria-pressed={draft.type === "github"}
+                  disabled={!!service}
+                  onClick={() => update("type", "github")}
                 >
-                  Deploy a container image
-                </h2>
-              )}
+                  GitHub repository
+                </Button>
+                <Button
+                  type="button"
+                  variant={draft.type === "image" ? "raised" : "subtle-outline"}
+                  size="action"
+                  aria-pressed={draft.type === "image"}
+                  disabled={!!service}
+                  onClick={() => update("type", "image")}
+                >
+                  Container image
+                </Button>
+              </div>
+            )}
+            {draft.type === "github" ? (
+              <RepositoryPicker
+                scrollable={fixedSource}
+                value={draft}
+                onChange={(v) => {
+                  setDraft((d) => ({
+                    ...d,
+                    ...v,
+                    context:
+                      d.repositoryId === v.repositoryId &&
+                      d.installationId === v.installationId
+                        ? d.context
+                        : ".",
+                    dockerfile:
+                      d.repositoryId === v.repositoryId &&
+                      d.installationId === v.installationId
+                        ? d.dockerfile
+                        : "Dockerfile",
+                    branch:
+                      d.repositoryId === v.repositoryId &&
+                      d.installationId === v.installationId
+                        ? d.branch
+                        : v.branch,
+                    name:
+                      d.name && d.name !== d.repository.split("/").at(-1)
+                        ? d.name
+                        : v.repository.split("/").at(-1) || "",
+                  }));
+                  onRepositoryChange?.(v.repository, v.installationId);
+                  goToStep(1);
+                }}
+              />
+            ) : (
+              <div className="space-y-4">
+                <label
+                  htmlFor={`${formId}-1`}
+                  className="grid min-w-0 gap-1.5 text-sm"
+                >
+                  <span>Container image</span>
+                  <Input
+                    id={`${formId}-1`}
+                    variant="toolbar"
+                    required
+                    placeholder="docker.io/your-team/app:latest"
+                    value={draft.image}
+                    onChange={(e) => update("image", e.target.value)}
+                  />
+                </label>
+              </div>
+            )}
+          </>
+        )}
+        {step === 1 && (
+          <>
+            {draft.type === "github" && (
+              <div
+                className={
+                  fixedSource && draft.repositoryId
+                    ? "grid items-start gap-4 sm:grid-cols-2"
+                    : "space-y-5"
+                }
+              >
+                {draft.repositoryId && (
+                  <RepositoryBranchPicker
+                    key={`${draft.installationId}:${draft.repositoryId}`}
+                    value={draft}
+                    showRepository={!fixedSource}
+                    onChange={(branch) => update("branch", branch)}
+                  />
+                )}
+                <RepositoryDirectoryPicker
+                  key={`${draft.installationId}:${draft.repositoryId}:${draft.branch}`}
+                  repo={draft}
+                  value={draft.context}
+                  onChange={(path) => update("context", path)}
+                  disabled={busy}
+                />
+              </div>
+            )}
+            {!service && (
+              <div
+                className={
+                  fixedSource ? "grid gap-4 sm:grid-cols-2" : "space-y-5"
+                }
+              >
+                <label htmlFor={`${formId}-2`} className="grid gap-1.5 text-sm">
+                  <span>Service name</span>
+                  <Input
+                    variant="toolbar"
+                    id={`${formId}-2`}
+                    required
+                    maxLength={80}
+                    value={draft.name}
+                    onChange={(e) => update("name", e.target.value)}
+                  />
+                </label>
+                <label
+                  className="grid gap-1.5 text-sm"
+                  htmlFor={`${formId}-machine`}
+                >
+                  <span>Run on</span>
+                  <Select
+                    id={`${formId}-machine`}
+                    required
+                    value={draft.machineId}
+                    onValueChange={(next) => update("machineId", next)}
+                    className="w-full"
+                    placeholder="Choose a machine"
+                    options={machines
+                      .filter((m) => m.status !== "revoked")
+                      .map((m) => ({
+                        value: m.id,
+                        label: `${m.name} · ${m.status}`,
+                      }))}
+                  />
+                </label>
+              </div>
+            )}
+            {service && draft.type === "image" && (
               <label
-                htmlFor={`${formId}-1`}
-                className="block space-y-2 text-sm"
+                htmlFor={`${formId}-image`}
+                className="grid gap-1.5 text-sm"
               >
                 <span>Container image</span>
                 <Input
-                  id={`${formId}-1`}
+                  variant="toolbar"
+                  id={`${formId}-image`}
                   required
-                  placeholder="docker.io/your-team/app:latest"
                   value={draft.image}
                   onChange={(e) => update("image", e.target.value)}
                 />
               </label>
-            </div>
-          )}
-          <p className="text-xs text-muted-foreground">
-            {draft.type === "github"
-              ? "Ephor builds your code on your machine. No workflow file or registry is needed for builds on the same machine."
-              : "Ephor pulls an existing image. Use a version tag or digest for predictable deployments."}
-          </p>
-        </>
-      )}
-      {step === 1 && (
-        <>
-          {fixedSource && (
-            <h2
-              tabIndex={-1}
-              className="text-xl font-semibold tracking-tight outline-none"
-            >
-              Configure service
-            </h2>
-          )}
-          {draft.type === "github" && draft.repositoryId && (
-            <RepositoryBranchPicker
-              key={`${draft.installationId}:${draft.repositoryId}`}
-              value={draft}
-              onChange={(branch) => update("branch", branch)}
-            />
-          )}
-          {!service && (
-            <div
-              className={
-                fixedSource ? "grid gap-5 sm:grid-cols-2" : "space-y-5"
-              }
-            >
-              <label
-                htmlFor={`${formId}-2`}
-                className="block space-y-2 text-sm"
+            )}
+            <label htmlFor={`${formId}-3`} className="grid gap-1.5 text-sm">
+              <span>
+                Primary domain{" "}
+                <span className="text-muted-foreground">(optional)</span>
+              </span>
+              <Input
+                variant="toolbar"
+                id={`${formId}-3`}
+                placeholder="example.com or app.example.com"
+                value={draft.domain}
+                onChange={(e) => update("domain", e.target.value)}
+              />
+            </label>
+            {draft.domain && (
+              <Collapsible
+                className={
+                  fixedSource ? "border-t pt-4" : "rounded-lg border p-3"
+                }
               >
-                <span>Service name</span>
-                <Input
-                  id={`${formId}-2`}
-                  required
-                  maxLength={80}
-                  value={draft.name}
-                  onChange={(e) => update("name", e.target.value)}
-                />
-              </label>
-              <label
-                className="block space-y-2 text-sm"
-                htmlFor={`${formId}-machine`}
-              >
-                <span>Run on</span>
-                <Select
-                  id={`${formId}-machine`}
-                  required
-                  value={draft.machineId}
-                  onValueChange={(next) => update("machineId", next)}
-                  className="w-full"
-                  placeholder="Choose a machine"
-                  options={machines
-                    .filter((m) => m.status !== "revoked")
-                    .map((m) => ({
-                      value: m.id,
-                      label: `${m.name} · ${m.status}`,
-                    }))}
-                />
-              </label>
-            </div>
-          )}
-          {service && draft.type === "image" && (
-            <label
-              htmlFor={`${formId}-image`}
-              className="block space-y-2 text-sm"
-            >
-              <span>Container image</span>
-              <Input
-                id={`${formId}-image`}
-                required
-                value={draft.image}
-                onChange={(e) => update("image", e.target.value)}
-              />
-            </label>
-          )}
-          <label htmlFor={`${formId}-3`} className="block space-y-2 text-sm">
-            <span>
-              Primary domain{" "}
-              <span className="text-muted-foreground">(optional)</span>
-            </span>
-            <Input
-              id={`${formId}-3`}
-              placeholder="example.com or app.example.com"
-              value={draft.domain}
-              onChange={(e) => update("domain", e.target.value)}
-            />
-            <span className="block text-xs text-muted-foreground">
-              Use any root domain or subdomain you own. Ephor handles HTTPS once
-              DNS points to your machine.
-            </span>
-          </label>
-          {draft.domain && (
-            <Collapsible className="rounded-lg border p-3">
-              <CollapsibleTrigger className="text-sm">
-                Additional domains and redirects
-              </CollapsibleTrigger>
-              <CollapsibleContent keepMounted>
-                <div className="mt-3 space-y-3">
-                  <label
-                    className="block space-y-2 text-sm"
-                    htmlFor={`${formId}-aliases`}
-                  >
-                    <span>Other domains, one per line</span>
-                    <Textarea
-                      id={`${formId}-aliases`}
-                      className={control}
-                      rows={2}
-                      placeholder="www.example.com"
-                      value={draft.aliases}
-                      onChange={(e) => update("aliases", e.target.value)}
-                    />
-                  </label>
-                  <label
-                    className="flex items-center gap-2 text-sm"
-                    htmlFor={`${formId}-redirect`}
-                  >
-                    <Checkbox
-                      id={`${formId}-redirect`}
-                      checked={draft.redirect}
-                      onCheckedChange={(checked) => update("redirect", checked)}
-                    />
-                    Redirect other domains to the primary domain
-                  </label>
-                </div>
-              </CollapsibleContent>
-            </Collapsible>
-          )}
-          <div className="grid grid-cols-2 gap-3">
-            <label htmlFor={`${formId}-4`} className="space-y-2 text-sm">
-              <span>Application port</span>
-              <Input
-                id={`${formId}-4`}
-                type="number"
-                required
-                min={1024}
-                max={65535}
-                value={draft.port}
-                onChange={(e) => update("port", Number(e.target.value))}
-              />
-            </label>
-            <label htmlFor={`${formId}-5`} className="space-y-2 text-sm">
-              <span>Health check path</span>
-              <Input
-                id={`${formId}-5`}
-                required
-                value={draft.healthPath}
-                onChange={(e) => update("healthPath", e.target.value)}
-              />
-            </label>
-          </div>
-          <label
-            className="block space-y-2 text-sm"
-            htmlFor={`${formId}-runtime-vars`}
-          >
-            <span>Runtime variables</span>
-            <Textarea
-              id={`${formId}-runtime-vars`}
-              className={`${control} font-mono text-xs`}
-              rows={4}
-              autoComplete="off"
-              spellCheck={false}
-              placeholder="DATABASE_URL=…"
-              value={draft.environment}
-              onChange={(e) => update("environment", e.target.value)}
-            />
-            <span className="block text-xs text-muted-foreground">
-              {service
-                ? `Leave empty to keep ${service.spec.environment.length} existing variables. Enter a complete replacement to change them, or {} to remove all.`
-                : "One NAME=value per line, or a JSON object. Encrypted at rest and never sent to the build."}
-            </span>
-          </label>
-          <label
-            className="block space-y-2 text-sm"
-            htmlFor={`${formId}-volumes`}
-          >
-            <span>Persistent volumes (optional)</span>
-            <Textarea
-              id={`${formId}-volumes`}
-              rows={3}
-              value={draft.volumes}
-              disabled={!!service && !!service?.currentDeployment}
-              onChange={(e) => update("volumes", e.target.value)}
-              placeholder="data=/app/data"
-            />
-            <span className="block text-xs text-muted-foreground">
-              One name=/mount/path per line, up to four. Volume paths become
-              fixed after deployment. Data is owned by the application's user.
-              Deployments and backups stop the application; failed deployments
-              retain data and require recovery.
-            </span>
-          </label>
-          <Collapsible className="rounded-lg border p-3">
-            <CollapsibleTrigger className="text-sm">
-              Resources
-              {draft.type === "github"
-                ? ", build settings"
-                : " and registry access"}
-            </CollapsibleTrigger>
-            <CollapsibleContent keepMounted>
-              <div className="mt-4 space-y-4">
-                <div className="grid grid-cols-2 gap-3">
-                  <label htmlFor={`${formId}-6`} className="space-y-2 text-sm">
-                    <span>App memory (MiB)</span>
-                    <Input
-                      id={`${formId}-6`}
-                      type="number"
-                      min={64}
-                      max={65536}
-                      value={draft.memoryMb}
-                      onChange={(e) =>
-                        update("memoryMb", Number(e.target.value))
-                      }
-                    />
-                  </label>
-                  <label htmlFor={`${formId}-7`} className="space-y-2 text-sm">
-                    <span>App CPU cores</span>
-                    <Input
-                      id={`${formId}-7`}
-                      type="number"
-                      min={0.1}
-                      max={32}
-                      step={0.1}
-                      value={draft.cpus}
-                      onChange={(e) => update("cpus", Number(e.target.value))}
-                    />
-                  </label>
-                </div>
-                {draft.type === "github" && (
-                  <>
+                <CollapsibleTrigger className="text-sm">
+                  Additional domains and redirects
+                </CollapsibleTrigger>
+                <CollapsibleContent keepMounted>
+                  <div className="mt-3 space-y-3">
                     <label
-                      className="block space-y-2 text-sm"
-                      htmlFor={`${formId}-build-method`}
+                      className="grid gap-1.5 text-sm"
+                      htmlFor={`${formId}-aliases`}
                     >
-                      <span>Build method</span>
-                      <Select
-                        id={`${formId}-build-method`}
-                        value={draft.buildType}
-                        onValueChange={(next) => update("buildType", next)}
-                        className="w-full"
-                        options={[
-                          {
-                            value: "auto",
-                            label: "Automatic · Dockerfile or Railpack",
-                          },
-                          { value: "dockerfile", label: "Dockerfile" },
-                          {
-                            value: "railpack",
-                            label: "Railpack · detect framework",
-                          },
-                        ]}
-                      />
-                    </label>
-                    <label
-                      htmlFor={`${formId}-8`}
-                      className="block space-y-2 text-sm"
-                    >
-                      <span>Project directory</span>
-                      <Input
-                        id={`${formId}-8`}
-                        value={draft.context}
-                        onChange={(e) => update("context", e.target.value)}
-                      />
-                    </label>
-                    <label
-                      htmlFor={`${formId}-9`}
-                      className="block space-y-2 text-sm"
-                    >
-                      <span>Dockerfile path within project directory</span>
-                      <Input
-                        id={`${formId}-9`}
-                        value={draft.dockerfile}
-                        onChange={(e) => update("dockerfile", e.target.value)}
-                      />
-                    </label>
-                    <div className="grid grid-cols-2 gap-3">
-                      <label
-                        htmlFor={`${formId}-10`}
-                        className="space-y-2 text-sm"
-                      >
-                        <span>Build memory (MiB)</span>
-                        <Input
-                          id={`${formId}-10`}
-                          type="number"
-                          min={512}
-                          max={32768}
-                          value={draft.buildMemoryMb}
-                          onChange={(e) =>
-                            update("buildMemoryMb", Number(e.target.value))
-                          }
-                        />
-                      </label>
-                      <label
-                        htmlFor={`${formId}-11`}
-                        className="space-y-2 text-sm"
-                      >
-                        <span>Build CPU cores</span>
-                        <Input
-                          id={`${formId}-11`}
-                          type="number"
-                          min={0.25}
-                          max={16}
-                          step={0.25}
-                          value={draft.buildCpus}
-                          onChange={(e) =>
-                            update("buildCpus", Number(e.target.value))
-                          }
-                        />
-                      </label>
-                    </div>
-                    <label
-                      className="block space-y-2 text-sm"
-                      htmlFor={`${formId}-build-machine`}
-                    >
-                      <span>Build machine</span>
-                      <Select
-                        id={`${formId}-build-machine`}
-                        value={draft.buildMachineId}
-                        onValueChange={(next) => update("buildMachineId", next)}
-                        className="w-full"
-                        options={[
-                          {
-                            value: "",
-                            label: "Same machine · no registry needed",
-                          },
-                          ...machines
-                            .filter(
-                              (m) =>
-                                m.status !== "revoked" &&
-                                m.id !== draft.machineId,
-                            )
-                            .map((m) => ({ value: m.id, label: m.name })),
-                        ]}
-                      />
-                      <span className="block text-xs text-muted-foreground">
-                        A separate machine needs matching CPU architecture and a
-                        build registry configured in Settings → Integrations.
-                      </span>
-                    </label>
-
-                    <label
-                      className="block space-y-2 text-sm"
-                      htmlFor={`${formId}-build-vars`}
-                    >
-                      <span>Build variables</span>
+                      <span>Other domains, one per line</span>
                       <Textarea
-                        id={`${formId}-build-vars`}
-                        className={`${control} font-mono text-xs`}
-                        rows={3}
-                        spellCheck={false}
-                        autoComplete="off"
-                        placeholder="PUBLIC_API_URL=https://api.example.com"
-                        value={draft.buildEnvironment}
-                        onChange={(e) =>
-                          update("buildEnvironment", e.target.value)
-                        }
+                        id={`${formId}-aliases`}
+                        rows={2}
+                        placeholder="www.example.com"
+                        value={draft.aliases}
+                        onChange={(e) => update("aliases", e.target.value)}
                       />
-                      <span className="block text-xs text-muted-foreground">
-                        Leave empty to preserve existing values, or enter {} to
-                        clear them. Only provide values the repository is
-                        allowed to read during builds. Dockerfiles access them
-                        through BuildKit secret mounts; Railpack receives them
-                        as build variables. Built client-side values can become
-                        public.
-                      </span>
                     </label>
                     <label
                       className="flex items-center gap-2 text-sm"
-                      htmlFor={`${formId}-auto-deploy`}
+                      htmlFor={`${formId}-redirect`}
                     >
                       <Checkbox
-                        id={`${formId}-auto-deploy`}
-                        checked={draft.autoDeploy}
+                        id={`${formId}-redirect`}
+                        checked={draft.redirect}
                         onCheckedChange={(checked) =>
-                          update("autoDeploy", checked)
+                          update("redirect", checked)
                         }
                       />
-                      Automatically deploy pushes to {draft.branch}
+                      Redirect other domains to the primary domain
                     </label>
-                  </>
-                )}
-                {draft.type === "image" && (
-                  <>
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
+            )}
+            <div className="grid grid-cols-2 gap-4">
+              <label
+                htmlFor={`${formId}-4`}
+                className="grid min-w-0 gap-1.5 text-sm"
+              >
+                <span>Application port</span>
+                <Input
+                  variant="toolbar"
+                  id={`${formId}-4`}
+                  type="number"
+                  required
+                  min={1024}
+                  max={65535}
+                  value={draft.port}
+                  onChange={(e) => update("port", Number(e.target.value))}
+                />
+              </label>
+              <label
+                htmlFor={`${formId}-5`}
+                className="grid min-w-0 gap-1.5 text-sm"
+              >
+                <span>Health check path</span>
+                <Input
+                  variant="toolbar"
+                  id={`${formId}-5`}
+                  required
+                  value={draft.healthPath}
+                  onChange={(e) => update("healthPath", e.target.value)}
+                />
+              </label>
+            </div>
+            <section
+              aria-labelledby={`${formId}-resources`}
+              className="space-y-3 border-t pt-4"
+            >
+              <h3 id={`${formId}-resources`} className="text-sm font-medium">
+                Resources
+              </h3>
+              <ResourceLimit
+                label="App CPU"
+                unit="vCPU"
+                min={0.1}
+                max={32}
+                step={0.1}
+                value={draft.cpus}
+                onChange={(value) => update("cpus", value)}
+              />
+              <ResourceLimit
+                label="App memory"
+                unit="GB"
+                min={0.5}
+                inputMin={0.0625}
+                max={64}
+                step={0.5}
+                value={draft.memoryMb / 1024}
+                onChange={(value) =>
+                  update("memoryMb", Math.round(value * 1024))
+                }
+              />
+            </section>
+            {draft.type === "github" && (
+              <section
+                aria-labelledby={`${formId}-build-settings`}
+                className="space-y-4 border-t pt-4"
+              >
+                <h3
+                  id={`${formId}-build-settings`}
+                  className="text-sm font-medium"
+                >
+                  Build settings
+                </h3>
+                <label
+                  className="grid gap-1.5 text-sm"
+                  htmlFor={`${formId}-build-method`}
+                >
+                  <span>Build method</span>
+                  <Select
+                    id={`${formId}-build-method`}
+                    value={draft.buildType}
+                    onValueChange={(next) => update("buildType", next)}
+                    className="w-full"
+                    options={[
+                      {
+                        value: "auto",
+                        label: "Automatic",
+                      },
+                      { value: "dockerfile", label: "Dockerfile" },
+                      {
+                        value: "railpack",
+                        label: "Railpack",
+                      },
+                    ]}
+                  />
+                </label>
+                <label htmlFor={`${formId}-9`} className="grid gap-1.5 text-sm">
+                  <span>Dockerfile path</span>
+                  <Input
+                    variant="toolbar"
+                    id={`${formId}-9`}
+                    placeholder="Dockerfile"
+                    value={draft.dockerfile}
+                    onChange={(e) => update("dockerfile", e.target.value)}
+                  />
+                </label>
+                <label
+                  className="grid gap-1.5 text-sm"
+                  htmlFor={`${formId}-build-machine`}
+                >
+                  <span>Build machine</span>
+                  <Select
+                    id={`${formId}-build-machine`}
+                    value={draft.buildMachineId}
+                    onValueChange={(next) => update("buildMachineId", next)}
+                    className="w-full"
+                    options={[
+                      {
+                        value: "",
+                        label: "Same as runtime",
+                      },
+                      ...machines
+                        .filter(
+                          (m) =>
+                            m.status !== "revoked" && m.id !== draft.machineId,
+                        )
+                        .map((m) => ({ value: m.id, label: m.name })),
+                    ]}
+                  />
+                  {draft.buildMachineId && (
+                    <span className="text-xs text-muted-foreground">
+                      Requires matching CPU architecture and a build registry.
+                    </span>
+                  )}
+                </label>
+
+                <ResourceLimit
+                  label="Build CPU"
+                  unit="vCPU"
+                  min={0.25}
+                  max={16}
+                  step={0.25}
+                  value={draft.buildCpus}
+                  onChange={(value) => update("buildCpus", value)}
+                />
+                <ResourceLimit
+                  label="Build memory"
+                  unit="GB"
+                  min={0.5}
+                  max={32}
+                  step={0.5}
+                  value={draft.buildMemoryMb / 1024}
+                  onChange={(value) =>
+                    update("buildMemoryMb", Math.round(value * 1024))
+                  }
+                />
+                <label
+                  className="grid gap-1.5 text-sm"
+                  htmlFor={`${formId}-build-vars`}
+                >
+                  <span>Build variables</span>
+                  <Textarea
+                    id={`${formId}-build-vars`}
+                    className="font-mono text-xs md:text-xs"
+                    rows={3}
+                    spellCheck={false}
+                    autoComplete="off"
+                    placeholder="PUBLIC_API_URL=https://api.example.com"
+                    value={draft.buildEnvironment}
+                    onChange={(e) => update("buildEnvironment", e.target.value)}
+                  />
+                  {service && (
+                    <span className="text-xs text-muted-foreground">
+                      Leave blank to keep existing values. Use{" "}
+                      <code>{"{}"}</code> to clear them.
+                    </span>
+                  )}
+                </label>
+                <label
+                  className="flex items-center gap-2 text-sm"
+                  htmlFor={`${formId}-auto-deploy`}
+                >
+                  <Checkbox
+                    id={`${formId}-auto-deploy`}
+                    checked={draft.autoDeploy}
+                    onCheckedChange={(checked) => update("autoDeploy", checked)}
+                  />
+                  Automatically deploy pushes to {draft.branch}
+                </label>
+              </section>
+            )}
+            {draft.type === "image" && (
+              <Collapsible className="border-t pt-4">
+                <CollapsibleTrigger className="text-sm">
+                  Registry access (optional)
+                </CollapsibleTrigger>
+                <CollapsibleContent keepMounted>
+                  <div className="mt-3 space-y-3">
                     <label
                       htmlFor={`${formId}-12`}
-                      className="block space-y-2 text-sm"
+                      className="grid gap-1.5 text-sm"
                     >
-                      <span>Registry username (private images only)</span>
+                      <span>Registry username</span>
                       <Input
+                        variant="toolbar"
                         id={`${formId}-12`}
                         value={draft.registryUser}
                         onChange={(e) => update("registryUser", e.target.value)}
@@ -742,10 +816,11 @@ export function ServiceForm({
                     </label>
                     <label
                       htmlFor={`${formId}-13`}
-                      className="block space-y-2 text-sm"
+                      className="grid gap-1.5 text-sm"
                     >
                       <span>Registry read token</span>
                       <Input
+                        variant="toolbar"
                         id={`${formId}-13`}
                         type="password"
                         autoComplete="new-password"
@@ -755,115 +830,167 @@ export function ServiceForm({
                         }
                       />
                     </label>
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
+            )}
+            <label
+              className="grid gap-1.5 text-sm"
+              htmlFor={`${formId}-runtime-vars`}
+            >
+              <span>Runtime variables</span>
+              <Textarea
+                id={`${formId}-runtime-vars`}
+                className="font-mono text-xs md:text-xs"
+                rows={4}
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="DATABASE_URL=…"
+                value={draft.environment}
+                onChange={(e) => update("environment", e.target.value)}
+              />
+              {service && (
+                <span className="text-xs text-muted-foreground">
+                  Leave blank to keep existing values. Use <code>{"{}"}</code>{" "}
+                  to clear them.
+                </span>
+              )}
+            </label>
+            <label
+              className="grid gap-1.5 text-sm"
+              htmlFor={`${formId}-volumes`}
+            >
+              <span>Persistent volumes (optional)</span>
+              <Textarea
+                id={`${formId}-volumes`}
+                className="font-mono text-xs md:text-xs"
+                rows={3}
+                value={draft.volumes}
+                disabled={!!service && !!service?.currentDeployment}
+                onChange={(e) => update("volumes", e.target.value)}
+                placeholder="data=/app/data"
+              />
+            </label>
+          </>
+        )}
+        {service && step === 2 && (
+          <div className="space-y-4">
+            <div className="rounded-lg bg-muted/40 p-4 text-sm">
+              <p className="font-medium">{draft.name}</p>
+              <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2">
+                <dt className="text-muted-foreground">Source</dt>
+                <dd className="break-all">
+                  {draft.type === "github"
+                    ? `${draft.repository} · ${draft.branch}`
+                    : draft.image}
+                </dd>
+                <dt className="text-muted-foreground">Machine</dt>
+                <dd>{machines.find((m) => m.id === draft.machineId)?.name}</dd>
+                <dt className="text-muted-foreground">Domain</dt>
+                <dd className="break-all">
+                  {draft.domain || "Private endpoint"}
+                  {draft.aliases.trim() && (
+                    <span className="mt-1 block text-xs text-muted-foreground">
+                      {draft.aliases
+                        .split(/[\s,]+/)
+                        .filter(Boolean)
+                        .join(", ")}{" "}
+                      ·{" "}
+                      {draft.redirect
+                        ? "redirect to primary"
+                        : "serve application"}
+                    </span>
+                  )}
+                </dd>
+                <dt className="text-muted-foreground">Health</dt>
+                <dd>
+                  Port {draft.port} · {draft.healthPath}
+                </dd>
+                <dt className="text-muted-foreground">Resources</dt>
+                <dd>
+                  {draft.cpus} vCPU · {draft.memoryMb / 1024} GB
+                </dd>
+                {draft.type === "github" && (
+                  <>
+                    <dt className="text-muted-foreground">Directory</dt>
+                    <dd className="break-all font-mono text-xs">
+                      {draft.context === "."
+                        ? "Repository root"
+                        : draft.context}
+                    </dd>
+                    <dt className="text-muted-foreground">Build</dt>
+                    <dd>
+                      {draft.buildType} · {draft.buildMemoryMb / 1024} GB ·{" "}
+                      {draft.buildCpus} CPU
+                    </dd>
                   </>
                 )}
-              </div>
-            </CollapsibleContent>
-          </Collapsible>
-        </>
-      )}
-      {step === 2 && (
-        <div className="space-y-4">
-          {fixedSource && (
-            <h2
-              tabIndex={-1}
-              className="text-xl font-semibold tracking-tight outline-none"
-            >
-              Review deployment
-            </h2>
-          )}
-          <div className="rounded-xl border bg-card p-4 text-sm">
-            <p className="font-medium">{draft.name}</p>
-            <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2">
-              <dt className="text-muted-foreground">Source</dt>
-              <dd className="break-all">
-                {draft.type === "github"
-                  ? `${draft.repository} · ${draft.branch}`
-                  : draft.image}
-              </dd>
-              <dt className="text-muted-foreground">Machine</dt>
-              <dd>{machines.find((m) => m.id === draft.machineId)?.name}</dd>
-              <dt className="text-muted-foreground">Domain</dt>
-              <dd className="break-all">
-                {draft.domain || "Private endpoint"}
-                {draft.aliases.trim() && (
-                  <span className="mt-1 block text-xs text-muted-foreground">
-                    {draft.aliases
-                      .split(/[\s,]+/)
-                      .filter(Boolean)
-                      .join(", ")}{" "}
-                    ·{" "}
-                    {draft.redirect
-                      ? "redirect to primary"
-                      : "serve application"}
-                  </span>
-                )}
-              </dd>
-              <dt className="text-muted-foreground">Health</dt>
-              <dd>
-                Port {draft.port} · {draft.healthPath}
-              </dd>
-              {draft.type === "github" && (
-                <>
-                  <dt className="text-muted-foreground">Build</dt>
-                  <dd>
-                    {draft.buildType} · {draft.buildMemoryMb} MiB ·{" "}
-                    {draft.buildCpus} CPU
-                  </dd>
-                </>
-              )}
-            </dl>
+              </dl>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Save these settings, then deploy when you’re ready.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              The app must listen on 0.0.0.0 at the configured port. It runs
+              without root access, with a read-only filesystem and writable
+              /tmp. Configured volumes retain data; other paths remain
+              read-only. Persistent services use stop/start deployments with
+              downtime.
+            </p>
           </div>
-          <p className="text-sm text-muted-foreground">
-            {service
-              ? "Save these settings, then deploy when you’re ready."
-              : "Ephor will build or pull the image, start the application, and check its health before routing traffic. Follow progress and logs on the service page."}
+        )}
+        {error && !fixedSource && (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
           </p>
-          <p className="text-xs text-muted-foreground">
-            The app must listen on 0.0.0.0 at the configured port. It runs
-            without root access, with a read-only filesystem and writable /tmp.
-            Configured volumes retain data; other paths remain read-only.
-            Persistent services use stop/start deployments with downtime.
-          </p>
-        </div>
-      )}
-      {error && (
-        <p role="alert" className="text-sm text-destructive">
-          {error}
-        </p>
-      )}
+        )}
+      </div>
       {!(step === 0 && draft.type === "github") && (
-        <div className="flex justify-between gap-3">
-          {step > 0 ? (
+        <div
+          className={fixedSource ? "shrink-0 space-y-3 py-4" : "border-t pt-5"}
+        >
+          {fixedSource && error && (
+            <p role="alert" className="text-sm text-destructive">
+              {error}
+            </p>
+          )}
+          <div className="flex items-center justify-between gap-3">
+            {step > 0 ? (
+              <Button
+                type="button"
+                variant="subtle-outline"
+                size="action"
+                disabled={busy}
+                onClick={() => {
+                  if (step === 1) {
+                    onRepositoryChange?.("");
+                    onImageChange?.("");
+                  }
+                  goToStep(step - 1);
+                }}
+              >
+                Back
+              </Button>
+            ) : (
+              <span />
+            )}
             <Button
-              type="button"
-              variant="subtle-outline"
+              type="submit"
+              variant="gradient"
               size="action"
               disabled={busy}
-              onClick={() => setStep(step - 1)}
             >
-              Back
+              {busy
+                ? service
+                  ? "Saving…"
+                  : "Deploying…"
+                : hasNextStep
+                  ? "Continue"
+                  : service
+                    ? "Save settings"
+                    : "Deploy service"}
             </Button>
-          ) : (
-            <span />
-          )}
-          <Button
-            type="submit"
-            variant="gradient"
-            size="action"
-            disabled={
-              busy ||
-              (step === 0 && draft.type === "github" && !draft.repositoryId)
-            }
-          >
-            {busy
-              ? "Saving…"
-              : step < 2
-                ? "Continue"
-                : service
-                  ? "Save settings"
-                  : "Deploy service"}
-          </Button>
+          </div>
         </div>
       )}
     </form>

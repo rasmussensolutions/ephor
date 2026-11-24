@@ -2,6 +2,10 @@ import type { MachineList } from "@ephor/api/machines";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { MachineServicesMap } from "@/components/machines/machine-services-map";
+import {
+  prefetchDeployment,
+  useDeploymentDialog,
+} from "@/components/services/deployment-provider";
 import { ServiceDrawer } from "@/components/services/service-drawer";
 import { Button } from "@/components/ui/button";
 import {
@@ -64,6 +68,7 @@ function ProjectPage({
   };
 }) {
   const navigate = useNavigate();
+  const openDeployment = useDeploymentDialog();
   const { data, machines, error: refreshError, refresh } = useServices(initial);
   const [project, setProject] = useState(initial.project);
   const [inventory, setInventory] = useState(initial.inventory);
@@ -141,11 +146,14 @@ function ProjectPage({
             <ContextMenuItem
               key={mode}
               className="gap-3 px-2 py-2"
+              onMouseEnter={() =>
+                prefetchDeployment({ projectId: project.id, source: mode })
+              }
+              onFocus={() =>
+                prefetchDeployment({ projectId: project.id, source: mode })
+              }
               onClick={() =>
-                void navigate({
-                  to: "/services/new",
-                  search: { projectId: project.id, source: mode },
-                })
+                openDeployment({ projectId: project.id, source: mode })
               }
             >
               <Icon aria-hidden="true" />
@@ -267,12 +275,16 @@ function ProjectPage({
                 <div className="space-y-3 border-t pt-4">
                   <Button
                     disabled={busy}
-                    onClick={() =>
-                      void navigate({
-                        to: "/services/new",
-                        search: { projectId: project.id },
-                      })
+                    onMouseEnter={() =>
+                      prefetchDeployment({ projectId: project.id })
                     }
+                    onFocus={() =>
+                      prefetchDeployment({ projectId: project.id })
+                    }
+                    onClick={() => {
+                      setDialog(null);
+                      openDeployment({ projectId: project.id });
+                    }}
                   >
                     Deploy new service
                   </Button>
