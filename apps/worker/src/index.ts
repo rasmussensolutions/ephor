@@ -33,6 +33,11 @@ export default {
       sql: database(env),
       database: env.DB,
       origin: env.EPHOR_ORIGIN,
+      ...machineReleaseConfig(
+        env.EPHOR_RELEASE_URL,
+        env.EPHOR_RELEASE_PUBLIC_KEY,
+        true,
+      ),
       secret: env.BETTER_AUTH_SECRET,
       deployment: {
         runtime: "cloudflare-worker",

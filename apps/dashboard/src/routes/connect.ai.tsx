@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { ConnectionPermissions } from "@/components/connection-permissions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { api, type SessionInfo, signIn } from "@/lib/auth";
+import { api, reauthenticate, type SessionInfo } from "@/lib/auth";
 import { authorizationId, connectionName, readPolicy } from "@/lib/mcp";
 
 type Resource = { id: string; name: string };
@@ -98,7 +98,7 @@ function ConsentForm({ request, projects, machines, session }: ConsentData) {
     setError("");
     try {
       if (Date.now() >= new Date(session.session.freshUntil).getTime())
-        await signIn();
+        await reauthenticate();
       const result = await api<{ redirect: string }>("/mcp/authorize", {
         id: request.id,
         approve,

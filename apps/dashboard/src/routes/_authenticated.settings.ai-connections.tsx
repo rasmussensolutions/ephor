@@ -4,7 +4,7 @@ import { ConnectionPermissions } from "@/components/connection-permissions";
 import { SettingsPage, SettingsSection } from "@/components/settings-layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { api, signIn } from "@/lib/auth";
+import { api, reauthenticate } from "@/lib/auth";
 import { type ConnectionPolicy, readPolicy } from "@/lib/mcp";
 
 interface Data {
@@ -32,7 +32,7 @@ interface Data {
 }
 export const Route = createFileRoute("/_authenticated/settings/ai-connections")(
   {
-    head: () => ({ meta: [{ title: "AI connections — Ephor" }] }),
+    head: () => ({ meta: [{ title: "MCP — Ephor" }] }),
     loader: async () => {
       const [data, projects, machines] = await Promise.all([
         api<Data>("/mcp/connections"),
@@ -70,7 +70,7 @@ function Connections() {
     setBusy(true);
     setError("");
     try {
-      await signIn();
+      await reauthenticate();
       await action();
       await router.invalidate();
     } catch (e) {
@@ -100,7 +100,7 @@ function Connections() {
   }
   return (
     <SettingsPage
-      title="AI connections"
+      title="MCP"
       description="Connect an AI client to this Ephor instance. Access is limited to the permissions you select, and can be revoked at any time."
     >
       {error && (
@@ -358,6 +358,25 @@ function Connections() {
                 onClick={() => editConnection(c)}
               >
                 Edit permissions
+              </Button>
+            )}
+            {!!c.revoked && (
+              <Button
+                disabled={busy}
+                variant="destructive"
+                onClick={() => {
+                  if (
+                    confirm(
+                      `Delete “${c.name}”? Its credentials and recent operation details will be removed. Activity history is retained.`,
+                    )
+                  )
+                    void run(async () => {
+                      await api("/mcp/delete", { id: c.id });
+                      if (editing?.id === c.id) editConnection(null);
+                    });
+                }}
+              >
+                Delete connection
               </Button>
             )}
             {!c.revoked && (

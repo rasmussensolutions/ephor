@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { api, signIn } from "@/lib/auth";
+import { api, reauthenticate } from "@/lib/auth";
 import type { Service } from "@/lib/services";
 import { code } from "@/lib/services";
 
@@ -34,7 +34,7 @@ export function CatalogDetails({
     setRevealing(true);
     setError("");
     try {
-      await signIn();
+      await reauthenticate();
       const r = await api<{ credentials: Record<string, string> }>(
         `/services/${service.id}/catalog-access`,
         {},

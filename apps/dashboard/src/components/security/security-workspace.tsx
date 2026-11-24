@@ -14,7 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { api, signIn } from "@/lib/auth";
+import { api, reauthenticate } from "@/lib/auth";
 import { ManagedProtectionsPanel } from "./managed-protections";
 import { SecurityActions as SecurityFindings } from "./security-actions";
 import { SecurityAudit } from "./security-audit";
@@ -289,7 +289,7 @@ export function SecurityWorkspace({
                       )
                         return;
                       void run(async () => {
-                        await signIn();
+                        await reauthenticate();
                         await api("/security/collector/revoke", {
                           machineId: resourceMachine,
                         });
@@ -672,7 +672,7 @@ function Retention({ days, changed }: { days: number; changed: () => void }) {
     setBusy(true);
     setError("");
     try {
-      await signIn();
+      await reauthenticate();
       await api("/security/settings", { retentionDays: Number(value) });
       changed();
     } catch (e) {

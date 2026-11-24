@@ -43,7 +43,10 @@ export function machineSummary(machines: Machine[], now: number) {
   return {
     total: active.length,
     online: online.length,
-    offline: active.length - online.length - waiting,
+    offline: active.filter((machine) => machine.status === "offline").length,
+    stale: active.filter(
+      (machine) => machine.status === "online" && !online.includes(machine),
+    ).length,
     waiting,
     cpuPercent: cores ? (usedCores / cores) * 100 : null,
     cores,

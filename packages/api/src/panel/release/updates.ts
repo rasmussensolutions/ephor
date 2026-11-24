@@ -182,6 +182,20 @@ export class PanelReleases {
       await save();
     });
   }
+  async checkAutomatically() {
+    const now = Date.now();
+    // Durable throttle shared by every tab, replica and scheduled worker.
+    const claimed = await this.env.sql.query(
+      "UPDATE ephor_panel_release SET next_check=$1 WHERE id=1 AND next_check<=$2 AND lease_until<$2 RETURNING id",
+      [now + 60 * 60_000, now],
+    );
+    if (!claimed.length) return;
+    try {
+      await this.check();
+    } catch {
+      /* Retry at the next scheduled check. */
+    }
+  }
   async check() {
     const latest = await this.source.latest(),
       release = await this.verify(latest);
@@ -358,5 +372,9 @@ export class PanelReleases {
   }
 }
 export async function processPanelRelease(env: AuthEnvironment) {
-  await new PanelReleases(env).tick();
+  const panel = new PanelReleases(env);
+  await panel.tick();
+  await panel.checkAutomatically();
+  const { Releases } = await import("../../machines/releases");
+  await new Releases(env.sql, env.releaseUrl, env.releasePublicKey).check();
 }

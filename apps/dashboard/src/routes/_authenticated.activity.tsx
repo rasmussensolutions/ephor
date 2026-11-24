@@ -216,13 +216,13 @@ function ActivityPage() {
                   })),
                 ]}
               />
-              <span className="text-xs text-muted-foreground">User</span>
+              <span className="text-xs text-muted-foreground">Actor</span>
               <Select
-                aria-label="Filter by user"
+                aria-label="Filter by actor"
                 value={user}
                 onValueChange={setUser}
                 options={[
-                  { value: "", label: "All users" },
+                  { value: "", label: "All actors" },
                   ...data.users.map((actor) => ({
                     value: actor.id,
                     label: actor.name,
@@ -298,7 +298,7 @@ function ActivityPage() {
             <TableRow>
               <TableHead scope="col">Action</TableHead>
               <TableHead scope="col" className="w-[18%]">
-                User
+                Actor
               </TableHead>
               <TableHead scope="col">Resource</TableHead>
               <TableHead scope="col" className="w-32">

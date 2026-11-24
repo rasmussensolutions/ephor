@@ -1,5 +1,9 @@
 import { AiIntegration } from "../../../packages/api/src/ai/store";
 import type { Sql } from "../../../packages/api/src/auth/store";
+import {
+  fetchClientMetadata,
+  resolveClient,
+} from "../../../packages/api/src/mcp/client-metadata";
 import { Notifications } from "../../../packages/api/src/notifications/store";
 import { defaultPreferences } from "../../../packages/api/src/notifications/types";
 import { Providers } from "../../../packages/api/src/panel/release/providers";
@@ -32,6 +36,14 @@ export default {
     const origin = "https://ephor.example.com";
     const scenario = new URL(request.url).pathname.slice(1);
     try {
+      if (scenario === "cimd")
+        return Response.json(
+          await resolveClient(
+            sql,
+            "https://chatgpt.com/oauth/client.json",
+            (value) => fetchClientMetadata(value, true),
+          ),
+        );
       if (scenario === "ai")
         return Response.json(await new AiIntegration(sql, secret).models());
       if (scenario === "dns")

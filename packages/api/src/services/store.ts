@@ -249,20 +249,26 @@ export class Services {
     await new AuthStore(this.sql).audit("service.configured", row.id);
   }
   async list(id?: string, summary = false) {
-    const rows = await this.sql.query<ServiceRow>(
-      `SELECT * FROM ephor_service ${id ? "WHERE id=$1" : ""} ORDER BY created_at DESC LIMIT 1000`,
-      id ? [id] : [],
-    );
-    const positions = await this.sql.query<{
-      service_id: string;
-      component_id: string;
-      revision: number;
-      x: number;
-      y: number;
-    }>(
-      `SELECT * FROM ephor_service_map_position ${id ? "WHERE service_id=$1" : ""}`,
-      id ? [id] : [],
-    );
+    const [rows, positions, deployments] = await Promise.all([
+      this.sql.query<ServiceRow>(
+        `SELECT * FROM ephor_service ${id ? "WHERE id=$1" : ""} ORDER BY created_at DESC LIMIT 1000`,
+        id ? [id] : [],
+      ),
+      this.sql.query<{
+        service_id: string;
+        component_id: string;
+        revision: number;
+        x: number;
+        y: number;
+      }>(
+        `SELECT * FROM ephor_service_map_position ${id ? "WHERE service_id=$1" : ""}`,
+        id ? [id] : [],
+      ),
+      this.sql.query<Pick<DeploymentRow, "id" | "spec" | "action">>(
+        `SELECT d.id,d.spec,d.action FROM ephor_deployment d JOIN ephor_service s ON s.current_deployment=d.id ${id ? "WHERE s.id=$1" : ""}`,
+        id ? [id] : [],
+      ),
+    ]);
     const layouts = new Map<
       string,
       Record<string, { x: number; y: number; revision: number }>
@@ -276,12 +282,6 @@ export class Services {
       };
       layouts.set(position.service_id, layout);
     }
-    const deployments = await this.sql.query<
-      Pick<DeploymentRow, "id" | "spec" | "action">
-    >(
-      `SELECT d.id,d.spec,d.action FROM ephor_deployment d JOIN ephor_service s ON s.current_deployment=d.id ${id ? "WHERE s.id=$1" : ""}`,
-      id ? [id] : [],
-    );
     const current = new Map(deployments.map((d) => [d.id, d]));
     const connections = new ServiceConnections(this.sql, this.secrets);
     return Promise.all(
@@ -307,6 +307,7 @@ export class Services {
         }
         return {
           id: row.id,
+          observedAt: Date.now(),
           machineId: row.machine_id,
           name: row.name,
           presentation: {

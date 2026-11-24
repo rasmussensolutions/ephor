@@ -4,7 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { api, errorMessage, signIn } from "@/lib/auth";
+import { api, errorMessage, reauthenticate } from "@/lib/auth";
 import type { ServiceList } from "@/lib/services";
 import { ServiceIcon } from "./service-icon";
 
@@ -70,7 +70,7 @@ export function CatalogForm({
       let r = created;
       if (!r) {
         setProgress("Confirm with your passkey to deploy this app…");
-        await signIn();
+        await reauthenticate();
         setProgress("Creating your service and queuing deployment…");
         r = await api<{ id: string; deploymentError: string | null }>(
           "/services/catalog/deploy",

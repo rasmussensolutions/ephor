@@ -25,7 +25,7 @@ export function panelReleaseOwnerRoutes(app: Hono, env: AuthEnvironment) {
   const panel = new PanelReleases(env),
     store = new AuthStore(env.sql);
   app.use("/api/panel/*", async (c, next) => {
-    if (c.req.method !== "GET")
+    if (c.req.method !== "GET" && c.req.path !== "/api/panel/check")
       await requireOwner(
         createAuth(env, c.req.raw.headers),
         store,
@@ -40,8 +40,12 @@ export function panelReleaseOwnerRoutes(app: Hono, env: AuthEnvironment) {
     return c.json(await panel.status());
   });
   app.post("/api/panel/check", async (c) => {
-    await store.limit("panel-release-check", 5);
-    await panel.check();
+    const body = await c.req.json<{ automatic?: boolean }>();
+    if (body.automatic === true) await panel.checkAutomatically();
+    else {
+      await store.limit("panel-release-check", 5);
+      await panel.check();
+    }
     return c.json(await panel.status());
   });
   app.post("/api/panel/install", async (c) => {

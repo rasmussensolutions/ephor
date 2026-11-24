@@ -4,7 +4,7 @@ import { EyeSlashIcon } from "@phosphor-icons/react/dist/csr/EyeSlash";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { api, signIn } from "@/lib/auth";
+import { api, reauthenticate } from "@/lib/auth";
 
 type Variables = {
   revision: string;
@@ -54,7 +54,7 @@ export function ComponentVariables({ id, name }: { id: string; name: string }) {
     try {
       let value = revealed[variable];
       if (value === undefined) {
-        await signIn();
+        await reauthenticate();
         if (!active.current) return;
         const result = await api<{ value: string }>(`${endpoint}/reveal`, {
           name: variable,

@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { Activity } from "../activity/store";
+import type { ActivityItem } from "../activity/types";
 import type { AuthEnvironment } from "../auth/config";
 import { AuthError, AuthStore, hash } from "../auth/store";
 import { machineMetricsHistory } from "../machines/metrics";
@@ -491,6 +493,11 @@ export class AgentOperations {
       JSON.stringify(savedPayload.args) !== JSON.stringify(args)
     )
       throw new AuthError("MCP_REQUEST_KEY_CONFLICT", 409);
+    const { row: connection } = await this.access.connection(connectionId);
+    await new Activity(this.env.sql).start(
+      this.activityItem(connection, tool, args),
+      saved.id,
+    );
     await new AuthStore(this.env.sql).audit(
       execution === "direct"
         ? "mcp.execution_requested"
@@ -566,6 +573,29 @@ export class AgentOperations {
       }),
     );
   }
+  activityItem(
+    connection: { id: string; name: string },
+    tool: Tool,
+    args: Args,
+  ): Omit<ActivityItem, "id" | "occurredAt" | "status" | "outcome"> {
+    const targetId = args.serviceId ?? args.projectId ?? args.machineId;
+    return {
+      action: tool.charAt(0).toUpperCase() + tool.slice(1).replaceAll("_", " "),
+      category: tool.includes("machine") ? "machines" : "services",
+      actor: { id: connection.id, name: connection.name, kind: "agent" },
+      target: {
+        id: typeof targetId === "string" ? targetId : null,
+        name: typeof args.name === "string" ? args.name : null,
+        type: args.serviceId
+          ? "service"
+          : args.projectId
+            ? "project"
+            : args.machineId
+              ? "machine"
+              : null,
+      },
+    };
+  }
   async decide(
     operationId: string,
     approve: boolean,
@@ -617,7 +647,13 @@ export class AgentOperations {
           : "mcp.denied",
       r.id,
     );
-    if (!approve) return { ok: true };
+    const activity = new Activity(this.env.sql);
+    const item = this.activityItem(connection, r.tool, p.args);
+    await activity.start(item, r.id);
+    if (!approve) {
+      await activity.finish(r.id, 403, item.actor, item.target);
+      return { ok: true };
+    }
     try {
       // Recheck revocation after claiming; crashes leave 'executing', never automatically replay side effects.
       const current = await this.access.connection(r.connection_id);
@@ -629,6 +665,7 @@ export class AgentOperations {
         "UPDATE ephor_mcp_operation SET status='completed',result=$1 WHERE id=$2",
         [await this.secrets.seal(`mcp-result:${r.id}`, result), r.id],
       );
+      await activity.finish(r.id, 200, item.actor, item.target);
       await new AuthStore(this.env.sql).audit("mcp.completed", r.id);
     } catch (error) {
       await this.env.sql.query(
@@ -642,6 +679,12 @@ export class AgentOperations {
           }),
           r.id,
         ],
+      );
+      await activity.finish(
+        r.id,
+        error instanceof AuthError ? error.status : 500,
+        item.actor,
+        item.target,
       );
       await new AuthStore(this.env.sql).audit("mcp.failed", r.id);
     }

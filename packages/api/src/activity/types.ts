@@ -18,7 +18,7 @@ export interface ActivityItem {
   actor: {
     id: string | null;
     name: string;
-    kind: "user" | "anonymous" | "unknown";
+    kind: "user" | "agent" | "anonymous" | "unknown";
   };
   target: { id: string | null; name: string | null; type: string | null };
   status: number | null;

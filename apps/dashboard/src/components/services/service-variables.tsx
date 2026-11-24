@@ -18,7 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { api, signIn } from "@/lib/auth";
+import { api, reauthenticate } from "@/lib/auth";
 import {
   formatEnvironment,
   parseEnvironment,
@@ -127,7 +127,7 @@ export function ServiceVariables({
     const staged = changes[name];
     if (typeof staged === "string") return staged;
     if (Object.hasOwn(revealed, name)) return revealed[name] ?? "";
-    await signIn();
+    await reauthenticate();
     const result = await api<{ values: Record<string, string> }>(
       `/services/${id}/variables/reveal`,
       { name, revision: data?.revision },
@@ -176,7 +176,7 @@ export function ServiceVariables({
   }
   async function save() {
     if (!data) return;
-    await signIn();
+    await reauthenticate();
     const set = Object.fromEntries(
       Object.entries(changes).filter(([, value]) => value !== null),
     );
@@ -231,7 +231,7 @@ export function ServiceVariables({
             disabled={busy || !data?.editable || editing}
             onClick={() =>
               run(async () => {
-                await signIn();
+                await reauthenticate();
                 const result = await api<{ values: Record<string, string> }>(
                   `/services/${id}/variables/reveal`,
                   { revision: data?.revision },

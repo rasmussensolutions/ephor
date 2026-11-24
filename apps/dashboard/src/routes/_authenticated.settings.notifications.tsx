@@ -13,7 +13,7 @@ import {
 } from "@/components/settings-layout";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { api, signIn } from "@/lib/auth";
+import { api, reauthenticate } from "@/lib/auth";
 
 export const Route = createFileRoute("/_authenticated/settings/notifications")({
   head: () => ({ meta: [{ title: "Notification settings — Ephor" }] }),
@@ -35,7 +35,7 @@ function NotificationSettingsPage() {
     setNotice("");
     setError("");
     try {
-      await signIn();
+      await reauthenticate();
       await fn();
       setNotice(message);
     } catch (e) {

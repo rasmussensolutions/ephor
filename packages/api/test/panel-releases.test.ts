@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { generateKeyPairSync, sign } from "node:crypto";
 import { createApi } from "../src";
+import { FRESH_MS } from "../src/auth/store";
 import {
   bounded,
   type PanelRelease,
@@ -12,7 +13,7 @@ import {
 import { Providers } from "../src/panel/release/providers";
 import type { Hosting, ReleaseJob } from "../src/panel/release/types";
 import { PanelReleases } from "../src/panel/release/updates";
-import { fixture } from "./helpers";
+import { Browser, enrolled, fixture, timestamp } from "./helpers";
 
 const { privateKey, publicKey } = generateKeyPairSync("ed25519");
 const key = Buffer.from(
@@ -543,4 +544,44 @@ test("Railway deploys only the signed image and saves verification state before 
   expect(j.deploymentId).toBe("deployment-id");
   expect(j.stage).toBe("verifying");
   expect(calls).toBe(2);
+});
+
+test("automatic release checks are durably throttled across panel instances and tabs", async () => {
+  const { panel } = await setup();
+  let checks = 0;
+  const latest = panel.source.latest;
+  panel.source.latest = async () => {
+    checks++;
+    return latest();
+  };
+  await Promise.all([
+    panel.checkAutomatically(),
+    panel.checkAutomatically(),
+    panel.checkAutomatically(),
+  ]);
+  expect(checks).toBe(1);
+  await panel.checkAutomatically();
+  expect(checks).toBe(1);
+});
+
+test("update discovery accepts an older owner session while installation still requires verification", async () => {
+  const f = await enrolled();
+  await f.sql.query('UPDATE session SET "createdAt"=$1', [
+    timestamp(Date.now() - FRESH_MS - 1000),
+  ]);
+  // Another scheduler already checked: no release network access is needed.
+  await f.sql.query("UPDATE ephor_panel_release SET next_check=$1 WHERE id=1", [
+    Date.now() + 3600000,
+  ]);
+  expect(
+    (await f.browser.request("/panel/check", { automatic: true })).status,
+  ).toBe(200);
+  expect(
+    (await f.browser.request("/panel/install", { version: "0.3.2" })).status,
+  ).toBe(403);
+  expect(
+    (await new Browser(f.app).request("/panel/check", { automatic: true }))
+      .status,
+  ).toBe(401);
+  expect(await f.sql.query("SELECT id FROM session")).toHaveLength(1);
 });

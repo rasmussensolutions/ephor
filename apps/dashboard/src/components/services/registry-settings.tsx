@@ -6,7 +6,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
-import { api, signIn } from "@/lib/auth";
+import { api, reauthenticate } from "@/lib/auth";
 
 export function RegistrySettings() {
   const formId = useId();
@@ -32,7 +32,7 @@ export function RegistrySettings() {
             setBusy(true);
             setMessage("");
             try {
-              await signIn();
+              await reauthenticate();
               await api("/integrations/build-registry", {
                 prefix: data.get("prefix"),
                 push: {

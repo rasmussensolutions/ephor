@@ -6,7 +6,7 @@ import {
 import { useState } from "react";
 import { MaintenanceLink } from "@/components/machines/maintenance-link";
 import { Button } from "@/components/ui/button";
-import { api, signIn } from "@/lib/auth";
+import { api, reauthenticate } from "@/lib/auth";
 import { when } from "./security-data";
 
 type Plan = {
@@ -55,7 +55,7 @@ export function MachineProtection({
   }
   function review(action: ProtectionAction, parameters = {}) {
     void run(async () => {
-      await signIn();
+      await reauthenticate();
       setTested(false);
       setPlan(
         await api<Plan>("/security/protections/plan", {
@@ -293,7 +293,7 @@ export function MachineProtection({
               }
               onClick={() =>
                 void run(async () => {
-                  await signIn();
+                  await reauthenticate();
                   await api("/security/protections/approve", { id: plan.id });
                   setPlan(null);
                   setNotice(
@@ -364,7 +364,7 @@ export function MachineProtection({
             disabled={busy}
             onClick={() =>
               void run(async () => {
-                await signIn();
+                await reauthenticate();
                 await api("/security/protections/revoke", {
                   machineId: machine.id,
                 });

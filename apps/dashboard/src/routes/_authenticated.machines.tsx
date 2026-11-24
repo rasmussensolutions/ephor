@@ -43,9 +43,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Usage } from "@/components/usage-meter";
-import { api, signIn } from "@/lib/auth";
+import { useApiQuery } from "@/hooks/use-api-query";
+import { api, reauthenticate } from "@/lib/auth";
 import { currentMachineMetrics } from "@/lib/machine-metrics";
 import { machineSummary } from "@/lib/machine-summary";
+import { apiKey, queryClient } from "@/lib/query";
 
 export const Route = createFileRoute("/_authenticated/machines")({
   validateSearch: (search: Record<string, unknown>): { connect?: boolean } => ({
@@ -67,7 +69,14 @@ function MachinesPage() {
   const initial = Route.useLoaderData();
   const { connect } = Route.useSearch();
   const navigate = useNavigate();
-  const [data, setData] = useState(initial);
+  const inventory = useApiQuery("/machines", initial);
+  const data = inventory.data;
+  const setData = (
+    next: MachineList | ((previous: MachineList) => MachineList),
+  ) =>
+    queryClient().setQueryData<MachineList>(apiKey("/machines"), (previous) =>
+      typeof next === "function" ? next(previous ?? initial) : next,
+    );
   const [open, setOpen] = useState(false);
   useEffect(() => {
     if (!connect) return;
@@ -81,7 +90,7 @@ function MachinesPage() {
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [pollError, setPollError] = useState(false);
+  const pollError = inventory.isError;
   const [now, setNow] = useState(Date.now());
   const [machineAction, setMachineAction] = useState<{
     machine: Machine;
@@ -90,32 +99,6 @@ function MachinesPage() {
   const dialogRef = useRef<HTMLDivElement>(null);
   const dialogTitleRef = useRef<HTMLHeadingElement>(null);
   const dialogHeightBeforeCommand = useRef<number | null>(null);
-  useEffect(() => {
-    setData(initial);
-  }, [initial]);
-  useEffect(() => {
-    let active = true;
-    let timeout: ReturnType<typeof setTimeout>;
-    async function poll() {
-      if (document.visibilityState === "visible") {
-        try {
-          const next = await api<MachineList>("/machines");
-          if (active) {
-            setData(next);
-            setPollError(false);
-          }
-        } catch {
-          if (active) setPollError(true);
-        }
-      }
-      if (active) timeout = setTimeout(poll, 15_000);
-    }
-    timeout = setTimeout(poll, 15_000);
-    return () => {
-      active = false;
-      clearTimeout(timeout);
-    };
-  }, []);
   useEffect(() => {
     const timeout = setInterval(
       () => setNow(Date.now()),
@@ -175,7 +158,7 @@ function MachinesPage() {
     )
       return;
     await run(async () => {
-      await signIn();
+      await reauthenticate();
       await api("/machines/enrollments/cancel", { id: machine.id });
       setData((current) => ({
         ...current,
@@ -238,7 +221,10 @@ function MachinesPage() {
               automatically.
             </p>
           )}
-          <MachineSummaryCards machines={data.machines} now={now} />
+          <MachineSummaryCards
+            machines={data.machines}
+            now={inventory.dataUpdatedAt}
+          />
           {data.machines.length === 0 ? (
             <div className="flex flex-col items-center rounded-xl border bg-card px-6 py-16 text-center shadow-xs">
               <HardDrivesIcon
@@ -289,7 +275,7 @@ function MachinesPage() {
                   <MachineRow
                     key={machine.id}
                     machine={machine}
-                    now={now}
+                    now={inventory.dataUpdatedAt}
                     hasCommand={activeEnrollment?.id === machine.id}
                     actionDialogOpen={machineAction?.machine.id === machine.id}
                     onAction={(action) => setMachineAction({ machine, action })}
@@ -408,7 +394,7 @@ function MachinesPage() {
                 onSubmit={(event) => {
                   event.preventDefault();
                   void run(async () => {
-                    await signIn();
+                    await reauthenticate();
                     const result = await api<Enrollment>(
                       "/machines/enrollments",
                       enrollmentMachineId
@@ -513,6 +499,7 @@ function MachineSummaryCards({
   const summary = machineSummary(machines, now);
   const health = [
     summary.offline ? `${summary.offline} offline` : null,
+    summary.stale ? `${summary.stale} awaiting fresh reports` : null,
     summary.waiting ? `${summary.waiting} awaiting reports` : null,
   ]
     .filter(Boolean)

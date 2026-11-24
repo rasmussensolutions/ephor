@@ -24,7 +24,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { api, signIn } from "@/lib/auth";
+import { api, reauthenticate } from "@/lib/auth";
 import { SecurityAudit } from "./security-audit";
 import { label, when } from "./security-data";
 
@@ -322,7 +322,7 @@ function FindingDetails({
     setBusy(true);
     setError("");
     try {
-      await signIn();
+      await reauthenticate();
       await api(`/security/findings/${f.id}`, {
         status: action,
         reason,

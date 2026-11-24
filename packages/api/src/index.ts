@@ -12,6 +12,7 @@ import {
   requireOwner,
   validateConfig,
 } from "./auth/config";
+import { reauthenticationRoutes } from "./auth/reauth";
 import {
   AuthError,
   AuthStore,
@@ -468,6 +469,7 @@ export function createApi(
   app.get("/api/activity", async (c) =>
     c.json(await new Activity(env.sql).list(new URL(c.req.url).searchParams)),
   );
+  reauthenticationRoutes(app, env);
   maintenanceOwnerRoutes(app, env);
   projectOwnerRoutes(app, env);
   mcpOwnerRoutes(app, env);
@@ -495,33 +497,30 @@ export function createApi(
     return c.json(await updates.queue(body?.id, body?.wholeMachine === true));
   });
   async function machineReleaseInfo() {
-    await releases.check();
-    const { envelope: _envelope, ...releaseInfo } = await releases.read();
-    let architectures: string[] = [];
-    let deployments = false;
-    let security = false;
-    try {
-      const release = await daemonRelease();
-      deployments = Number(release.serviceProtocol) >= 2;
-      security = release.securityProtocol === 1;
-      architectures = ["x86_64", "aarch64"].filter((key) => key in release);
-    } catch {
-      /* Deployment has not bundled a daemon yet. */
-    }
+    const [savedRelease, release, updateJobs] = await Promise.all([
+      releases.read(),
+      daemonRelease().catch(() => null),
+      updates.list(),
+    ]);
+    const { envelope: _envelope, ...releaseInfo } = savedRelease;
+    const architectures = release
+      ? ["x86_64", "aarch64"].filter((key) => key in release)
+      : [];
+    const deployments = Number(release?.serviceProtocol) >= 2;
+    const security = release?.securityProtocol === 1;
     return {
       releaseInfo: {
         ...releaseInfo,
         publicKey: env.releasePublicKey,
-        maintenanceAvailable:
-          (await daemonRelease().catch(() => null))?.updaterProtocol === 3,
+        maintenanceAvailable: release?.updaterProtocol === 3,
         bootstrapCommand:
           releaseInfo.configured &&
           env.origin.startsWith("https:") &&
-          (await daemonRelease().catch(() => null))?.updaterProtocol === 1
+          release?.updaterProtocol === 1
             ? updaterCommand(env.origin)
             : undefined,
       },
-      updates: await updates.list(),
+      updates: updateJobs,
       installer: {
         available:
           deployments &&
@@ -543,8 +542,10 @@ export function createApi(
     return c.json({ machines: machinesList, ...info });
   });
   app.get("/api/machines/:id", async (c) => {
-    const machine = await machines.get(c.req.param("id"));
-    const info = await machineReleaseInfo();
+    const [machine, info] = await Promise.all([
+      machines.get(c.req.param("id")),
+      machineReleaseInfo(),
+    ]);
     return c.json({
       machine,
       releaseInfo: info.releaseInfo,
@@ -639,13 +640,20 @@ export function createApi(
       c.req.raw.headers,
     );
     const { state } = await store.read();
+    const [verification] = await env.sql.query<{ verified_at: number }>(
+      "SELECT verified_at FROM ephor_session_verification WHERE session_id=$1",
+      [session.session.id],
+    );
     return c.json({
       user: { id: session.user.id, name: session.user.name },
       session: {
         id: session.session.id,
         expiresAt: session.session.expiresAt,
         freshUntil: new Date(
-          new Date(session.session.createdAt).getTime() + FRESH_MS,
+          Math.max(
+            new Date(session.session.createdAt).getTime(),
+            Number(verification?.verified_at ?? 0),
+          ) + FRESH_MS,
         ).toISOString(),
       },
       recoveryCodesRemaining: state.recovery.length,

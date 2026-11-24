@@ -27,7 +27,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { api, errorMessage, signIn } from "@/lib/auth";
+import { api, errorMessage, reauthenticate } from "@/lib/auth";
 import type { ServiceList } from "@/lib/services";
 
 interface Destination {
@@ -180,7 +180,7 @@ function BackupsPage() {
     setNotice("");
     if (inDialog) setDialogError("");
     try {
-      await signIn();
+      await reauthenticate();
       await work();
       setNotice(message);
       try {

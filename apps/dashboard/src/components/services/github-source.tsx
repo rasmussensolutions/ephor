@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { api, signIn } from "@/lib/auth";
+import { api, reauthenticate } from "@/lib/auth";
 
 export interface GitHubStatus {
   configured: boolean;
@@ -90,7 +90,7 @@ export function GitHubConnection({
     setBusy(true);
     setError("");
     try {
-      await signIn();
+      await reauthenticate();
       if (callback) {
         if (callback.state !== sessionStorage.getItem(storageKey))
           throw new Error("This connection has expired. Start again.");
@@ -152,7 +152,7 @@ export function GitHubConnection({
                 setBusy(true);
                 setError("");
                 try {
-                  await signIn();
+                  await reauthenticate();
                   await api(`${endpoint}/disconnect`, {});
                   const next = await api<GitHubStatus>(endpoint);
                   setStatus(next);

@@ -23,12 +23,12 @@ export class Activity {
   constructor(private sql: Sql) {}
   async start(
     item: Omit<ActivityItem, "id" | "occurredAt" | "status" | "outcome">,
+    id: string = crypto.randomUUID(),
   ) {
-    const id = crypto.randomUUID();
     await this.sql.query(
       `INSERT INTO ephor_activity (id, occurred_at, action, category, outcome,
        actor_id, actor_name, actor_kind, target_id, target_name, target_type)
-       VALUES ($1,$2,$3,$4,'pending',$5,$6,$7,$8,$9,$10)`,
+       VALUES ($1,$2,$3,$4,'pending',$5,$6,$7,$8,$9,$10) ON CONFLICT(id) DO NOTHING`,
       [
         id,
         Date.now(),

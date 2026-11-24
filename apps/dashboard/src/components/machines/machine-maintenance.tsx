@@ -1,7 +1,7 @@
 import type { Machine, MachineList } from "@ephor/api/machines";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { api, signIn } from "@/lib/auth";
+import { api, reauthenticate } from "@/lib/auth";
 import { CopyEnrollmentCommand, EnrollmentCommand } from "./enrollment-command";
 
 const components = [
@@ -110,7 +110,7 @@ export function MachineMaintenance({
           onChange={(e) => {
             const next = e.target.value;
             void run(async () => {
-              await signIn();
+              await reauthenticate();
               await api("/machines/maintenance/policy", {
                 id: machine.id,
                 policy: next,
@@ -205,7 +205,7 @@ export function MachineMaintenance({
             )
               return;
             void run(async () => {
-              await signIn();
+              await reauthenticate();
               await api("/machines/updates", {
                 id: machine.id,
                 wholeMachine: true,
@@ -276,7 +276,7 @@ export function MachineMaintenance({
           onClick={() =>
             void run(async () => {
               setCommand(null);
-              await signIn();
+              await reauthenticate();
               setCommand(
                 await api("/machines/maintenance/setup", {
                   id: machine.id,

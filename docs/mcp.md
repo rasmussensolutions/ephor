@@ -33,7 +33,7 @@ credential configuration, never in chat, URLs or source control. It appears once
 
 ## Existing connections
 
-Open **Settings → AI connections → Edit permissions** to change a connection's
+Open **Settings → MCP → Edit permissions** to change a connection's
 name or grants. Save with your passkey. Credentials and expiry stay the same;
 revocation and permission narrowing apply to subsequent calls. Work already
 running is not cancelled.
@@ -117,3 +117,19 @@ Python 3 (standard library only) checks regex compatibility with non-JavaScript
 clients. `TEST_DATABASE_URL` runs backend tests in isolated PostgreSQL schemas;
 otherwise they use SQLite. `bun run test:worker` exercises the real Worker/D1
 runtime. These checks do not prove a particular AI client displays confirmations.
+
+### Connection history and client registration
+
+Revoked connections can be deleted from Settings → MCP. Deletion removes their
+credentials, OAuth grants and operation details. Named agent activity remains in
+Activity, including operations recorded before this upgrade. Work already executing
+must finish before its connection can be deleted.
+
+OAuth supports HTTPS Client ID Metadata Documents (CIMD) as well as dynamic client
+registration. Metadata identity, redirect URIs and supported authentication methods
+are validated before consent. Documents are bounded, time limited, cached according
+to their HTTP freshness, and never fetched through redirects. Node/Bun pins a public
+DNS address; Workers uses its public Internet fetch transport. Private and mixed
+public/private DNS results are rejected. Authorization responses include the exact
+issuer (`iss`). PKCE, resource binding and rotating refresh tokens apply to both
+registration methods.

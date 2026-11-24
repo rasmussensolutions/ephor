@@ -1,6 +1,8 @@
 import { passkeyClient } from "@better-auth/passkey/client";
+import { startAuthentication } from "@simplewebauthn/browser";
 import { createAuthClient } from "better-auth/react";
 import { authorizationId } from "./mcp";
+import { apiKey, queryClient } from "./query";
 
 export const authClient = createAuthClient({ plugins: [passkeyClient()] });
 export interface SessionInfo {
@@ -286,6 +288,10 @@ const messages: Record<string, string> = {
   SETUP_OR_RECOVERY_REQUIRED:
     "Your setup session expired. Request a new code from your deployment administrator.",
   LAST_PASSKEY: "Add another passkey before removing your last one.",
+  PASSKEY_VERIFICATION_FAILED: "Passkey verification failed. Please try again.",
+  MCP_CONNECTION_ACTIVE: "Revoke this connection before deleting it.",
+  MCP_CONNECTION_BUSY:
+    "Wait for the current operation to finish before deleting this connection.",
   REAUTH_REQUIRED: "Verify your identity with a passkey, then try again.",
   TOO_MANY_ATTEMPTS: "Too many attempts. Wait a minute, then try again.",
   PASSKEY_LIMIT: "You can register up to ten passkeys.",
@@ -312,14 +318,59 @@ export function errorMessage(code: string) {
   );
 }
 export async function api<T>(path: string, body?: unknown): Promise<T> {
+  // Cache ordinary read DTOs only; auth challenges and credential disclosures
+  // must always reach the server. QueryClient deduplicates concurrent readers.
+  if (
+    body === undefined &&
+    !path.startsWith("/auth/") &&
+    !/\/(workflow|recovery|catalog-access)$/.test(path)
+  )
+    return queryClient().fetchQuery({
+      queryKey: apiKey(path),
+      queryFn: ({ signal }) => request<T>(path, undefined, signal),
+      staleTime: path === "/session" ? 60_000 : 1_000,
+    });
+  const result = await request<T>(path, body);
+  if (path === "/auth/sign-out") {
+    await queryClient().cancelQueries();
+    queryClient().clear();
+    return result;
+  }
+  if (
+    body !== undefined &&
+    !["/panel/check", "/security/reauth/options"].includes(path)
+  ) {
+    const key =
+      path === "/security/reauth/verify" ? apiKey("/session") : ["api"];
+    await queryClient().cancelQueries({ queryKey: key });
+    void queryClient().invalidateQueries({ queryKey: key });
+    if (typeof window !== "undefined" && path !== "/security/reauth/verify")
+      window.dispatchEvent(new Event("ephor:data-changed"));
+  }
+  return result;
+}
+export class ApiError extends Error {
+  constructor(
+    public status: number,
+    public code: string,
+  ) {
+    super(errorMessage(code));
+  }
+}
+export async function request<T>(
+  path: string,
+  body?: unknown,
+  signal?: AbortSignal,
+): Promise<T> {
   const response = await fetch(`/api${path}`, {
+    signal,
     method: body === undefined ? "GET" : "POST",
     credentials: "same-origin",
     cache: "no-store",
     headers: body === undefined ? {} : { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  const data = await response.json();
+  const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     if (
       response.status === 401 &&
@@ -332,6 +383,7 @@ export async function api<T>(path: string, body?: unknown): Promise<T> {
         path.startsWith("/mcp") ||
         path === "/session")
     ) {
+      queryClient().clear();
       if (!location.pathname.match(/^\/(login|setup|recover)$/))
         location.replace(
           location.pathname === "/connect/ai" &&
@@ -342,7 +394,7 @@ export async function api<T>(path: string, body?: unknown): Promise<T> {
             : "/login",
         );
     }
-    throw new Error(errorMessage(data.code));
+    throw new ApiError(response.status, data.code ?? "INTERNAL_ERROR");
   }
   return data as T;
 }
@@ -359,4 +411,12 @@ export async function addPasskey(name: string, createSession = false) {
     throw new Error(
       result.error.message ?? "Passkey creation was cancelled or failed.",
     );
+}
+
+export async function reauthenticate() {
+  const optionsJSON = await api<
+    Parameters<typeof startAuthentication>[0]["optionsJSON"]
+  >("/security/reauth/options", {});
+  const response = await startAuthentication({ optionsJSON });
+  await api("/security/reauth/verify", { response });
 }

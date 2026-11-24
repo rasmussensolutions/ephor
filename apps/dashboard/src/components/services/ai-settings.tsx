@@ -3,7 +3,7 @@ import { useEffect, useId, useState } from "react";
 import { Autocomplete } from "@/components/ui/autocomplete";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { api, signIn } from "@/lib/auth";
+import { api, reauthenticate } from "@/lib/auth";
 
 export function AiSettings() {
   const id = useId();
@@ -53,7 +53,7 @@ export function AiSettings() {
     setError("");
     setNotice("");
     try {
-      await signIn();
+      await reauthenticate();
       const next = await api<AiStatus>(
         `/integrations/ai/${disconnect ? "disconnect" : "connect"}`,
         disconnect ? {} : { provider: "openrouter", apiKey: key, model },

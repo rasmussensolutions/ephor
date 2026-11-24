@@ -8,7 +8,7 @@ import {
 } from "@/components/settings-layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { addPasskey, api, signIn } from "@/lib/auth";
+import { addPasskey, api, reauthenticate } from "@/lib/auth";
 
 interface Security {
   passkeys: {
@@ -81,7 +81,7 @@ function SecurityPage() {
                 variant="outline"
                 disabled={busy}
                 onClick={() =>
-                  run(signIn, "Identity verified for five minutes.")
+                  run(reauthenticate, "Identity verified for five minutes.")
                 }
               >
                 Verify identity
@@ -321,6 +321,8 @@ const auditLabels: Record<string, string> = {
   "recovery.rejected": "Recovery code rejected",
   "recovery.codes_rotated": "Recovery codes generated",
   "recovery.operator_issued": "Administrator recovery code issued",
+  "session.verified": "Identity verified",
+  "session.verification_rejected": "Identity verification failed",
   "session.signed_in": "Signed in",
   "session.sign_in_rejected": "Sign-in attempt rejected",
   "session.signed_out": "Signed out",

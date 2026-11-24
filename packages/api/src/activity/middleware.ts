@@ -50,6 +50,17 @@ export function describeActivity(path: string, body: Body): Description {
     "/api/recovery/start": { action: "Start account recovery" },
     "/api/auth/passkey/verify-registration": { action: "Register passkey" },
     "/api/auth/passkey/verify-authentication": { action: "Sign in" },
+    "/api/security/reauth/verify": { action: "Verify identity" },
+    "/api/mcp/delete": {
+      action: "Delete MCP connection",
+      type: "mcp",
+      id: body.id,
+    },
+    "/api/mcp/revoke": {
+      action: "Revoke MCP connection",
+      type: "mcp",
+      id: body.id,
+    },
     "/api/auth/sign-out": { action: "Sign out" },
     "/api/machines/enrollments": {
       action: body.id
@@ -284,6 +295,8 @@ export function activityMiddleware(env: AuthEnvironment): MiddlewareHandler {
     const path = c.req.path;
     if (
       path === "/api/panel-updater/poll" ||
+      path === "/api/security/reauth/options" ||
+      path === "/api/panel/check" ||
       path.startsWith("/api/agent/") ||
       path.startsWith("/api/deploy/") ||
       path === "/api/integrations/github/webhook"

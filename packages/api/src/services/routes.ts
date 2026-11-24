@@ -180,14 +180,16 @@ export function serviceOwnerRoutes(app: Hono, env: AuthEnvironment) {
   );
   const github = new GitHubApp(env.sql, env.secret, env.origin),
     builds = new Builds(env.sql, env.secret, github);
-  app.get("/api/services", async (c) =>
-    c.json({
-      services: await services.list(undefined, c.req.query("summary") === "1"),
-      deployments: await services.history(),
-      workers: await services.workers(),
-      builds: await builds.list(undefined, c.req.query("summary") === "1"),
-    }),
-  );
+  app.get("/api/services", async (c) => {
+    const summary = c.req.query("summary") === "1";
+    const [items, deployments, workers, history] = await Promise.all([
+      services.list(undefined, summary),
+      services.history(),
+      services.workers(),
+      builds.list(undefined, summary),
+    ]);
+    return c.json({ services: items, deployments, workers, builds: history });
+  });
   app.get("/api/services/catalog", (c) => c.json({ apps: catalog() }));
   app.get("/api/services/:id", async (c) => {
     const row = await services.get(c.req.param("id"));

@@ -253,7 +253,16 @@ export async function requireOwner(
   if (
     fresh &&
     Date.now() - new Date(session.session.createdAt).getTime() >= FRESH_MS
-  )
-    throw new AuthError("REAUTH_REQUIRED", 403);
+  ) {
+    const [verification] = await store.sql.query<{ verified_at: number }>(
+      "SELECT verified_at FROM ephor_session_verification WHERE session_id=$1",
+      [session.session.id],
+    );
+    if (
+      !verification ||
+      Date.now() - Number(verification.verified_at) >= FRESH_MS
+    )
+      throw new AuthError("REAUTH_REQUIRED", 403);
+  }
   return session;
 }

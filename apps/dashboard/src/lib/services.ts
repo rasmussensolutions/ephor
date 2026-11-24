@@ -7,6 +7,7 @@ import type {
   ServiceTopology,
 } from "@ephor/api/services";
 export interface Service {
+  observedAt?: number;
   id: string;
   machineId: string;
   name: string;
@@ -71,6 +72,7 @@ export function uptime(seconds: number) {
   return `${Math.floor(seconds / 86400)}d ${Math.floor((seconds % 86400) / 3600)}h`;
 }
 export function serviceStatus(s: Service, data: ServiceList) {
+  const observedAt = s.observedAt ?? Date.now();
   const job = data.deployments.find(
     (d) => d.service_id === s.id && ["queued", "running"].includes(d.status),
   );
@@ -88,7 +90,7 @@ export function serviceStatus(s: Service, data: ServiceList) {
       ["queued", "running", "built"].includes(b.status),
   );
   if (build) return "Building";
-  if (s.runtimeAt && Date.now() - s.runtimeAt > 120000) return "Unavailable";
+  if (s.runtimeAt && observedAt - s.runtimeAt > 120000) return "Unavailable";
   if (s.runtime?.catalog?.recoveryRequired) {
     const completed = data.deployments.find(
       (d) =>
@@ -104,7 +106,7 @@ export function serviceStatus(s: Service, data: ServiceList) {
     if (
       completed?.status === "succeeded" &&
       (s.runtimeAt <= completed.updated_at ||
-        Date.now() - completed.updated_at < 60000)
+        observedAt - completed.updated_at < 60000)
     )
       return "Updating status";
     return "Recovery required";
@@ -136,7 +138,7 @@ export function serviceNeedsAttention(status: string) {
   ].includes(status);
 }
 export function currentMetrics(s: Service) {
-  return s.runtimeAt > Date.now() - 120000 &&
+  return s.runtimeAt > (s.observedAt ?? Date.now()) - 120000 &&
     ["running", "unhealthy"].includes(s.runtime?.status ?? "")
     ? (s.runtime?.metrics ?? null)
     : null;

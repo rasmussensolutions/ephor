@@ -41,7 +41,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { useServices } from "@/hooks/use-services";
-import { api, errorMessage, signIn } from "@/lib/auth";
+import { api, errorMessage, reauthenticate } from "@/lib/auth";
 import { needsFirstDeployment } from "@/lib/first-deployment";
 import {
   componentLabel,
@@ -157,7 +157,7 @@ export function ServiceDetails({
     setError("");
     setNotice("");
     try {
-      if (fresh) await signIn();
+      if (fresh) await reauthenticate();
       await fn();
       await refresh();
     } catch (e) {

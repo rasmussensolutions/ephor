@@ -101,3 +101,14 @@ test("stale reports show unavailable and another service cannot hide recovery", 
   });
   assert.equal(serviceStatus(service, data), "Recovery required");
 });
+
+test("a cached healthy report stays healthy while the resumed tab refreshes", () => {
+  const { service, data } = fixture("succeeded", 300000, 1000);
+  assert.ok(service.runtime);
+  service.runtime.status = "running";
+  delete service.runtime.catalog;
+  service.observedAt = service.runtimeAt + 5000;
+  assert.equal(serviceStatus(service, data), "Running");
+  service.observedAt = Date.now();
+  assert.equal(serviceStatus(service, data), "Unavailable");
+});

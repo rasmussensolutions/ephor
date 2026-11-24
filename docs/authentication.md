@@ -159,3 +159,13 @@ recovery, fresh-auth requirements, durable limits and concurrent last-key remova
 Use a dedicated test database: tests create and drop their own randomly named
 schemas. Browser checks should exercise real/virtual WebAuthn enrollment,
 sign-in, security controls, and recovery on both runtime distributions.
+
+### Identity verification within a session
+
+Sensitive panel actions use a dedicated WebAuthn ceremony bound to the current
+session. Its five-minute, single-use challenge requires user verification, the
+configured origin/RP ID and an active owner credential. Successful verification
+updates a separate freshness record; it does not issue a new session, change the
+session cookie, extend expiry, or alter the original sign-in time. Activity labels
+it “Verify identity”. The verification record is removed when the session is
+deleted, and session/credential revocation is rechecked after signature validation.

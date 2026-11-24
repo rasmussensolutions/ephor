@@ -6,6 +6,12 @@ import { z } from "zod";
 import { type AuthEnvironment, createAuth, requireOwner } from "../auth/config";
 import { AuthError, AuthStore, hash, randomToken } from "../auth/store";
 import {
+  clientId,
+  fetchClientMetadata,
+  resolveClient,
+  validRedirect,
+} from "./client-metadata";
+import {
   AgentOperations,
   descriptions,
   operationTools,
@@ -23,7 +29,7 @@ const grant = z
   .strict();
 const requestSchema = z
   .object({
-    client_id: z.string().uuid(),
+    client_id: clientId,
     redirect_uri: z.string().max(2048),
     response_type: z.literal("code"),
     code_challenge: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
@@ -88,6 +94,8 @@ export function mcpPublicRoutes(
   app.get("/.well-known/oauth-authorization-server", (c) =>
     c.json({
       issuer: env.origin,
+      client_id_metadata_document_supported: true,
+      authorization_response_iss_parameter_supported: true,
       authorization_endpoint: `${env.origin}/oauth/authorize`,
       token_endpoint: `${env.origin}/oauth/token`,
       registration_endpoint: `${env.origin}/oauth/register`,
@@ -147,20 +155,8 @@ export function mcpPublicRoutes(
       })
       .passthrough()
       .parse(await c.req.json());
-    for (const uri of b.redirect_uris) {
-      const u = new URL(uri);
-      if (
-        u.username ||
-        u.password ||
-        u.hash ||
-        (u.protocol !== "https:" &&
-          !(
-            u.protocol === "http:" &&
-            ["localhost", "127.0.0.1", "[::1]"].includes(u.hostname)
-          ))
-      )
-        throw new AuthError("INVALID_REDIRECT_URI");
-    }
+    for (const uri of b.redirect_uris)
+      if (!validRedirect(uri)) throw new AuthError("INVALID_REDIRECT_URI");
     const clientId = crypto.randomUUID();
     await env.sql.query(
       "INSERT INTO ephor_mcp_client(id,name,redirects,created_at) VALUES($1,$2,$3,$4)",
@@ -185,10 +181,18 @@ export function mcpPublicRoutes(
         return c.json({ error: "invalid_request" }, 400);
     }
     const b = requestSchema.parse(Object.fromEntries(query));
-    const [client] = await env.sql.query<{ redirects: string }>(
-      "SELECT redirects FROM ephor_mcp_client WHERE id=$1",
-      [b.client_id],
-    );
+    let client: Awaited<ReturnType<typeof resolveClient>>;
+    try {
+      await store.limit(`mcp-metadata:${await hash(clientIP(c.req.raw))}`, 30);
+      client = await resolveClient(env.sql, b.client_id, (value) =>
+        fetchClientMetadata(
+          value,
+          env.deployment?.runtime === "cloudflare-worker",
+        ),
+      );
+    } catch {
+      return c.json({ error: "invalid_client" }, 400);
+    }
     if (
       !client ||
       !(JSON.parse(client.redirects) as string[]).includes(b.redirect_uri) ||
@@ -218,7 +222,7 @@ export function mcpPublicRoutes(
         .object({
           grant_type: z.literal("refresh_token"),
           refresh_token: z.string().regex(/^[a-f0-9]{64}$/),
-          client_id: id,
+          client_id: clientId,
           resource: z.literal(resource),
         })
         .strict()
@@ -249,7 +253,7 @@ export function mcpPublicRoutes(
       .object({
         grant_type: z.literal("authorization_code"),
         code: z.string().regex(/^[a-f0-9]{64}$/),
-        client_id: id,
+        client_id: clientId,
         redirect_uri: z.string().max(2048),
         code_verifier: z.string().regex(/^[A-Za-z0-9._~-]{43,128}$/),
         resource: z.string().max(2048),
@@ -476,6 +480,40 @@ export function mcpOwnerRoutes(app: Hono, env: AuthEnvironment) {
     await store.audit("mcp.revoked", b.id);
     return c.json({ ok: true });
   });
+  app.post("/api/mcp/delete", async (c) => {
+    const { id: connectionId } = z
+      .object({ id })
+      .strict()
+      .parse(await c.req.json());
+    const [connection] = await env.sql.query<{ revoked: number }>(
+      "SELECT revoked FROM ephor_mcp_connection WHERE id=$1",
+      [connectionId],
+    );
+    if (!connection) throw new AuthError("NOT_FOUND", 404);
+    if (!connection.revoked) throw new AuthError("MCP_CONNECTION_ACTIVE", 409);
+    const running = await env.sql.query(
+      "SELECT id FROM ephor_mcp_operation WHERE connection_id=$1 AND status='executing'",
+      [connectionId],
+    );
+    if (running.length) throw new AuthError("MCP_CONNECTION_BUSY", 409);
+    // Revocation prevents new authorization/operation claims. Remove credentials
+    // and FK dependants; activity snapshots deliberately survive this deletion.
+    for (const table of [
+      "ephor_mcp_access",
+      "ephor_mcp_refresh",
+      "ephor_mcp_oauth",
+      "ephor_mcp_operation",
+    ])
+      await env.sql.query(`DELETE FROM ${table} WHERE connection_id=$1`, [
+        connectionId,
+      ]);
+    await env.sql.query(
+      "DELETE FROM ephor_mcp_connection WHERE id=$1 AND revoked=1",
+      [connectionId],
+    );
+    await store.audit("mcp.deleted", connectionId);
+    return c.json({ ok: true });
+  });
   app.post("/api/mcp/decide", async (c) => {
     const b = z
       .object({ id, approve: z.boolean() })
@@ -495,6 +533,7 @@ export function mcpOwnerRoutes(app: Hono, env: AuthEnvironment) {
     const q: OAuthRequest = JSON.parse(r.request),
       redirect = new URL(q.redirect_uri);
     redirect.searchParams.set("state", q.state);
+    redirect.searchParams.set("iss", env.origin);
     const claimed = await env.sql.query(
       "UPDATE ephor_mcp_oauth SET status='consenting' WHERE id=$1 AND status='pending' AND expires_at>$2 RETURNING id",
       [r.id, Date.now()],

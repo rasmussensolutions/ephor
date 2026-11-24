@@ -1315,3 +1315,68 @@ test("OAuth requires explicit consent and PKCE, exact redirect/resource binding,
     (await f.app.request(`${origin}/oauth/authorize?${query}`)).status,
   ).toBe(400);
 });
+
+test("revoked MCP connections can be deleted with dependent tokens while named activity survives", async () => {
+  const f = await setup();
+  const grant = await new AgentAccess(f.env).issue(
+    "ChatGPT",
+    { ...f.policy, allProjects: true, execution: "direct" },
+    30,
+  );
+  const args = { name: "Agent project", requestKey: "activity-delete-001" };
+  const result = (await f.operations.call(
+    grant.id,
+    "create_project",
+    args,
+  )) as { operationId: string };
+  await f.operations.call(grant.id, "create_project", args);
+  const entries = await f.sql.query<{
+    actor_name: string;
+    actor_kind: string;
+    outcome: string;
+  }>("SELECT * FROM ephor_activity WHERE id=$1", [result.operationId]);
+  expect(entries).toHaveLength(1);
+  expect(entries[0]).toMatchObject({
+    actor_name: "ChatGPT",
+    actor_kind: "agent",
+    outcome: "succeeded",
+  });
+  expect(
+    (await f.browser.request("/mcp/delete", { id: grant.id })).status,
+  ).toBe(409);
+  expect(
+    (await f.browser.request("/mcp/revoke", { id: grant.id })).status,
+  ).toBe(200);
+  await f.sql.query(
+    "INSERT INTO ephor_mcp_access(token_hash,connection_id,expires_at) VALUES($1,$2,$3)",
+    [randomToken(), grant.id, Date.now() + 10000],
+  );
+  expect(
+    (await f.browser.request("/mcp/delete", { id: grant.id })).status,
+  ).toBe(200);
+  for (const table of [
+    "ephor_mcp_access",
+    "ephor_mcp_refresh",
+    "ephor_mcp_oauth",
+    "ephor_mcp_operation",
+  ])
+    expect(
+      await f.sql.query(`SELECT * FROM ${table} WHERE connection_id=$1`, [
+        grant.id,
+      ]),
+    ).toHaveLength(0);
+  expect(
+    await f.sql.query("SELECT id FROM ephor_mcp_connection WHERE id=$1", [
+      grant.id,
+    ]),
+  ).toHaveLength(0);
+  expect(
+    await f.sql.query("SELECT id FROM ephor_activity WHERE id=$1", [
+      result.operationId,
+    ]),
+  ).toHaveLength(1);
+  const activity = await (
+    await f.browser.request(`/activity?user=${grant.id}`)
+  ).json();
+  expect(activity.items[0].actor.name).toBe("ChatGPT");
+});

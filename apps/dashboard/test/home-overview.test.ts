@@ -80,7 +80,7 @@ const plan: BackupOverview["plans"][number] = {
 test("offline machines suppress duplicate service warnings and stale metrics", () => {
   const result = homeOverview(
     [
-      machine({ lastSeen: now - 60_000 }),
+      machine({ status: "offline", lastSeen: now - 60_000 }),
       machine({ id: "revoked", status: "revoked" }),
     ],
     data([service({ runtimeAt: now - 180_000 })]),
@@ -231,4 +231,16 @@ test("cancelling a later build does not resolve a failed deployment", () => {
   expect(
     homeOverview([machine()], services, null, now).attention[0]?.detail,
   ).toContain("deployment failed");
+});
+
+test("returning to a suspended tab does not turn a cached online report into an offline alert", () => {
+  const result = homeOverview(
+    [machine({ lastSeen: now - 600_000 })],
+    data(),
+    null,
+    now,
+  );
+  expect(
+    result.attention.some((item) => item.detail.includes("Machine offline")),
+  ).toBe(false);
 });

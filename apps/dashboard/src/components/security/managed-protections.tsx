@@ -21,7 +21,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Select } from "@/components/ui/select";
-import { api, signIn } from "@/lib/auth";
+import { api, reauthenticate } from "@/lib/auth";
 import { useSecurityData, when } from "./security-data";
 import { SecurityLayer } from "./security-layer";
 import { MachineProtection } from "./security-protections";
@@ -328,7 +328,7 @@ export function UpdateManagement({
   }
   function review(action: ProtectionAction) {
     void run(async () => {
-      await signIn();
+      await reauthenticate();
       setAccepted(false);
       setPlan(
         await api("/security/protections/plan", {
@@ -569,7 +569,7 @@ export function UpdateManagement({
               }
               onClick={() =>
                 void run(async () => {
-                  await signIn();
+                  await reauthenticate();
                   await api("/security/protections/approve", { id: plan.id });
                   setPlan(null);
                   setNotice(

@@ -1,12 +1,11 @@
 import type { MachineDetail } from "@ephor/api/machines";
 import { PlugIcon, PlusIcon } from "@phosphor-icons/react";
-
 import { ClockIcon } from "@phosphor-icons/react/dist/csr/Clock";
 import { CpuIcon } from "@phosphor-icons/react/dist/csr/Cpu";
 import { HardDriveIcon } from "@phosphor-icons/react/dist/csr/HardDrive";
 import { MemoryIcon } from "@phosphor-icons/react/dist/csr/Memory";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { MachineCharts } from "@/components/machines/machine-charts";
 import { MachineMaintenance } from "@/components/machines/machine-maintenance";
 import { MachineServices } from "@/components/machines/machine-services";
@@ -14,10 +13,10 @@ import { MachineSettings } from "@/components/machines/machine-settings";
 import { MachineStatus } from "@/components/machines/machine-status";
 import { ProviderIcon } from "@/components/provider-label";
 import { SecurityWorkspace } from "@/components/security/security-workspace";
-
 import { Button } from "@/components/ui/button";
 import { Usage } from "@/components/usage-meter";
-import { api, signIn } from "@/lib/auth";
+import { useApiQuery } from "@/hooks/use-api-query";
+import { api, reauthenticate } from "@/lib/auth";
 
 import { currentMachineMetrics } from "@/lib/machine-metrics";
 import { bytes, uptime } from "@/lib/services";
@@ -51,8 +50,9 @@ function MachineRoute() {
 }
 function MachinePage({ initial }: { initial: MachineDetail }) {
   const navigate = useNavigate();
-  const [data, setData] = useState(initial);
-  const [now, setNow] = useState(Date.now);
+  const inventory = useApiQuery(`/machines/${initial.machine.id}`, initial);
+  const data = inventory.data;
+  const now = inventory.dataUpdatedAt;
   const [tab, setTab] = useState("Overview");
   useEffect(() => {
     const select = () => {
@@ -62,43 +62,16 @@ function MachinePage({ initial }: { initial: MachineDetail }) {
     window.addEventListener("hashchange", select);
     return () => window.removeEventListener("hashchange", select);
   }, []);
-  const [refreshError, setRefreshError] = useState("");
+  const refreshError = inventory.isError
+    ? "Could not refresh this machine. Showing the last received report."
+    : "";
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const id = initial.machine.id;
-  const refresh = useCallback(async () => {
-    setData(await api<MachineDetail>(`/machines/${id}`));
-    setRefreshError("");
-  }, [id]);
-  useEffect(() => {
-    let active = true;
-    let timer: ReturnType<typeof setTimeout>;
-    async function poll() {
-      if (!document.hidden) {
-        try {
-          const next = await api<MachineDetail>(`/machines/${id}`);
-          if (active) {
-            setData(next);
-            setRefreshError("");
-          }
-        } catch {
-          if (active)
-            setRefreshError(
-              "Could not refresh this machine. Values may be out of date. Retrying automatically.",
-            );
-        }
-      }
-      if (active) timer = setTimeout(poll, 15000);
-    }
-    timer = setTimeout(poll, 15000);
-    const clock = setInterval(() => setNow(Date.now()), 15000);
-    return () => {
-      active = false;
-      clearTimeout(timer);
-      clearInterval(clock);
-    };
-  }, [id]);
+  const refresh = async () => {
+    await inventory.refetch({ throwOnError: true });
+  };
   async function run(action: () => Promise<void>) {
     setBusy(true);
     setError("");
@@ -204,7 +177,7 @@ function MachinePage({ initial }: { initial: MachineDetail }) {
                 )
               )
                 void run(async () => {
-                  await signIn();
+                  await reauthenticate();
                   await api("/machines/revoke", { id });
                   setNotice("Machine disconnected.");
                 });

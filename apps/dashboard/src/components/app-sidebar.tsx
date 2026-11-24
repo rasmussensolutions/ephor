@@ -7,6 +7,7 @@ import { ChatCircleDotsIcon } from "@phosphor-icons/react/dist/csr/ChatCircleDot
 import { ClockCounterClockwiseIcon } from "@phosphor-icons/react/dist/csr/ClockCounterClockwise";
 import { FlowArrowIcon } from "@phosphor-icons/react/dist/csr/FlowArrow";
 import { GearSixIcon } from "@phosphor-icons/react/dist/csr/GearSix";
+import { GraphIcon } from "@phosphor-icons/react/dist/csr/Graph";
 import { HouseIcon } from "@phosphor-icons/react/dist/csr/House";
 import { MagicWandIcon } from "@phosphor-icons/react/dist/csr/MagicWand";
 import { MoonIcon } from "@phosphor-icons/react/dist/csr/Moon";
@@ -35,6 +36,7 @@ import {
 } from "@/components/ui/sidebar";
 import { useUnreadNotifications } from "@/hooks/use-unread-notifications";
 import { themeStorageKey } from "@/lib/theme";
+import { SidebarUpdateCard } from "./panel-update-provider";
 
 const navigationGroups = [
   {
@@ -52,7 +54,6 @@ const navigationGroups = [
       { title: "Machines", to: "/machines", icon: CubeIcon },
       { title: "Services", to: "/services", icon: GridFourIcon },
       { title: "Projects", to: "/projects", icon: FolderOpenIcon },
-      { title: "Updates", to: "/updates", icon: ArrowCircleUpIcon },
     ],
   },
   {
@@ -79,10 +80,11 @@ const settingsNavigationGroups = [
       },
       { title: "Integrations", to: "/settings/integrations", icon: PlugsIcon },
       {
-        title: "AI connections",
+        title: "MCP",
         to: "/settings/ai-connections",
-        icon: PlugsIcon,
+        icon: GraphIcon,
       },
+      { title: "Updates", to: "/settings/updates", icon: ArrowCircleUpIcon },
       { title: "Backups", to: "/settings/backups", icon: ArchiveIcon },
     ],
   },
@@ -246,6 +248,7 @@ export function AppSidebar({
         </nav>
       </SidebarContent>
       <SidebarFooter>
+        <SidebarUpdateCard collapsed={collapsed} />
         <SidebarMenu>
           {!inSettings && (
             <SidebarMenuItem>

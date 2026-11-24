@@ -117,7 +117,8 @@ test("excludes stale resources and separates waiting and disconnected machines",
   );
   assert.equal(summary.total, 5);
   assert.equal(summary.online, 1);
-  assert.equal(summary.offline, 2);
+  assert.equal(summary.offline, 1);
+  assert.equal(summary.stale, 1);
   assert.equal(summary.waiting, 2);
   assert.equal(summary.cores, 2);
   assert.equal(summary.memoryTotal, 100);

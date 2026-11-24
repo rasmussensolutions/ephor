@@ -10,7 +10,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { api, signIn } from "@/lib/auth";
+import { api, reauthenticate } from "@/lib/auth";
 
 export function MachineActionDialog({
   machine,
@@ -83,7 +83,7 @@ export function MachineActionDialog({
                   );
                   onComplete({ ...machine, name: result.name });
                 } else {
-                  await signIn();
+                  await reauthenticate();
                   await api(
                     removeEnrollment
                       ? "/machines/enrollments/cancel"

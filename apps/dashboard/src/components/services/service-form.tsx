@@ -15,7 +15,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { api, errorMessage, signIn } from "@/lib/auth";
+import { api, errorMessage, reauthenticate } from "@/lib/auth";
 import { RepositoryBranchPicker, RepositoryPicker } from "./github-source";
 
 export interface EditableService {
@@ -166,7 +166,7 @@ export function ServiceForm({
         aliases: draft.aliases.split(/[\s,]+/).filter(Boolean),
         redirect: draft.redirect,
       };
-      await signIn();
+      await reauthenticate();
       if (service) {
         await api(`/services/${service.id}/configure`, {
           spec,

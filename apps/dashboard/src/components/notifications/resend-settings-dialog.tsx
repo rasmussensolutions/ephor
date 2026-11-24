@@ -12,7 +12,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { api, signIn } from "@/lib/auth";
+import { api, reauthenticate } from "@/lib/auth";
 
 export function ResendSettingsDialog({
   settings,
@@ -37,7 +37,7 @@ export function ResendSettingsDialog({
     setBusy(true);
     setError("");
     try {
-      await signIn();
+      await reauthenticate();
       const result = await api<NotificationSettings>(
         "/notifications/settings",
         disconnect

@@ -2,7 +2,7 @@ import type { SecurityDeployment, SecurityOverview } from "@ephor/api/security";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
-import { api, signIn } from "@/lib/auth";
+import { api, reauthenticate } from "@/lib/auth";
 import { when } from "./security-data";
 export const runtimeLabel = (d: SecurityDeployment | null) =>
   d?.runtime === "cloudflare-worker"
@@ -30,7 +30,7 @@ export function DeploymentDetails({
     setBusy(true);
     setError("");
     try {
-      await signIn();
+      await reauthenticate();
       await api("/security/deployment", { ...draft, revision: data.revision });
       setEditing(false);
       changed();

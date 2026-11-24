@@ -30,11 +30,10 @@ export const machineHref = (id: string) =>
   `/machines/${encodeURIComponent(id)}`;
 export const serviceHref = (id: string) =>
   `/services/${encodeURIComponent(id)}`;
-export function currentMachineStatus(machine: Machine, now: number) {
-  return machine.status === "online" &&
-    (machine.lastSeen === null || now - machine.lastSeen >= 60_000)
-    ? "offline"
-    : machine.status;
+// The server reports connectivity. An old browser snapshot is stale, not
+// evidence that a machine went offline while this tab was suspended.
+export function currentMachineStatus(machine: Machine, _now: number) {
+  return machine.status;
 }
 export function activeMachines(machines: Machine[]) {
   return machines.filter((m) => !["revoked", "expired"].includes(m.status));

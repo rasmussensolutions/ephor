@@ -4,7 +4,7 @@ Ephor hosts install official releases. You do not need to fork, clone, merge, or
 build this repository. Docker and Railway run the official container image;
 Cloudflare runs a native Worker with prebuilt dashboard assets, not a container.
 
-The installer connects updates once. Afterward open **Updates → Check for updates
+The installer connects updates once. Afterward open **Settings → Updates → Check for updates
 → Update to …** and authorize with your passkey. The page reconnects during a
 restart and confirms the version actually running. Closing the browser does not
 cancel an approved update. Machine components remain together under each
@@ -257,3 +257,16 @@ releases stay immutable. Panel releases
 must use `--latest=false` so daemon discovery remains independent. Publish the
 versioned assets before moving the stable pointer. Test a disposable deployment
 before announcing a new release. Hosts never build or run `git pull` to update.
+
+### Background discovery and update display
+
+Settings → Updates is also available from the bottom-sidebar update card when a
+compatible release is found. Authenticated release checks do not require passkey
+verification; installing a release and changing hosting still do. Checks run in the
+existing scheduled updater and from an open panel, with a durable hourly throttle
+shared by tabs and replicas. Machine release discovery no longer blocks page reads.
+
+An active update displays the Ephor logo, spinner and progress across the entire
+app, with navigation inert and focus held in the update dialog. Polling survives
+restart errors, reloads the frontend after verified completion, and returns control
+on a reported failure. The old `/updates` URL redirects into Settings.

@@ -110,8 +110,19 @@ test("integrations use native Workers fetch and D1 without following credential-
             },
           ],
         });
+      if (url.hostname === "chatgpt.com") {
+        assert.equal(request.headers.get("authorization"), null);
+        return json({
+          client_id: url.href,
+          client_name: "ChatGPT",
+          redirect_uris: [
+            "https://chatgpt.com/connector_platform_oauth_redirect",
+          ],
+          token_endpoint_auth_methods_supported: ["none", "private_key_jwt"],
+        });
+      }
       if (url.hostname === "cloudflare-dns.com")
-        return json({ Status: 0, Answer: [{ type: 1, data: "203.0.113.1" }] });
+        return json({ Status: 0, Answer: [{ type: 1, data: "1.1.1.1" }] });
       if (url.hostname === "api.resend.com")
         return json({ id: "fixture-email" });
       throw Error(`Unexpected outbound host: ${url.hostname}`);
@@ -164,6 +175,7 @@ test("integrations use native Workers fetch and D1 without following credential-
     assert.ok((await invoke("dns")).length > 0);
     assert.equal((await invoke("legacy")).repositoryId, "1");
     assert.equal((await invoke("releases")).ok, true);
+    assert.equal((await invoke("cimd")).name, "ChatGPT");
     const before = calls.length;
     const redirect = await runtime.dispatchFetch("https://fixture/redirect");
     assert.equal(redirect.status, 500);
