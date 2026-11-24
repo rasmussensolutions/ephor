@@ -4,6 +4,13 @@ Ephor installs one executable, `/usr/local/bin/ephord`, with one version and upd
 
 Use **Machines → your machine → Maintenance** for status, setup, repair and **Update Ephor on this machine**. Operating-system packages and hosted applications have their own lifecycles. The panel can run on Docker, a VPS, Railway, or Cloudflare Workers; update jobs and progress live in PostgreSQL or D1. Each managed Linux/systemd machine polls outbound over HTTPS. No SSH credentials or inbound agent port are required. A panel hosted on Workers or Railway does not need a local systemd service or a writable executable directory.
 
+Official Worker installations and the official Docker/Railway image already
+configure the official signed release channel. New machine enrollment enables
+the updater automatically. Hosters do not need to generate signing keys, set
+release variables, publish binaries, or run database migrations manually when
+using official panel releases. The publishing instructions below are for
+maintainers and custom release sources.
+
 ## Release setup (maintainer, once)
 
 1. Generate a release signing key outside the repository, or in the ignored `.release-keys` directory:
@@ -18,7 +25,7 @@ Use **Machines → your machine → Maintenance** for status, setup, repair and 
 
 3. Ephor's first daemon release is `0.1.0`, tagged `daemon-v0.1.0`. For subsequent releases, increase the workspace version in `Cargo.toml`, update `Cargo.lock`, commit, and push a matching `daemon-v<version>` tag. `.github/workflows/daemon-release.yml` tests and builds static Linux x86_64 and aarch64 executables on parallel native runners, signs `release.json`, and publishes the assets. Every subsequent Ephor release must have a **strictly higher** numeric version. Never rebuild or replace assets under an existing version.
 
-4. Configure both variables on each panel and restart/redeploy it:
+4. For a custom release source, configure both variables on each panel and restart/redeploy it:
 
    ```dotenv
    EPHOR_RELEASE_URL=https://github.com/OWNER/REPO/releases/latest/download/release.json
@@ -27,7 +34,7 @@ Use **Machines → your machine → Maintenance** for status, setup, repair and 
 
    Use a repository whose latest release is a daemon release. If you publish unrelated panel releases in the same repository, use a separate daemon release repository or a dedicated stable manifest URL on your own HTTPS host/R2 custom domain. The stable URL may move; the artifact URLs inside each signed manifest must stay version-specific. The panel and updater verify signatures independently, so a mirror cannot substitute its own binaries.
 
-5. Apply the database migration before starting the new panel:
+5. For a source installation, apply the database migration before starting the new panel:
 
    ```sh
    bun run auth:admin migrate
@@ -35,7 +42,7 @@ Use **Machines → your machine → Maintenance** for status, setup, repair and 
    bun run auth:admin migrate --worker --remote
    ```
 
-   `bun run dev:tunnel` already runs migrations on startup. Docker and Railway operators should run the migration as part of their deployment procedure. Docker Compose forwards the two optional release environment variables. Workers users set them as Worker variables (the public key is not a secret).
+   `bun run dev:tunnel` already runs migrations on startup. Official container releases migrate on startup, and the Worker release updater applies migrations automatically. Source deployments must arrange their own migration step. For custom release channels, forward both variables into the server process or set both Worker variables (the public key is not a secret).
 
 ## Enable unified maintenance
 
@@ -48,7 +55,7 @@ EPHOR_DAEMON_LOCAL=1 bun run build
 
 The official `daemon-v0.2.2` release provides `updaterProtocol: 3` and is pinned in `scripts/download-daemon.ts` for template deployments, including the README’s Deploy to Cloudflare button. The older `0.1.0` release remains immutable. Existing machines must run the Maintenance setup command once to migrate before they can claim protocol-3 updates. For future releases, publish a new signed version and update the template’s version and manifest checksum together. Building source locally does not publish a release.
 
-New enrollment uses the shared executable immediately; with release variables configured it also enables the updater automatically. Existing machines use **Maintenance → Get setup or repair command** once, after passkey verification. Run that command on the enrolled Linux/systemd machine with sudo access within ten minutes. It downloads one checksummed candidate, snapshots the old layout, replaces the canonical executable and converts existing `/usr/local/libexec/ephor-{services,security,protections,updater}` copies into compatibility symlinks. New unit definitions invoke `/usr/local/bin/ephord` directly. Existing units and OS-update guards that reference old paths continue working through those aliases. Unexpected symlinks, unsafe permissions and component downgrades are rejected.
+New enrollment uses the shared executable immediately and enables the updater automatically on official installations. Custom source builds need a configured release URL and signing key. Existing machines use **Maintenance → Get setup or repair command** once, after passkey verification. Run that command on the enrolled Linux/systemd machine with sudo access within ten minutes. It downloads one checksummed candidate, snapshots the old layout, replaces the canonical executable and converts existing `/usr/local/libexec/ephor-{services,security,protections,updater}` copies into compatibility symlinks. New unit definitions invoke `/usr/local/bin/ephord` directly. Existing units and OS-update guards that reference old paths continue working through those aliases. Unexpected symlinks, unsafe permissions and component downgrades are rejected.
 
 Migration preserves identities, configuration and signing trust, and restarts only roles that were active. Setup then configures deployment/security roles and the updater; stopped existing deployment/security/protection units remain stopped. Monitoring must already be enrolled. Repair cannot silently rotate the pinned signing key. Role installers configure services and dependencies, but cannot replace the shared executable; they reject a panel bundle whose checksum differs from the installed binary. Bring the panel bundle and machine to the same release before configuring additional roles.
 

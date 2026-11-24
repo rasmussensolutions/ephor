@@ -33,6 +33,8 @@ import {
 } from "./panel/release/routes";
 import { PANEL_VERSION } from "./panel/release/version";
 
+export { machineReleaseConfig } from "./machines/release-config";
+
 export { processPanelRelease } from "./panel/release/updates";
 
 import { projectOwnerRoutes } from "./projects/routes";

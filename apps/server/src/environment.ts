@@ -1,7 +1,12 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type AuthEnvironment, type Sql, validateConfig } from "@ephor/api";
+import {
+  type AuthEnvironment,
+  machineReleaseConfig,
+  type Sql,
+  validateConfig,
+} from "@ephor/api";
 import pg from "pg";
 
 export const daemonDirectory =
@@ -43,8 +48,11 @@ export function environment() {
     railwayEnvironmentId: process.env.RAILWAY_ENVIRONMENT_ID,
     database: pool,
     sql,
-    releaseUrl: process.env.EPHOR_RELEASE_URL,
-    releasePublicKey: process.env.EPHOR_RELEASE_PUBLIC_KEY,
+    ...machineReleaseConfig(
+      process.env.EPHOR_RELEASE_URL,
+      process.env.EPHOR_RELEASE_PUBLIC_KEY,
+      process.env.EPHOR_MANAGED_INSTALL === "1",
+    ),
     loadDaemonRelease: async () =>
       JSON.parse(
         await readFile(join(daemonDirectory, "manifest.json"), "utf8"),

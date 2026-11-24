@@ -10,6 +10,20 @@ restart and confirms the version actually running. Closing the browser does not
 cancel an approved update. Machine components remain together under each
 machine's **Maintenance** tab.
 
+Official releases configure the signed machine-update channel automatically,
+including Workers installed without Wrangler configuration variables. Enrolling
+a new machine enables its updater in the same setup command. Normal panel and
+machine updates preserve the owner account, machine identities and stored data;
+you do not repeat initial setup. Panel updates and machine updates have separate
+approval controls in the same panel.
+
+If a machine was enrolled before its updater was enabled, run **Maintenance →
+Get setup or repair command** once on that machine. It preserves its identity;
+subsequent updates use Maintenance. Existing custom release sources and signing
+keys are preserved. Explicitly configured release variables must be supplied as
+a matching URL/key pair; Ephor never fills half of a custom trust configuration
+with official defaults.
+
 ## Install
 
 For a **VPS**, use the [one-command setup below](#docker--vps). It installs its

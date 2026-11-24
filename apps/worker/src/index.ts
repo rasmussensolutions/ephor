@@ -1,5 +1,6 @@
 import {
   createApi,
+  machineReleaseConfig,
   processNotifications,
   processPanelRelease,
   pruneMachineMetrics,
@@ -61,8 +62,11 @@ export default {
         setupCode: env.EPHOR_SETUP_CODE || undefined,
         database: env.DB,
         sql,
-        releaseUrl: env.EPHOR_RELEASE_URL,
-        releasePublicKey: env.EPHOR_RELEASE_PUBLIC_KEY,
+        ...machineReleaseConfig(
+          env.EPHOR_RELEASE_URL,
+          env.EPHOR_RELEASE_PUBLIC_KEY,
+          true,
+        ),
         loadDaemonRelease: async () => {
           const response = await env.ASSETS.fetch(
             new Request(`${env.EPHOR_ORIGIN}/daemon/manifest.json`),

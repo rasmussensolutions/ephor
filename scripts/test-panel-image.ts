@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { PUBLIC_KEY } from "../packages/api/src/panel/release/manifest";
 
 const image = process.argv[2];
 if (!image) throw new Error("Usage: bun scripts/test-panel-image.ts <image>");
@@ -23,7 +24,7 @@ const env = [
   "-e",
   `DATABASE_URL=postgresql://ephor:test@${id}-db:5432/ephor`,
   "-e",
-  "EPHOR_ORIGIN=http://localhost",
+  "EPHOR_ORIGIN=https://image-test.example",
   "-e",
   `BETTER_AUTH_SECRET=0123456789abcdef${randomBytes(48).toString("hex")}`,
   "-e",
@@ -89,6 +90,15 @@ try {
     throw new Error(`Panel did not start: ${await docker("logs", id)}`);
   };
   await health();
+  const enrollmentScript = await fetch(`${base}/api/agent/install.sh`);
+  const enrollmentText = await enrollmentScript.text();
+  if (
+    !enrollmentScript.ok ||
+    !enrollmentText.includes(`configure-updater '${PUBLIC_KEY}'`)
+  )
+    throw new Error(
+      `Official image did not enable the machine updater by default (HTTP ${enrollmentScript.status}, updater instruction: ${enrollmentText.includes("configure-updater")}, signing key: ${enrollmentText.includes(PUBLIC_KEY)}).`,
+    );
   const poll = await fetch(`${base}/api/panel-updater/poll`, {
     method: "POST",
     headers: {
@@ -103,7 +113,10 @@ try {
     throw new Error(`Host updater authentication failed: ${poll.status}`);
   const setupRequest = await fetch(`${base}/api/setup/start`, {
     method: "POST",
-    headers: { Origin: "http://localhost", "Content-Type": "application/json" },
+    headers: {
+      Origin: "https://image-test.example",
+      "Content-Type": "application/json",
+    },
     body: '{"code":"invalid"}',
     signal: AbortSignal.timeout(10000),
   });
@@ -114,7 +127,10 @@ try {
     );
   const enrollment = await fetch(`${base}/api/setup/start`, {
     method: "POST",
-    headers: { Origin: "http://localhost", "Content-Type": "application/json" },
+    headers: {
+      Origin: "https://image-test.example",
+      "Content-Type": "application/json",
+    },
     body: JSON.stringify({ code: setupCode }),
     signal: AbortSignal.timeout(10000),
   });

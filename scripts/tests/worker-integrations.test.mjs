@@ -192,3 +192,77 @@ test("integrations use native Workers fetch and D1 without following credential-
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("released Worker enables machine enrollment updates without release variables", {
+  timeout: 30000,
+}, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "ephor-worker-enrollment-"));
+  let runtime;
+  try {
+    const bundle = join(directory, "worker.js");
+    const built = spawnSync(
+      "bun",
+      [
+        "build",
+        "apps/worker/src/index.ts",
+        "--target",
+        "browser",
+        "--outfile",
+        bundle,
+      ],
+      { cwd: root, encoding: "utf8" },
+    );
+    assert.equal(built.status, 0, built.stdout + built.stderr);
+    const template = JSON.parse(
+      await readFile(join(root, "wrangler.jsonc"), "utf8"),
+    );
+    runtime = new Miniflare(
+      convertV4MiniflareOptions({
+        modules: true,
+        script: await readFile(bundle, "utf8"),
+        compatibilityDate: template.compatibility_date,
+        compatibilityFlags: template.compatibility_flags,
+        d1Databases: ["DB"],
+        bindings: {
+          EPHOR_ORIGIN: "https://fixture.example",
+          BETTER_AUTH_SECRET: "0123456789abcdef".repeat(6),
+        },
+        serviceBindings: {
+          ASSETS: async () =>
+            Response.json({
+              x86_64: "a".repeat(64),
+              aarch64: "b".repeat(64),
+              securityProtocol: 1,
+              updaterProtocol: 3,
+              serviceProtocol: 6,
+            }),
+        },
+      }),
+    );
+    const db = await runtime.getD1Database("DB");
+    const migrations = join(root, "packages/api/migrations/sqlite");
+    for (const file of (await readdir(migrations))
+      .filter((file) => file.endsWith(".sql"))
+      .sort()) {
+      for (const sql of (await readFile(join(migrations, file), "utf8"))
+        .split(";")
+        .map((value) => value.trim())
+        .filter(Boolean))
+        await db.prepare(sql).run();
+    }
+    const response = await runtime.dispatchFetch(
+      "https://fixture.example/api/agent/install.sh",
+    );
+    const script = await response.text();
+    assert.equal(response.status, 200, script);
+    assert.ok(
+      script.includes(
+        `configure-updater '${template.vars.EPHOR_RELEASE_PUBLIC_KEY}'`,
+      ),
+    );
+    assert.ok(script.includes("systemctl enable --now ephor-updater.timer"));
+  } finally {
+    await runtime?.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
