@@ -53,7 +53,7 @@ test("managed volumes reject host mounts, reserved paths, traversal and overlaps
   expect(spec(config).volumes).toEqual(config.volumes);
   expect(spec({ ...config, volumes: [] })).not.toHaveProperty("volumes");
 });
-test("persistent deployments require capable workers and lock layout after queuing", async () => {
+test("storage edits are saved separately and require a protocol-7 worker", async () => {
   const f = await setup();
   await f.services.heartbeat(f.machine.id, 5);
   await expect(f.services.queue(f.app.id, "deploy")).rejects.toThrow(
@@ -65,12 +65,73 @@ test("persistent deployments require capable workers and lock layout after queui
   expect((await f.services.next(f.machine.id, 6))?.spec.volumes).toEqual(
     config.volumes,
   );
-  await expect(
-    f.services.configure(f.app.id, { spec: { ...config, volumes: [] } }),
-  ).rejects.toThrow("VOLUME_LAYOUT_LOCKED");
+  await f.services.configure(f.app.id, { spec: { ...config, volumes: [] } });
+  await expect(f.services.queue(f.app.id, "deploy")).rejects.toThrow(
+    "STATEFUL_WORKER_REQUIRED",
+  );
+  await f.services.report(f.machine.id, {
+    id: (await f.services.history(f.app.id))[0]?.id,
+    status: "succeeded",
+    digest: `docker.io/library/busybox@sha256:${"a".repeat(64)}`,
+  });
+  await f.services.heartbeat(f.machine.id, 7);
+  await f.services.queue(f.app.id, "deploy");
+  expect(await f.services.next(f.machine.id, 6)).toBeNull();
+  const edited = await f.services.next(f.machine.id, 7);
+  expect(edited?.spec.storageVersion).toBe(1);
+  expect(edited?.spec.volumes).toBeUndefined();
   await expect(f.services.queue(f.app.id, "rollback")).rejects.toThrow(
     "STATEFUL_ROLLBACK_BLOCKED",
   );
+});
+test("existing stateless services can attach, remount, detach and reattach storage without losing secrets", async () => {
+  const f = await setup();
+  const app = await f.services.create(
+    {
+      machineId: f.machine.id,
+      name: "Existing",
+      spec: { ...config, volumes: [] },
+    },
+    { type: "image" },
+  );
+  const deployed = await f.services.queue(app.id, "deploy");
+  await f.services.next(f.machine.id, 6);
+  await f.services.report(f.machine.id, {
+    id: deployed.id,
+    status: "succeeded",
+    digest: `docker.io/library/busybox@sha256:${"a".repeat(64)}`,
+  });
+  for (const volumes of [
+    config.volumes,
+    [
+      { name: "data", mountPath: "/app/data" },
+      { name: "cache", mountPath: "/cache" },
+    ],
+    [],
+    config.volumes,
+  ]) {
+    await f.services.configure(app.id, {
+      spec: { image: config.image, volumes },
+    });
+    const row = await f.services.get(app.id);
+    const saved = await f.services.secrets.open<ReturnType<typeof spec>>(
+      row.id,
+      row.config,
+    );
+    expect(saved.storageVersion).toBe(1);
+    expect(saved.volumes ?? []).toEqual(
+      spec({ ...config, volumes }).volumes ?? [],
+    );
+    expect(saved.environment).toEqual(config.environment);
+    expect(row.current_deployment).toBe(deployed.id);
+  }
+  await f.services.configure(app.id, { spec: { image: config.image } });
+  expect((await f.services.list(app.id))[0]?.requiredWorkerProtocol).toBe(7);
+  // Stop still targets what actually runs, not pending mounts or variables.
+  await f.services.queue(app.id, "stop");
+  expect(
+    (await f.services.next(f.machine.id, 6))?.spec.volumes,
+  ).toBeUndefined();
 });
 test("worker upgrade verifies protocol-6 release before issuing an enrollment credential", async () => {
   const f = await setup();

@@ -26,7 +26,7 @@ const STATE: &str = "/var/lib/ephor-services";
 const SETTINGS: &str = "/etc/ephor/services.json";
 const PROXY: &str = "ephor-proxy";
 const DOCKER: &str = "/usr/bin/docker";
-const PROTOCOL: u8 = 6;
+const PROTOCOL: u8 = 7;
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -38,6 +38,8 @@ struct Registry {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Spec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    storage_version: Option<u8>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     volumes: Vec<PersistentVolume>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -59,13 +61,18 @@ struct PersistentVolume {
     mount_path: String,
 }
 impl Spec {
+    fn custom_storage(&self) -> bool {
+        self.storage_version == Some(1) || !self.volumes.is_empty()
+    }
     fn stateful(&self) -> bool {
-        self.catalog.is_some() || !self.volumes.is_empty()
+        self.catalog.is_some() || self.custom_storage()
     }
 }
 fn validate_volumes(s: &Spec) -> Result<()> {
     ensure!(
-        s.volumes.len() <= 4 && (s.catalog.is_none() || s.volumes.is_empty()),
+        s.volumes.len() <= 4
+            && s.storage_version.is_none_or(|v| v == 1)
+            && (s.catalog.is_none() || !s.custom_storage()),
         "Invalid volumes"
     );
     let mut names = std::collections::BTreeSet::new();
@@ -850,6 +857,10 @@ fn apply(state: &mut State, settings: &Settings, job: &Job) -> Result<()> {
     };
     let requested = names(job);
     ensure!(
+        old.app.is_none() || job.spec.stateful(),
+        "Managed storage requires a stateful deployment"
+    );
+    ensure!(
         !state.services.iter().any(|(id, s)| id != &job.service_id
             && s.active
                 .as_ref()
@@ -1079,6 +1090,7 @@ pub fn configure(panel: &str) -> Result<()> {
     );
     // Version pin is resolved to a content digest once. Only a local administrator can change it.
     let proxy_image = pull(&Spec {
+        storage_version: None,
         volumes: Vec::new(),
         connections: Vec::new(),
         catalog: None,
@@ -1251,6 +1263,7 @@ mod tests {
             domains: None,
             action: "deploy".into(),
             spec: Spec {
+                storage_version: None,
                 volumes: Vec::new(),
                 connections: Vec::new(),
                 catalog: None,

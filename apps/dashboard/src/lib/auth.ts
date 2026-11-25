@@ -95,8 +95,6 @@ const messages: Record<string, string> = {
     "This connection is no longer available. Choose a PostgreSQL, Redis or Qdrant catalog service on the same machine.",
   STATEFUL_WORKER_REQUIRED:
     "Upgrade this machine’s deployment worker to support persistent services and database resources.",
-  VOLUME_LAYOUT_LOCKED:
-    "Volume names and paths cannot change after a deployment is queued. Create a new service and migrate data to change storage layout.",
   INVALID_VOLUMES:
     "Use up to four named volumes with distinct absolute mount paths, outside system directories.",
   INVALID_DATABASE_RESOURCES:

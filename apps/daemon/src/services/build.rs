@@ -733,6 +733,7 @@ mod tests {
                 domains: None,
                 action: "deploy".into(),
                 spec: Spec {
+                    storage_version: None,
                     volumes: Vec::new(),
                     connections: Vec::new(),
                     catalog: None,

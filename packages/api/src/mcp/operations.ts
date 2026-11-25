@@ -53,6 +53,17 @@ const settings = z
     healthPath: z.string().max(200).default("/"),
     memoryMb: z.number().int().min(64).max(65536).default(256),
     cpus: z.number().min(0.1).max(32).default(0.5),
+    volumes: z
+      .array(
+        z
+          .object({
+            name: z.string().max(32),
+            mountPath: z.string().max(150),
+          })
+          .strict(),
+      )
+      .max(4)
+      .optional(),
   })
   .strict();
 const domains = z

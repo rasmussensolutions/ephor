@@ -74,6 +74,10 @@ pub(super) struct App {
     recipe_hash: String,
     provisioned: bool,
     volumes: BTreeMap<String, String>,
+    #[serde(default)]
+    detached_volumes: BTreeMap<String, String>,
+    #[serde(default)]
+    uninitialized_volumes: std::collections::BTreeSet<String>,
     backups: Vec<Backup>,
     port: u16,
     access_hash: String,
@@ -83,7 +87,7 @@ fn definitions() -> Result<Definitions> {
     Ok(serde_json::from_str(DEFINITIONS)?)
 }
 fn recipe(job: &Job) -> Result<Template> {
-    if !job.spec.volumes.is_empty() {
+    if job.spec.custom_storage() {
         validate_volumes(&job.spec)?;
         return Ok(Template {
             id: "custom".into(),
@@ -419,12 +423,12 @@ pub(super) fn remove_owned(n: &str, sid: &str) -> Result<()> {
 fn config(job: &Job, c: &Component, app: &App) -> Result<Value> {
     let sid = &job.service_id;
     let mut env = c.environment.clone();
-    if !job.spec.volumes.is_empty() {
+    if job.spec.custom_storage() {
         env.entry("PORT".into())
             .or_insert(job.spec.port.to_string());
         env.entry("HOST".into()).or_insert("0.0.0.0".into());
     }
-    for value in env.values_mut().filter(|_| job.spec.volumes.is_empty()) {
+    for value in env.values_mut().filter(|_| !job.spec.custom_storage()) {
         for (key, secret) in &job.spec.environment {
             *value = value.replace(&format!("${{{key}}}"), secret);
         }
@@ -441,7 +445,7 @@ fn config(job: &Job, c: &Component, app: &App) -> Result<Value> {
     let mut tmpfs = c.tmpfs.clone();
     tmpfs.insert("/tmp".into(), "rw,nosuid,size=128m,mode=1777".into());
     let mut body = json!({"Image":if c.image.starts_with("ephor.local/") {c.image.split_once('@').map(|(_,d)|d).unwrap_or(&c.image)} else {&c.image},"User":c.user,"Env":env.iter().map(|(k,v)|format!("{k}={v}")).collect::<Vec<_>>(),"Labels":labels(sid,"component"),"Healthcheck":{"Test":c.health,"Interval":5_000_000_000_u64,"Timeout":3_000_000_000_u64,"Retries":3,"StartPeriod":20_000_000_000_u64},"HostConfig":{"NetworkMode":n,"RestartPolicy":{"Name":"unless-stopped"},"ReadonlyRootfs":true,"CapDrop":["ALL"],"CapAdd":c.capabilities,"SecurityOpt":["no-new-privileges"],"Tmpfs":tmpfs,"Mounts":mounts,"Memory":u64::from(c.memory_mb)*1024*1024,"MemorySwap":u64::from(c.memory_mb)*1024*1024,"NanoCpus":(c.cpus*1e9) as u64,"PidsLimit":256,"LogConfig":{"Type":"local","Config":{"max-size":"10m","max-file":"3"}}},"NetworkingConfig":{"EndpointsConfig":{n:{"Aliases":[c.id]}}}});
-    if !job.spec.volumes.is_empty() {
+    if job.spec.custom_storage() {
         body["HostConfig"]["Init"] = json!(true);
     }
     if let Some(r) = job.spec.catalog.as_ref().and_then(|c| c.resources.as_ref()) {
@@ -574,10 +578,107 @@ fn revision(job: &Job, app: &App, t: &Template) -> Revision {
         port: app.port,
     }
 }
+// Volume names are stable identities. Detaching never deletes data, and changing
+// a mount path must not allocate an empty replacement for an existing name.
+fn plan_storage(app: &mut App, job: &Job) {
+    let old = std::mem::take(&mut app.volumes);
+    app.detached_volumes.extend(old);
+    for volume in &job.spec.volumes {
+        let name = app
+            .detached_volumes
+            .remove(&volume.name)
+            .unwrap_or_else(|| {
+                let name = volume_name(&job.service_id, &job.id, &volume.name);
+                app.uninitialized_volumes.insert(name.clone());
+                name
+            });
+        app.volumes.insert(volume.name.clone(), name);
+    }
+}
+fn provision_volumes(state: &mut State, app: &mut App, t: &Template) -> Result<()> {
+    let sid = app.job.service_id.clone();
+    if !app.provisioned {
+        app.uninitialized_volumes
+            .extend(app.volumes.values().cloned());
+        app.provisioned = true;
+    }
+    state.services.get_mut(&sid).context("No service")?.app = Some(app.clone());
+    save(state)?;
+    for c in &t.components {
+        for v in &c.volumes {
+            let n = app
+                .volumes
+                .get(&v.key)
+                .context("Missing volume mapping")?
+                .clone();
+            if app.uninitialized_volumes.contains(&n) {
+                ensure_volume(&sid, &n, "data", false)?;
+                helper(
+                    &sid,
+                    "init",
+                    vec![mount(&n, "/data", false)],
+                    vec![
+                        "chown".into(),
+                        format!("{}:{}", v.uid, v.uid),
+                        "/data".into(),
+                    ],
+                    30,
+                )?;
+                app.uninitialized_volumes.remove(&n);
+                state.services.get_mut(&sid).context("No service")?.app = Some(app.clone());
+                save(state)?;
+            } else {
+                existing_volume(&sid, &n, "data")?;
+            }
+        }
+    }
+    Ok(())
+}
+fn stop_legacy(state: &State, sid: &str) -> Result<()> {
+    if let Some(old) = state
+        .journal
+        .as_ref()
+        .map(|j| &j.old)
+        .filter(|s| s.app.is_none())
+    {
+        for revision in old.active.iter().chain(old.previous.iter()) {
+            let response = docker_client()?
+                .get(format!(
+                    "http://localhost/containers/{}/json",
+                    revision.container
+                ))
+                .send()?;
+            if response.status().as_u16() == 404 {
+                continue;
+            }
+            ensure!(
+                response.status().is_success(),
+                "Cannot inspect previous container"
+            );
+            let info: Value = response.json()?;
+            ensure!(
+                info["Config"]["Labels"]["ephor.managed"] == "1"
+                    && info["Config"]["Labels"]["ephor.service"] == sid,
+                "Foreign container collision"
+            );
+            api(
+                reqwest::Method::POST,
+                &format!("/containers/{}/update", revision.container),
+                json!({"RestartPolicy":{"Name":"no"}}),
+            )?;
+            if info["State"]["Running"] == true {
+                d(&["stop", "--time", "30", &revision.container], 40)?;
+            }
+            // Ownership is checked before deleting an obsolete stateless container.
+            remove_owned(&revision.container, sid)?;
+        }
+    }
+    Ok(())
+}
 pub(super) fn apply(state: &mut State, settings: &Settings, job: &Job) -> Result<()> {
     // Resolve a custom image to an immutable identity before persisting its state.
     let mut pinned = job.clone();
-    if !pinned.spec.volumes.is_empty() && job.action != "stop" {
+    if pinned.spec.custom_storage() && job.action != "stop" {
         pinned.spec.image = pull(&pinned.spec).context("IMAGE_PULL_FAILED")?;
     }
     let job = &pinned;
@@ -593,7 +694,8 @@ pub(super) fn apply(state: &mut State, settings: &Settings, job: &Job) -> Result
     );
     let existing = state.services.get(sid).and_then(|s| s.app.clone());
     ensure!(
-        existing.is_some()
+        (t.id == "custom" && job.action == "deploy" && job.spec.storage_version == Some(1))
+            || existing.is_some()
             || state
                 .services
                 .get(sid)
@@ -613,7 +715,11 @@ pub(super) fn apply(state: &mut State, settings: &Settings, job: &Job) -> Result
             );
         }
         ensure!(
-            compatible_recipe_hash(&app.recipe_hash, &t)
+            (compatible_recipe_hash(&app.recipe_hash, &t)
+                || (t.id == "custom"
+                    && app.job.spec.catalog.is_none()
+                    && job.action == "deploy"
+                    && job.spec.storage_version == Some(1)))
                 && (t.id == "custom" || app.job.spec.environment == job.spec.environment),
             "CATALOG_RECIPE_MISMATCH"
         );
@@ -707,6 +813,8 @@ pub(super) fn apply(state: &mut State, settings: &Settings, job: &Job) -> Result
                         .map(|v| (v.key.clone(), volume_name(sid, &job.id, &v.key)))
                 })
                 .collect(),
+            detached_volumes: BTreeMap::new(),
+            uninitialized_volumes: Default::default(),
             backups: vec![],
             port: listener.local_addr()?.port(),
             access_hash: if t.web && t.id != "custom" {
@@ -717,8 +825,7 @@ pub(super) fn apply(state: &mut State, settings: &Settings, job: &Job) -> Result
             recovery_required: false,
         }
     };
-    // Normalize recognized legacy fingerprints as part of the next saved operation.
-    app.recipe_hash = recipe_hash(&t);
+    let old_template = recipe(&app.job)?;
     let needs_backup = ["backup", "restore"].contains(&job.action.as_str())
         || (job.action == "deploy" && app.provisioned);
     if needs_backup {
@@ -738,12 +845,19 @@ pub(super) fn apply(state: &mut State, settings: &Settings, job: &Job) -> Result
     if let Some(ref snapshot) = restore {
         if t.id == "custom" {
             ensure!(
-                snapshot.spec.as_ref().is_some_and(
-                    |s| s.image == job.spec.image && s.environment == job.spec.environment
-                ),
-                "Restore this snapshot into a separate service; current image or variables differ"
+                snapshot
+                    .spec
+                    .as_ref()
+                    .is_some_and(|s| s.image == job.spec.image
+                        && s.environment == job.spec.environment
+                        && s.volumes == job.spec.volumes),
+                "Restore this snapshot into a separate service; current image, variables or storage differ"
             );
         }
+        ensure!(
+            snapshot.volumes.keys().eq(app.volumes.keys()),
+            "Backup volume mismatch"
+        );
     }
     let was_running = state.services.get(sid).is_some_and(|s| s.active.is_some());
     // Persist the full plan before resource creation. Failed or interrupted stateful
@@ -754,7 +868,8 @@ pub(super) fn apply(state: &mut State, settings: &Settings, job: &Job) -> Result
     saved.app = Some(app.clone());
     save(state)?;
     proxy(state, settings)?;
-    stop_components(sid, &t, job.action != "stop")?;
+    stop_legacy(state, sid)?;
+    stop_components(sid, &old_template, job.action != "stop")?;
     if job.action == "stop" {
         app.recovery_required = false;
         state.services.get_mut(sid).context("No service")?.app = Some(app);
@@ -762,34 +877,19 @@ pub(super) fn apply(state: &mut State, settings: &Settings, job: &Job) -> Result
     }
     ensure_network(sid, true)?;
     ensure_network(sid, false)?;
-    for c in &t.components {
-        for v in &c.volumes {
-            let n = &app.volumes[&v.key];
-            if app.provisioned {
-                existing_volume(sid, n, "data")?;
-            } else {
-                ensure_volume(sid, n, "data", false)?;
-                helper(
-                    sid,
-                    "init",
-                    vec![mount(n, "/data", false)],
-                    vec![
-                        "chown".into(),
-                        format!("{}:{}", v.uid, v.uid),
-                        "/data".into(),
-                    ],
-                    30,
-                )?;
-            }
-        }
-    }
-    app.provisioned = true;
-    state.services.get_mut(sid).context("No service")?.app = Some(app.clone());
-    save(state)?;
+    provision_volumes(state, &mut app, &old_template)?;
     if needs_backup {
         cold_backup(sid, &mut app, &job.id).context("BACKUP_FAILED")?;
         state.services.get_mut(sid).context("No service")?.app = Some(app.clone());
         save(state)?;
+    }
+    if t.id == "custom" && job.action == "deploy" {
+        plan_storage(&mut app, job);
+        app.job = job.clone();
+        app.recipe_hash = recipe_hash(&t);
+        // Save the exact allocation plan before creating any new volumes. Retries
+        // initialize only explicitly new volumes, never recreate missing old data.
+        provision_volumes(state, &mut app, &t)?;
     }
     if let Some(backup) = restore {
         let mut restored = BTreeMap::new();
@@ -820,6 +920,7 @@ pub(super) fn apply(state: &mut State, settings: &Settings, job: &Job) -> Result
         save(state)?;
     }
     app.job = job.clone();
+    app.recipe_hash = recipe_hash(&t);
     state.services.get_mut(sid).context("No service")?.app = Some(app.clone());
     save(state)?;
     if job.action != "backup" || was_running {
@@ -866,6 +967,7 @@ pub(super) fn recover(
         s.previous = s.active.take().or(s.previous.take());
         save(state)?;
         proxy(state, settings)?;
+        stop_legacy(state, &job.service_id)?;
         for suffix in ["init", "backup", "restore"] {
             remove_owned(
                 &format!("ephor-helper-{}-{suffix}", job.service_id),
@@ -883,7 +985,7 @@ fn component_healthy(job: &Job, app: &App, c: &Component, info: &Value) -> bool 
     if info["State"]["Running"] != true {
         return false;
     }
-    if !job.spec.volumes.is_empty()
+    if job.spec.custom_storage()
         || job
             .spec
             .catalog
@@ -1063,6 +1165,57 @@ mod tests {
         assert!("新しいログ".ends_with(&tail));
     }
     use super::*;
+    #[test]
+    fn storage_plan_preserves_identity_and_pending_initialization_across_restart() {
+        let mut job = super::super::tests::job();
+        job.spec.storage_version = Some(1);
+        job.spec.volumes = vec![PersistentVolume {
+            name: "data".into(),
+            mount_path: "/data".into(),
+        }];
+        let mut app = App {
+            job: job.clone(),
+            recipe_hash: recipe_hash(&recipe(&job).unwrap()),
+            provisioned: true,
+            volumes: BTreeMap::from([("data".into(), "existing-data".into())]),
+            detached_volumes: BTreeMap::new(),
+            uninitialized_volumes: Default::default(),
+            backups: vec![],
+            port: 31000,
+            access_hash: String::new(),
+            recovery_required: false,
+        };
+        job.spec.volumes[0].mount_path = "/moved".into();
+        job.spec.volumes.push(PersistentVolume {
+            name: "cache".into(),
+            mount_path: "/cache".into(),
+        });
+        plan_storage(&mut app, &job);
+        assert_eq!(app.volumes["data"], "existing-data");
+        let pending = app.volumes["cache"].clone();
+        assert_eq!(
+            app.uninitialized_volumes,
+            std::collections::BTreeSet::from([pending.clone()])
+        );
+        let mut app: App = serde_json::from_slice(&serde_json::to_vec(&app).unwrap()).unwrap();
+        job.id = "b".repeat(36);
+        plan_storage(&mut app, &job);
+        assert_eq!(app.volumes["cache"], pending);
+        job.spec.volumes.clear();
+        plan_storage(&mut app, &job);
+        assert!(app.volumes.is_empty());
+        assert_eq!(app.detached_volumes.len(), 2);
+        assert!(job.spec.stateful());
+        assert_eq!(recipe(&job).unwrap().id, "custom");
+        job.spec.volumes.push(PersistentVolume {
+            name: "data".into(),
+            mount_path: "/back".into(),
+        });
+        plan_storage(&mut app, &job);
+        assert_eq!(app.volumes["data"], "existing-data");
+        assert!(!app.uninitialized_volumes.contains("existing-data"));
+        assert_eq!(app.detached_volumes["cache"], pending);
+    }
     fn job_for(t: &Template) -> Job {
         let mut job = super::super::tests::job();
         job.backup_id = None;
@@ -1182,6 +1335,8 @@ mod tests {
                             .map(|v| (v.key.clone(), volume_name(&j.service_id, &j.id, &v.key)))
                     })
                     .collect(),
+                detached_volumes: BTreeMap::new(),
+                uninitialized_volumes: Default::default(),
                 backups: vec![],
                 port: 32000,
                 access_hash: String::new(),
@@ -1881,6 +2036,8 @@ pub(super) fn import(
     }
     let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
     let app = App {
+        detached_volumes: BTreeMap::new(),
+        uninitialized_volumes: Default::default(),
         job: job.clone(),
         recipe_hash: recipe_hash(&t),
         provisioned: true,

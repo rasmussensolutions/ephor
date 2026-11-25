@@ -7,6 +7,8 @@ export type { ServicePresentation } from "./presentation";
 export { imageTechnology, type ServiceTechnology } from "./technology";
 export type { ServiceTopology } from "./topology";
 export interface ServiceSpec {
+  /** Retains managed storage lifecycle, including after the last volume is detached. */
+  storageVersion?: 1;
   /** Managed named volumes. Persistent services always use stop/start deployment. */
   volumes?: { name: string; mountPath: string }[];
   /** Deployment-only network grants, derived from validated variable references. */
@@ -126,7 +128,10 @@ export function spec(value: unknown): ServiceSpec {
     };
   }
   const volumes = v.volumes === undefined ? [] : persistentVolumes(v.volumes);
+  if (v.storageVersion !== undefined && v.storageVersion !== 1)
+    throw new AuthError("INVALID_VOLUMES");
   const result: ServiceSpec = {
+    ...(v.storageVersion === 1 ? { storageVersion: 1 as const } : {}),
     ...(volumes.length ? { volumes } : {}),
     ...(v.catalog ? { catalog: v.catalog as CatalogSpec } : {}),
     image: v.image,
@@ -138,7 +143,7 @@ export function spec(value: unknown): ServiceSpec {
     registry,
   };
   validateCatalog(result);
-  if (result.catalog && result.volumes?.length)
+  if (result.catalog && (result.volumes?.length || result.storageVersion))
     throw new AuthError("INVALID_VOLUMES");
   return result;
 }
@@ -178,13 +183,18 @@ export function persistentVolumes(
     })
     .sort((a, b) => a.name.localeCompare(b.name));
 }
-export function isStateful(config: Pick<ServiceSpec, "catalog" | "volumes">) {
-  return !!config.catalog || !!config.volumes?.length;
+export function isStateful(
+  config: Pick<ServiceSpec, "catalog" | "volumes" | "storageVersion">,
+) {
+  return (
+    !!config.catalog || !!config.volumes?.length || !!config.storageVersion
+  );
 }
 export function requiredProtocol(
   config: ServiceSpec,
   includeSavedReferences = false,
 ) {
+  if (config.storageVersion) return 7;
   return config.volumes?.length ||
     config.catalog?.resources ||
     config.catalog?.template === "qdrant" ||

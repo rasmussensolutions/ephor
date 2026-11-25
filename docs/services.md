@@ -109,17 +109,24 @@ Reviewed catalog apps support persistent volumes, private databases, and multi-c
 
 ### Custom persistent services
 
-In service creation, enter up to four named mounts, one per line, for example
+In service creation or settings, enter up to four named mounts, one per line, for example
 `data=/data`. The worker creates owned Docker volumes; host bind mounts, Docker
 sockets, system paths, overlapping paths and driver options are rejected. Mount
-layouts become immutable once a deployment is queued. Create a separate service
-and migrate data to change a layout or convert an already deployed stateless app.
+changes take effect on the next deployment. Existing services can add storage,
+change mount paths, or detach volumes. Keep the same volume name when changing
+its path to keep its data. Removing a line detaches the volume without deleting
+it; adding the same name later reattaches it. A different name creates a separate
+volume, not a rename or copy. Detached data remains on the source machine and is
+not included in new backups; pre-change recovery points cover the old layout.
 Containers run as UID/GID 65532 with a read-only root filesystem, writable `/tmp`,
 and owned data directories; images must work with these restrictions and expose
 an HTTP readiness endpoint. Configure `PORT` or the image's native settings as
 needed. Arbitrary entrypoint/command and user overrides are not supported.
 
-These services require protocol 6 and use stop/start maintenance windows. Each
+Initial persistent deployments require protocol 6; editing storage requires
+protocol 7 (daemon 0.2.3 or newer). Update the panel before updating the machine.
+Even after detaching the last volume, the service retains its storage history and
+uses stop/start deployments. Each
 redeploy stops the existing writer cleanly and snapshots its data before starting
 the new image on the same volumes. There are never intentionally two application
 writers. Failed/interrupted operations retain data and require explicit recovery;
@@ -129,7 +136,7 @@ these maintenance windows or application-owned schema migrations.
 
 **Setup & data** exposes stop/start, cold recovery points and restore. Code-only
 rollback is blocked. A local recovery point can be restored only with its matching
-image and environment; after changing either, use a compatible offsite backup to
+image, environment and storage layout; after changing these, use a compatible offsite backup to
 restore a separate service. Data restore uses new volumes and keeps the originals.
 Monitor disk space: retained recovery points and original volumes consume storage.
 For encrypted scheduled backups and source-machine-loss recovery see

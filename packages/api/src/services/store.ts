@@ -201,23 +201,18 @@ export class Services {
     const update = object(b.spec);
     const config = spec({
       ...update,
+      storageVersion: old.storageVersion ?? update.storageVersion,
       volumes: update.volumes ?? old.volumes,
       environment: update.environment ?? old.environment,
       registry: update.registry === undefined ? old.registry : update.registry,
     });
     if (config.catalog) throw new AuthError("INVALID_CATALOG_CONFIG");
+    // Persist the capability even when all mounts are removed. An older worker
+    // must never reinterpret the service as stateless and lose its storage index.
     if (
-      JSON.stringify(config.volumes ?? []) !==
-        JSON.stringify(old.volumes ?? []) &&
-      (row.current_deployment ||
-        (
-          await this.sql.query(
-            "SELECT id FROM ephor_deployment WHERE service_id=$1 LIMIT 1",
-            [row.id],
-          )
-        ).length)
+      JSON.stringify(config.volumes ?? []) !== JSON.stringify(old.volumes ?? [])
     )
-      throw new AuthError("VOLUME_LAYOUT_LOCKED", 409);
+      config.storageVersion = 1;
     const previousSource = JSON.parse(row.source) as ServiceSource;
     await new ServiceConnections(this.sql, this.secrets).resolve(row, config);
     if (replacement && replacement.type !== previousSource.type)
@@ -400,7 +395,7 @@ export class Services {
       (action === "rollback" || options.image || options.delivery)
     )
       throw new AuthError("CATALOG_ROLLBACK_BLOCKED", 409);
-    if (config.volumes?.length && action === "rollback")
+    if (isStateful(config) && action === "rollback")
       throw new AuthError("STATEFUL_ROLLBACK_BLOCKED", 409);
     // Maintenance must use the deployed image and resolved variables, never pending settings.
     if (
@@ -450,12 +445,12 @@ export class Services {
       );
     const protocol = requiredProtocol(config);
     const [ready] = await this.sql.query(
-      "SELECT w.machine_id FROM ephor_service_worker w JOIN ephor_machine m ON m.id=w.machine_id WHERE w.machine_id=$1 AND m.state='active' AND w.last_seen > $2 AND w.version IN ('2','3','4','5','6') AND CAST(w.version AS INTEGER)>=$3 AND w.credential_hash IS NOT NULL",
+      "SELECT w.machine_id FROM ephor_service_worker w JOIN ephor_machine m ON m.id=w.machine_id WHERE w.machine_id=$1 AND m.state='active' AND w.last_seen > $2 AND w.version IN ('2','3','4','5','6','7') AND CAST(w.version AS INTEGER)>=$3 AND w.credential_hash IS NOT NULL",
       [row.machine_id, Date.now() - 120000, protocol],
     );
     if (!ready)
       throw new AuthError(
-        protocol === 6
+        protocol >= 6
           ? "STATEFUL_WORKER_REQUIRED"
           : protocol === 5
             ? "CONNECTION_WORKER_REQUIRED"
@@ -561,7 +556,8 @@ export class Services {
       version !== 3 &&
       version !== 4 &&
       version !== 5 &&
-      version !== 6
+      version !== 6 &&
+      version !== 7
     )
       throw new AuthError("INCOMPATIBLE_SERVICE_WORKER", 409);
     await this.sql.query(

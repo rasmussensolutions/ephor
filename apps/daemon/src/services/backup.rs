@@ -177,6 +177,7 @@ fn staging(t: &Task) -> String {
 }
 fn pull_restic() -> Result<()> {
     let spec = Spec {
+        storage_version: None,
         volumes: Vec::new(),
         connections: Vec::new(),
         catalog: None,

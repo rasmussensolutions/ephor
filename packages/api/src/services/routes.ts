@@ -86,7 +86,8 @@ export function servicePublicRoutes(
           body.protocol !== 3 &&
           body.protocol !== 4 &&
           body.protocol !== 5 &&
-          body.protocol !== 6
+          body.protocol !== 6 &&
+          body.protocol !== 7
         )
           throw new AuthError("BUILD_WORKER_REQUIRED", 409);
         // Build polling proves liveness, not deployment capabilities. Some upgraded
@@ -108,17 +109,19 @@ export function servicePublicRoutes(
       else
         await services.heartbeat(
           id,
-          body.protocol === 6
-            ? 6
-            : body.protocol === 5
-              ? 5
-              : body.protocol === 4
-                ? 4
-                : body.protocol === 3
-                  ? 3
-                  : body.protocol === 2
-                    ? 2
-                    : 1,
+          body.protocol === 7
+            ? 7
+            : body.protocol === 6
+              ? 6
+              : body.protocol === 5
+                ? 5
+                : body.protocol === 4
+                  ? 4
+                  : body.protocol === 3
+                    ? 3
+                    : body.protocol === 2
+                      ? 2
+                      : 1,
         );
       return c.json({ ok: true });
     });
@@ -330,7 +333,8 @@ export function serviceOwnerRoutes(app: Hono, env: AuthEnvironment) {
   app.post("/api/services/worker", async (c) => {
     const body = object(await c.req.json());
     const manifest = releaseManifest(await env.loadDaemonRelease?.());
-    const minimum = body.minimumProtocol === 6 ? 6 : 2;
+    const minimum =
+      body.minimumProtocol === 7 ? 7 : body.minimumProtocol === 6 ? 6 : 2;
     if (!manifest.serviceProtocol || manifest.serviceProtocol < minimum)
       throw new AuthError("SERVICE_BUILD_REQUIRED", 409);
     const token = await services.issueWorker(body.machineId);

@@ -178,7 +178,7 @@ export function ServiceDetails({
       return;
     if (
       kind === "deploy" &&
-      (s.spec.catalog || s.spec.volumes?.length) &&
+      (s.spec.catalog || s.spec.volumes?.length || s.spec.storageVersion) &&
       s.currentDeployment &&
       !confirm(
         s.spec.catalog
@@ -201,15 +201,17 @@ export function ServiceDetails({
         Number(w.version) >=
           (deploying && service?.requiredWorkerProtocol
             ? service.requiredWorkerProtocol
-            : service?.spec.volumes?.length ||
-                service?.spec.catalog?.resources ||
-                service?.spec.catalog?.template === "qdrant"
-              ? 6
-              : deploying && service?.variableConnections?.length
-                ? 5
-                : service?.spec.catalog
-                  ? 3
-                  : 2) &&
+            : service?.spec.storageVersion
+              ? 7
+              : service?.spec.volumes?.length ||
+                  service?.spec.catalog?.resources ||
+                  service?.spec.catalog?.template === "qdrant"
+                ? 6
+                : deploying && service?.variableConnections?.length
+                  ? 5
+                  : service?.spec.catalog
+                    ? 3
+                    : 2) &&
         Number(w.last_seen) > Date.now() - 120000,
     );
   if (!service)
@@ -435,7 +437,9 @@ export function ServiceDetails({
               ? ["Components"]
               : []),
             ...(!drawer &&
-            (service.spec.catalog || service.spec.volumes?.length)
+            (service.spec.catalog ||
+              service.spec.volumes?.length ||
+              service.spec.storageVersion)
               ? ["Setup & data"]
               : ["Settings"]),
           ].map((t) => (
@@ -951,6 +955,7 @@ export function ServiceDetails({
                         d.digest &&
                         !service.spec.catalog &&
                         !service.spec.volumes?.length &&
+                        !service.spec.storageVersion &&
                         service.currentDeployment !== d.id ? (
                         <Button
                           size="sm"
@@ -1013,7 +1018,9 @@ export function ServiceDetails({
           </section>
         )}
         {tab === (drawer ? "Settings" : "Setup & data") &&
-          (service.spec.catalog || service.spec.volumes?.length) && (
+          (service.spec.catalog ||
+            service.spec.volumes?.length ||
+            service.spec.storageVersion) && (
             <CatalogDetails
               key={service.id}
               service={service}

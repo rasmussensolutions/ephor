@@ -866,10 +866,15 @@ export function ServiceForm({
                 className="font-mono text-xs md:text-xs"
                 rows={3}
                 value={draft.volumes}
-                disabled={!!service && !!service?.currentDeployment}
                 onChange={(e) => update("volumes", e.target.value)}
                 placeholder="data=/app/data"
               />
+              <span className="text-xs text-muted-foreground">
+                One volume-name=/mount/path per line. Changes apply on the next
+                deployment with a brief stop/start. Keep the same volume name to
+                retain its data when changing its path. Removing a line detaches
+                the volume; adding the same name later reattaches its data.
+              </span>
             </label>
           </>
         )}

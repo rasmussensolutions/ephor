@@ -6,7 +6,7 @@ export interface DaemonRelease {
   securityProtocol?: 1;
   protectionProtocol?: 1;
   managedUpdatesProtocol?: 1 | 2;
-  serviceProtocol?: 1 | 2 | 3 | 4 | 5 | 6;
+  serviceProtocol?: 1 | 2 | 3 | 4 | 5 | 6 | 7;
   updaterProtocol?: 1 | 2 | 3;
   x86_64?: string;
   aarch64?: string;
@@ -42,7 +42,8 @@ export function releaseManifest(value: unknown): DaemonRelease {
     manifest.serviceProtocol === 3 ||
     manifest.serviceProtocol === 4 ||
     manifest.serviceProtocol === 5 ||
-    manifest.serviceProtocol === 6
+    manifest.serviceProtocol === 6 ||
+    manifest.serviceProtocol === 7
   )
     result.serviceProtocol = manifest.serviceProtocol;
   return result;
