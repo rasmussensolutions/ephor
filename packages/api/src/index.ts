@@ -621,6 +621,18 @@ export function createApi(
     await store.audit("machine.revoked", String(body.id));
     return c.json({ ok: true });
   });
+  app.post("/api/machines/remove", async (c) => {
+    await requireOwner(
+      createAuth(env, c.req.raw.headers),
+      store,
+      c.req.raw.headers,
+      true,
+    );
+    const body = await c.req.json<{ id?: unknown }>();
+    await machines.remove(body?.id);
+    await store.audit("machine.removed", String(body.id));
+    return c.json({ ok: true });
+  });
   app.post("/api/machines/rename", async (c) => {
     const body = await c.req.json<{ id?: unknown; name?: unknown }>();
     const result = await machines.rename(body?.id, body?.name);

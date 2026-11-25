@@ -298,11 +298,23 @@ export class MachineStore {
     if (typeof id !== "string" || !id || id.length > 64)
       throw new AuthError("INVALID_ID");
     const rows = await this.sql.query<{ id: string; name: string }>(
-      "UPDATE ephor_machine SET name = $1 WHERE id = $2 RETURNING id, name",
+      "UPDATE ephor_machine SET name = $1 WHERE id = $2 AND removed_at IS NULL RETURNING id, name",
       [machineName(name), id],
     );
     if (!rows[0]) throw new AuthError("NOT_FOUND", 404);
     return rows[0];
+  }
+
+  async remove(id: unknown) {
+    if (typeof id !== "string" || !id || id.length > 64)
+      throw new AuthError("INVALID_ID");
+    // Retain the revoked record for service, backup and audit references.
+    // The state check is atomic: removing an active host must never be allowed.
+    const rows = await this.sql.query(
+      "UPDATE ephor_machine SET removed_at = COALESCE(removed_at, $1) WHERE id = $2 AND state = 'revoked' RETURNING id",
+      [Date.now(), id],
+    );
+    if (!rows.length) throw new AuthError("MACHINE_NOT_DISCONNECTED", 409);
   }
 
   async setProvider(id: unknown, value: unknown) {
@@ -333,7 +345,8 @@ export class MachineStore {
   async list(id?: string) {
     const rows = await this.sql.query<MachineRow>(
       "SELECT id, name, state, created_at, enrollment_expires, enrolled_at, last_seen, telemetry, updater_key, updater_seen, updater_protocol, updater_components, update_policy, pinned_version, provider_override, (SELECT version FROM ephor_service_worker WHERE machine_id=ephor_machine.id) AS worker_version, (SELECT last_seen FROM ephor_service_worker WHERE machine_id=ephor_machine.id) AS worker_seen FROM ephor_machine" +
-        (id ? " WHERE id = $1" : "") +
+        " WHERE removed_at IS NULL" +
+        (id ? " AND id = $1" : "") +
         " ORDER BY created_at DESC",
       id ? [id] : [],
     );

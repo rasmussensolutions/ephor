@@ -7,6 +7,7 @@ import { MemoryIcon } from "@phosphor-icons/react/dist/csr/Memory";
 import { PencilSimpleIcon } from "@phosphor-icons/react/dist/csr/PencilSimple";
 import { PlugIcon } from "@phosphor-icons/react/dist/csr/Plug";
 import { PlusIcon } from "@phosphor-icons/react/dist/csr/Plus";
+import { TrashIcon } from "@phosphor-icons/react/dist/csr/Trash";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
@@ -715,11 +716,14 @@ function MachineRow({
         </ContextMenuItem>
         <ContextMenuItem
           variant="destructive"
-          disabled={machine.status === "revoked" && machine.enrolledAt !== null}
           onClick={() => onAction("disconnect")}
         >
-          <PlugIcon aria-hidden="true" />
-          {machine.status === "revoked" && machine.enrolledAt === null
+          {machine.status === "revoked" ? (
+            <TrashIcon aria-hidden="true" />
+          ) : (
+            <PlugIcon aria-hidden="true" />
+          )}
+          {machine.status === "revoked"
             ? "Remove from Ephor"
             : machine.status === "pending" || machine.status === "expired"
               ? "Cancel enrollment"

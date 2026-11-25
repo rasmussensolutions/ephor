@@ -62,6 +62,18 @@ const spec = {
   memoryMb: 256,
   cpus: 0.5,
 };
+test("removed machines disappear from MCP inventory", async () => {
+  const f = await setup();
+  const machines = new MachineStore(f.sql);
+  expect(
+    await f.operations.call(f.issued.id, "list_machines", {}),
+  ).toHaveLength(1);
+  await machines.revoke(f.machine.id);
+  await machines.remove(f.machine.id);
+  expect(
+    await f.operations.call(f.issued.id, "list_machines", {}),
+  ).toHaveLength(0);
+});
 test("an explicit direct grant executes, deploys and discloses authorized logs from MCP without panel actions", async () => {
   const f = await setup();
   const { row } = await new AgentAccess(f.env).connection(f.issued.id);

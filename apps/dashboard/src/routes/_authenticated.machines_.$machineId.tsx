@@ -1,5 +1,5 @@
 import type { MachineDetail } from "@ephor/api/machines";
-import { PlugIcon, PlusIcon } from "@phosphor-icons/react";
+import { PlugIcon, PlusIcon, TrashIcon } from "@phosphor-icons/react";
 import { ClockIcon } from "@phosphor-icons/react/dist/csr/Clock";
 import { CpuIcon } from "@phosphor-icons/react/dist/csr/Cpu";
 import { HardDriveIcon } from "@phosphor-icons/react/dist/csr/HardDrive";
@@ -77,13 +77,13 @@ function MachinePage({ initial }: { initial: MachineDetail }) {
   const refresh = async () => {
     await inventory.refetch({ throwOnError: true });
   };
-  async function run(action: () => Promise<void>) {
+  async function run(action: () => Promise<void>, refreshAfter = true) {
     setBusy(true);
     setError("");
     setNotice("");
     try {
       await action();
-      await refresh();
+      if (refreshAfter) await refresh();
       return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Please try again.");
@@ -173,9 +173,26 @@ function MachinePage({ initial }: { initial: MachineDetail }) {
           <Button
             variant="destructive-gradient"
             size="action"
-            aria-label={`Disconnect ${machine.name}`}
-            disabled={busy || machine.status === "revoked"}
+            aria-label={
+              machine.status === "revoked"
+                ? `Remove ${machine.name} from Ephor`
+                : `Disconnect ${machine.name}`
+            }
+            disabled={busy}
             onClick={() => {
+              if (machine.status === "revoked") {
+                if (
+                  confirm(
+                    `Remove “${machine.name}” from your machine list? Historical service and audit records are retained. Your VPS and its running services will not be changed.`,
+                  )
+                )
+                  void run(async () => {
+                    await reauthenticate();
+                    await api("/machines/remove", { id });
+                    await navigate({ to: "/machines" });
+                  }, false);
+                return;
+              }
               if (
                 confirm(
                   `Disconnect “${machine.name}”? Its credential and any pending enrollment command will stop working. Services on the VPS will keep running.`,
@@ -188,12 +205,20 @@ function MachinePage({ initial }: { initial: MachineDetail }) {
                 });
             }}
           >
-            <PlugIcon
-              aria-hidden="true"
-              data-icon="inline-start"
-              className="size-[1em]"
-            />
-            Disconnect
+            {machine.status === "revoked" ? (
+              <TrashIcon
+                aria-hidden="true"
+                data-icon="inline-start"
+                className="size-[1em]"
+              />
+            ) : (
+              <PlugIcon
+                aria-hidden="true"
+                data-icon="inline-start"
+                className="size-[1em]"
+              />
+            )}
+            {machine.status === "revoked" ? "Remove from Ephor" : "Disconnect"}
           </Button>
           <Button
             variant="gradient"

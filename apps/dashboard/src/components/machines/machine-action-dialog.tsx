@@ -30,15 +30,17 @@ export function MachineActionDialog({
   const pending = machine.status === "pending" || machine.status === "expired";
   const cancelled = machine.status === "revoked" && machine.enrolledAt === null;
   const removeEnrollment = pending || cancelled;
+  const removeMachine = machine.status === "revoked" && !cancelled;
   const rename = action === "rename";
-  const actionLabel = cancelled
-    ? "Remove from Ephor"
-    : pending
-      ? "Cancel enrollment"
-      : "Disconnect";
+  const actionLabel =
+    machine.status === "revoked"
+      ? "Remove from Ephor"
+      : pending
+        ? "Cancel enrollment"
+        : "Disconnect";
   const title = rename
     ? "Rename machine"
-    : removeEnrollment
+    : removeEnrollment || removeMachine
       ? actionLabel
       : "Disconnect machine";
 
@@ -62,9 +64,11 @@ export function MachineActionDialog({
               ? `Choose a name for “${machine.name}” in Ephor.`
               : cancelled
                 ? `Remove the cancelled enrollment for “${machine.name}” from Ephor. This machine never connected.`
-                : pending
-                  ? `Remove the unfinished enrollment for “${machine.name}” and invalidate its install command.`
-                  : `Stop monitoring “${machine.name}” in Ephor and revoke its agent credential. Your server and its running services will keep running.`}
+                : removeMachine
+                  ? `Remove “${machine.name}” from your machine list. Historical service and audit records are retained. Your VPS and its running services will not be changed.`
+                  : pending
+                    ? `Remove the unfinished enrollment for “${machine.name}” and invalidate its install command.`
+                    : `Stop monitoring “${machine.name}” in Ephor and revoke its agent credential. Your server and its running services will keep running.`}
           </DialogDescription>
         </DialogHeader>
         <DialogBody>
@@ -85,13 +89,17 @@ export function MachineActionDialog({
                 } else {
                   await reauthenticate();
                   await api(
-                    removeEnrollment
-                      ? "/machines/enrollments/cancel"
-                      : "/machines/revoke",
+                    removeMachine
+                      ? "/machines/remove"
+                      : removeEnrollment
+                        ? "/machines/enrollments/cancel"
+                        : "/machines/revoke",
                     { id: machine.id },
                   );
                   onComplete(
-                    removeEnrollment ? null : { ...machine, status: "revoked" },
+                    removeEnrollment || removeMachine
+                      ? null
+                      : { ...machine, status: "revoked" },
                   );
                 }
               } catch (error) {
@@ -151,7 +159,7 @@ export function MachineActionDialog({
                 {busy
                   ? rename
                     ? "Saving…"
-                    : removeEnrollment
+                    : removeEnrollment || removeMachine
                       ? "Removing…"
                       : "Disconnecting…"
                   : rename

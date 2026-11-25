@@ -338,7 +338,7 @@ export class AgentOperations {
       }
       case "list_machines": {
         const rows = await this.env.sql.query<{ id: string }>(
-          "SELECT m.id,m.name,m.state,m.last_seen,w.version AS worker_protocol FROM ephor_machine m LEFT JOIN ephor_service_worker w ON w.machine_id=m.id ORDER BY m.name LIMIT 1000",
+          "SELECT m.id,m.name,m.state,m.last_seen,w.version AS worker_protocol FROM ephor_machine m LEFT JOIN ephor_service_worker w ON w.machine_id=m.id WHERE m.removed_at IS NULL ORDER BY m.name LIMIT 1000",
         );
         return rows.filter(
           (r) => policy.allMachines || policy.machineIds.includes(r.id),

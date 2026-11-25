@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 
 import { api, errorMessage, reauthenticate } from "@/lib/auth";
+import { catalogMachineIssue } from "@/lib/catalog-readiness";
 import type { ServiceList } from "@/lib/services";
 import { ServiceIcon } from "./service-icon";
 
@@ -63,13 +64,10 @@ export function CatalogForm({
   const visible = apps.filter((app) =>
     `${app.name} ${app.category}`.toLowerCase().includes(search.toLowerCase()),
   );
-  const ready = (id: string) =>
-    workers.some(
-      (w) =>
-        w.machine_id === id &&
-        Number(w.version) >= 3 &&
-        Number(w.last_seen) > Date.now() - 120000,
-    );
+  const ready = (id: string) => {
+    const machine = machines.find((machine) => machine.id === id);
+    return !!machine && catalogMachineIssue(machine, workers) === null;
+  };
   async function deploy(e: React.FormEvent) {
     e.preventDefault();
     if (!selected || submitting.current) return;
@@ -226,13 +224,11 @@ export function CatalogForm({
                     className="w-full"
                     placeholder="Choose a machine"
                     options={machines.map((m) => {
-                      const available = ready(m.id);
+                      const issue = catalogMachineIssue(m, workers);
                       return {
                         value: m.id,
-                        label: available
-                          ? m.name
-                          : `${m.name} · Update deployment worker`,
-                        disabled: !available,
+                        label: issue ? `${m.name} · ${issue}` : m.name,
+                        disabled: issue !== null,
                       };
                     })}
                   />
@@ -240,8 +236,9 @@ export function CatalogForm({
               </div>
               {!machines.some((m) => ready(m.id)) && (
                 <p className="text-sm text-muted-foreground">
-                  Connect a machine to get started. For an existing machine,
-                  check Deployments in its settings.
+                  {machines.length
+                    ? "No deployment workers are ready yet. Status refreshes automatically. If this persists, check Deployments in your machine’s settings."
+                    : "Connect a machine to get started."}
                 </p>
               )}
               {selected.web && (

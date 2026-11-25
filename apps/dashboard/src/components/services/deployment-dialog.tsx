@@ -33,9 +33,16 @@ function deploymentQueryOptions({ machineId, projectId }: DeploymentOptions) {
           ? api<Project>(`/projects/${encodeURIComponent(projectId)}`)
           : Promise.resolve(null),
       ]);
-      return { machines: inventory.machines, workers: data.workers, project };
+      return {
+        machines: inventory.machines.filter(
+          (machine) => machine.status !== "revoked",
+        ),
+        workers: data.workers,
+        project,
+      };
     },
-    refetchOnWindowFocus: false,
+    refetchInterval: 10_000,
+    refetchOnWindowFocus: true,
   });
 }
 export async function prefetchDeploymentData(options: DeploymentOptions) {

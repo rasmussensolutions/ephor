@@ -85,6 +85,11 @@ export function describeActivity(path: string, body: Body): Description {
       type: "machine",
       id: body.id,
     },
+    "/api/machines/remove": {
+      action: "Remove machine from Ephor",
+      type: "machine",
+      id: body.id,
+    },
     "/api/machines/provider": {
       action: "Change machine provider",
       type: "machine",

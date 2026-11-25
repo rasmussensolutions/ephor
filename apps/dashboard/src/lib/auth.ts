@@ -11,6 +11,8 @@ export interface SessionInfo {
   recoveryCodesRemaining: number;
 }
 const messages: Record<string, string> = {
+  MACHINE_NOT_DISCONNECTED:
+    "Disconnect this machine before removing it from Ephor.",
   GITHUB_DIRECTORY_NOT_FOUND:
     "This directory does not exist on the selected branch. Choose another folder.",
   GITHUB_DIRECTORY_TOO_LARGE:
