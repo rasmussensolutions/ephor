@@ -1,5 +1,6 @@
 import { AuthError } from "../auth/store";
 import { type CatalogSpec, validateCatalog } from "./catalog";
+import { environmentError } from "./environment";
 import type { ServiceTechnology } from "./technology";
 
 export type { CatalogItem, CatalogRuntime } from "./catalog";
@@ -94,20 +95,8 @@ export function spec(value: unknown): ServiceSpec {
   )
     throw new AuthError("INVALID_SERVICE_LIMITS");
   const environment = object(v.environment ?? {});
-  if (
-    Object.keys(environment).length > 64 ||
-    JSON.stringify(environment).length > 12000
-  )
-    throw new AuthError("INVALID_ENVIRONMENT");
-  for (const [name, val] of Object.entries(environment)) {
-    if (
-      !/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(name) ||
-      typeof val !== "string" ||
-      val.includes("\0") ||
-      val.length > 4096
-    )
-      throw new AuthError("INVALID_ENVIRONMENT");
-  }
+  const error = environmentError(environment);
+  if (error) throw new AuthError(error);
   let registry: ServiceSpec["registry"] = null;
   if (v.registry) {
     const r = object(v.registry);

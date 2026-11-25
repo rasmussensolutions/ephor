@@ -2,6 +2,7 @@ import { AuthError, AuthStore, type Sql } from "../auth/store";
 import { machineClaim } from "../machines/maintenance-lock";
 import { ServiceConnections } from "./connections";
 import { readDomains } from "./domains";
+import { environmentError } from "./environment";
 import type { GitHubApp } from "./github-app";
 import {
   IMAGE,
@@ -312,19 +313,8 @@ export class Builds {
   }
   validateEnvironment(value: unknown) {
     const variables = object(value);
-    if (
-      Object.keys(variables).length > 32 ||
-      JSON.stringify(variables).length > 8000
-    )
-      throw new AuthError("INVALID_ENVIRONMENT");
-    for (const [k, v] of Object.entries(variables))
-      if (
-        !/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(k) ||
-        typeof v !== "string" ||
-        v.includes("\0") ||
-        v.length > 4096
-      )
-        throw new AuthError("INVALID_ENVIRONMENT");
+    const error = environmentError(variables);
+    if (error) throw new AuthError(error);
     return variables;
   }
   async setEnvironment(id: string, value: unknown) {

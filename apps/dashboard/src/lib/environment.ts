@@ -1,26 +1,9 @@
+import { environmentError, environmentMessages } from "@ephor/api/environment";
+
 export function validateEnvironment(values: unknown): Record<string, string> {
-  if (!values || typeof values !== "object" || Array.isArray(values))
-    throw new Error(
-      "Use a JSON object with string values, or NAME=value lines.",
-    );
-  const entries = Object.entries(values);
-  if (entries.length > 64 || JSON.stringify(values).length > 12000)
-    throw new Error("Use up to 64 variables and 12 KB in total.");
-  for (const [name, value] of entries) {
-    if (!/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(name))
-      throw new Error(
-        "Variable names must start with a letter or underscore and contain only letters, numbers, and underscores (up to 64 characters).",
-      );
-    if (
-      typeof value !== "string" ||
-      value.includes("\0") ||
-      value.length > 4096
-    )
-      throw new Error(
-        "Values must be strings of up to 4,096 characters without null bytes.",
-      );
-  }
-  return Object.fromEntries(entries) as Record<string, string>;
+  const error = environmentError(values);
+  if (error) throw new Error(environmentMessages[error]);
+  return Object.fromEntries(Object.entries(values as Record<string, string>));
 }
 
 /** Literal .env values only: never evaluate substitutions or expand variables. */

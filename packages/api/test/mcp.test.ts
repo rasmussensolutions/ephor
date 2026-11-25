@@ -137,7 +137,13 @@ test("an explicit direct grant executes, deploys and discloses authorized logs f
     serviceId,
     requestKey: "direct-vars-01",
     revision: vars.revision,
-    set: { PRIVATE: "direct-secret" },
+    set: {
+      PRIVATE: "direct-secret",
+      CERTIFICATE: "x".repeat(64 * 1024),
+      ...Object.fromEntries(
+        Array.from({ length: 100 }, (_, i) => [`VAR_${i}`, "x".repeat(512)]),
+      ),
+    },
   });
   expect(changed.status).toBe("completed");
   expect(
@@ -1148,7 +1154,7 @@ test("owner mutations require a fresh passkey and oversized MCP requests fail be
       authorization: `Bearer ${f.issued.token}`,
       "content-type": "application/json",
     },
-    body: JSON.stringify({ data: "x".repeat(40000) }),
+    body: JSON.stringify({ data: "x".repeat(1024 * 1024) }),
   });
   expect(response.status).toBe(413);
 });

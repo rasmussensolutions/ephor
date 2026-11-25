@@ -219,6 +219,39 @@ fn domain(s: &str) -> bool {
             .next()
             .is_some_and(|t| t.len() >= 2 && t.bytes().all(|b| b.is_ascii_lowercase()))
 }
+// Keep these limits aligned with packages/api/src/services/environment.ts.
+const MAX_ENVIRONMENT_VARIABLES: usize = 1024;
+const MAX_ENVIRONMENT_BYTES: usize = 256 * 1024;
+const MAX_ENVIRONMENT_VALUE_BYTES: usize = 64 * 1024;
+
+fn validate_environment(environment: &BTreeMap<String, String>) -> Result<()> {
+    ensure!(
+        environment.len() <= MAX_ENVIRONMENT_VARIABLES,
+        "Use up to 1,024 environment variables"
+    );
+    for (k, v) in environment {
+        ensure!(
+            !k.is_empty()
+                && k.len() <= 64
+                && k.bytes()
+                    .next()
+                    .is_some_and(|b| b.is_ascii_alphabetic() || b == b'_')
+                && k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+                && !v.contains('\0'),
+            "Invalid environment variable name or value"
+        );
+        ensure!(
+            v.len() <= MAX_ENVIRONMENT_VALUE_BYTES,
+            "Environment value exceeds 64 KiB"
+        );
+    }
+    ensure!(
+        serde_json::to_vec(environment)?.len() <= MAX_ENVIRONMENT_BYTES,
+        "Environment variables exceed 256 KiB in total"
+    );
+    Ok(())
+}
+
 fn validate(job: &Job) -> Result<()> {
     let s = &job.spec;
     validate_volumes(s)?;
@@ -292,23 +325,7 @@ fn validate(job: &Job) -> Result<()> {
                 .all(|b| b.is_ascii_alphanumeric() || b"/_.~-".contains(&b)),
         "Invalid health path"
     );
-    ensure!(
-        s.environment.len() <= 64 && serde_json::to_vec(&s.environment)?.len() <= 12000,
-        "Too many environment variables"
-    );
-    for (k, v) in &s.environment {
-        ensure!(
-            !k.is_empty()
-                && k.len() <= 64
-                && k.bytes()
-                    .next()
-                    .is_some_and(|b| b.is_ascii_alphabetic() || b == b'_')
-                && k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
-                && !v.contains('\0')
-                && v.len() <= 4096,
-            "Invalid environment"
-        );
-    }
+    validate_environment(&s.environment)?;
     if let Some(r) = &s.registry {
         ensure!(
             Some(r.server.as_str()) == s.image.split('/').next()
@@ -480,8 +497,8 @@ fn post(client: &Client, settings: &Settings, action: &str, body: Value) -> Resu
         "Panel rejected service request"
     );
     let mut bytes = Vec::new();
-    response.take(64001).read_to_end(&mut bytes)?;
-    ensure!(bytes.len() <= 64000, "Panel response too large");
+    response.take(1024 * 1024 + 1).read_to_end(&mut bytes)?;
+    ensure!(bytes.len() <= 1024 * 1024, "Panel response too large");
     Ok(serde_json::from_slice(&bytes)?)
 }
 fn proxy_config(state: &State) -> Value {
@@ -1277,6 +1294,31 @@ mod tests {
             },
         }
     }
+    #[test]
+    fn environment_limits_accept_large_configs_and_count_utf8_bytes() {
+        let mut j = job();
+        j.spec.environment = (0..1024)
+            .map(|i| (format!("VAR_{i}"), "x".into()))
+            .collect();
+        assert!(validate(&j).is_ok());
+        j.spec.environment.insert("EXTRA".into(), "x".into());
+        assert!(validate(&j).is_err());
+        j.spec.environment = BTreeMap::from([("CERTIFICATE".into(), "é".repeat(32 * 1024))]);
+        assert!(validate(&j).is_ok());
+        j.spec.environment.get_mut("CERTIFICATE").unwrap().push('é');
+        assert!(validate(&j).is_err());
+        // Four empty one-character keys take 29 JSON bytes; fill the exact boundary.
+        j.spec.environment = BTreeMap::from([
+            ("A".into(), "x".repeat(64 * 1024)),
+            ("B".into(), "x".repeat(64 * 1024)),
+            ("C".into(), "x".repeat(64 * 1024)),
+            ("D".into(), "x".repeat(64 * 1024 - 29)),
+        ]);
+        assert!(validate(&j).is_ok());
+        j.spec.environment.get_mut("D").unwrap().push('x');
+        assert!(validate(&j).is_err());
+    }
+
     #[test]
     fn rejects_unsafe_specifications() {
         let mut j = job();

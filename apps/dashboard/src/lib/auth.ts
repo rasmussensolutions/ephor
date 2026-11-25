@@ -1,4 +1,5 @@
 import { passkeyClient } from "@better-auth/passkey/client";
+import { environmentMessages } from "@ephor/api/environment";
 import { startAuthentication } from "@simplewebauthn/browser";
 import { createAuthClient } from "better-auth/react";
 import { authorizationId } from "./mcp";
@@ -245,8 +246,7 @@ const messages: Record<string, string> = {
     "Enter a public domain name without a URL scheme, port, or path.",
   INVALID_SERVICE_LIMITS:
     "Check the container port, health path, memory, and CPU limits.",
-  INVALID_ENVIRONMENT:
-    "Environment values must be strings, with valid variable names and a total size below 12 KB.",
+  ...environmentMessages,
   INVALID_REGISTRY:
     "Provide a registry username and read token for the image registry.",
   INVALID_REPOSITORY: "Use owner/repository and a valid branch name.",

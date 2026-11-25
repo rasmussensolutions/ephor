@@ -12,6 +12,7 @@
     "./machines": "./src/machines/store.ts",
     "./providers": "./src/machines/providers.ts",
     "./services": "./src/services/spec.ts",
+    "./environment": "./src/services/environment.ts",
     "./backups": "./src/backups/providers.ts",
     "./notifications": "./src/notifications/types.ts",
     "./activity": "./src/activity/types.ts"

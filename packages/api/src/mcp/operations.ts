@@ -9,6 +9,10 @@ import { catalog, catalogConfig, template } from "../services/catalog";
 import { connectionReference } from "../services/connections";
 import { ServiceSecrets } from "../services/crypto";
 import { dnsRecords, readDomains } from "../services/domains";
+import {
+  MAX_ENVIRONMENT_VALUE_BYTES,
+  MAX_ENVIRONMENT_VARIABLES,
+} from "../services/environment";
 import { GitHubApp } from "../services/github-app";
 import { checkHttps } from "../services/https-check";
 import { metricsHistory, type ServiceRuntime } from "../services/metrics";
@@ -129,9 +133,12 @@ export const schemas = {
       revision: z.string().length(64),
       set: z.record(
         z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/),
-        z.string().max(4096),
+        z.string().max(MAX_ENVIRONMENT_VALUE_BYTES),
       ),
-      remove: z.array(z.string().max(64)).max(64).default([]),
+      remove: z
+        .array(z.string().max(64))
+        .max(MAX_ENVIRONMENT_VARIABLES)
+        .default([]),
     })
     .strict(),
   deploy_service: z.object({ ...write, ...service }).strict(),

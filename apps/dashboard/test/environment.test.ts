@@ -28,9 +28,9 @@ test("variable input rejects malformed, duplicate, oversized, and non-string val
     '{"A":1}',
     '{"A":null}',
     "{broken",
-    `A=${"a".repeat(4097)}`,
+    `A=${"a".repeat(64 * 1024 + 1)}`,
     "A=\u0000",
-    Array.from({ length: 65 }, (_, i) => `VAR_${i}=x`).join("\n"),
+    Array.from({ length: 1025 }, (_, i) => `VAR_${i}=x`).join("\n"),
   ])
     expect(() => parseEnvironment(input)).toThrow();
 });
@@ -41,4 +41,49 @@ test("prototype-like variable names are treated as literal keys", () => {
     "literal",
   );
   expect(parseEnvironment(formatEnvironment(values))).toEqual(values);
+});
+
+test("raw editor accepts large environments and reports byte limits precisely", () => {
+  const values = Object.fromEntries(
+    Array.from({ length: 100 }, (_, i) => [`VAR_${i}`, "x".repeat(512)]),
+  );
+  values.CERTIFICATE = "é".repeat(32 * 1024);
+  expect(parseEnvironment(formatEnvironment(values))).toEqual(values);
+  expect(() => parseEnvironment(`CERTIFICATE=${values.CERTIFICATE}é`)).toThrow(
+    "64 KiB",
+  );
+  expect(() =>
+    parseEnvironment(
+      JSON.stringify(
+        Object.fromEntries(
+          Array.from({ length: 5 }, (_, i) => [
+            `KEY_${i}`,
+            "x".repeat(64 * 1024),
+          ]),
+        ),
+      ),
+    ),
+  ).toThrow("256 KiB");
+  expect(() =>
+    parseEnvironment(
+      Array.from({ length: 1025 }, (_, i) => `KEY_${i}=x`).join("\n"),
+    ),
+  ).toThrow("1,024");
+});
+
+test("environment total and count boundaries match daemon validation", () => {
+  const values = {
+    A: "x".repeat(64 * 1024),
+    B: "x".repeat(64 * 1024),
+    C: "x".repeat(64 * 1024),
+    D: "x".repeat(64 * 1024 - 29),
+  };
+  expect(parseEnvironment(JSON.stringify(values))).toEqual(values);
+  expect(() =>
+    parseEnvironment(JSON.stringify({ ...values, D: `${values.D}x` })),
+  ).toThrow("256 KiB");
+  const many = Object.fromEntries(
+    Array.from({ length: 1024 }, (_, i) => [`VAR_${i}`, "x"]),
+  );
+  expect(parseEnvironment(formatEnvironment(many))).toEqual(many);
 });

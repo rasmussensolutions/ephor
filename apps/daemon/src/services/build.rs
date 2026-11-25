@@ -73,23 +73,7 @@ fn validate_build(b: &Build) -> Result<()> {
         image(&b.image) && b.image.ends_with(&format!("/{}:{}", b.service_id, b.id)),
         "Invalid build destination"
     );
-    ensure!(
-        b.variables.len() <= 32 && serde_json::to_vec(&b.variables)?.len() <= 8000,
-        "Invalid build variables"
-    );
-    for (k, v) in &b.variables {
-        ensure!(
-            !k.is_empty()
-                && k.len() <= 64
-                && k.bytes()
-                    .next()
-                    .is_some_and(|b| b.is_ascii_alphabetic() || b == b'_')
-                && k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
-                && v.len() <= 4096
-                && !v.contains('\0'),
-            "Invalid build variable"
-        );
-    }
+    validate_environment(&b.variables)?;
     if let Some(r) = &b.registry {
         ensure!(
             Some(r.server.as_str()) == b.image.split('/').next()

@@ -1,5 +1,6 @@
 import { AuthError, AuthStore, hash, type Sql } from "../auth/store";
 import { connectionReference, ServiceConnections } from "./connections";
+import { MAX_ENVIRONMENT_VARIABLES } from "./environment";
 import { object, type ServiceSpec, spec } from "./spec";
 import { Services } from "./store";
 
@@ -68,7 +69,7 @@ export class ServiceVariables {
     const remove = b.remove ?? [];
     if (
       !Array.isArray(remove) ||
-      remove.length > 64 ||
+      remove.length > MAX_ENVIRONMENT_VARIABLES ||
       remove.some(
         (name) =>
           typeof name !== "string" ||

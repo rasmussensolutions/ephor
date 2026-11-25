@@ -5,6 +5,7 @@ import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import { type AuthEnvironment, createAuth, requireOwner } from "../auth/config";
 import { AuthError, AuthStore, hash, randomToken } from "../auth/store";
+import { ENVIRONMENT_REQUEST_BYTES } from "../services/environment";
 import {
   clientId,
   fetchClientMetadata,
@@ -110,7 +111,7 @@ export function mcpPublicRoutes(
     app.use(
       path,
       bodyLimit({
-        maxSize: 32768,
+        maxSize: path === "/mcp" ? ENVIRONMENT_REQUEST_BYTES : 32768,
         onError: (c) => c.json({ error: "request_too_large" }, 413),
       }),
     );

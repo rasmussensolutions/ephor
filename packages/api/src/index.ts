@@ -35,6 +35,7 @@ import {
   panelReleasePublicRoutes,
 } from "./panel/release/routes";
 import { PANEL_VERSION } from "./panel/release/version";
+import { ENVIRONMENT_REQUEST_BYTES } from "./services/environment";
 
 export { machineReleaseConfig } from "./machines/release-config";
 
@@ -172,7 +173,12 @@ export function createApi(
           ? 2 * 1024 * 1024
           : c.req.path === "/api/agent/security/report"
             ? 512 * 1024
-            : 32 * 1024,
+            : c.req.path === "/api/services/create" ||
+                /^\/api\/services\/[^/]+\/(?:configure|variables)$/.test(
+                  c.req.path,
+                )
+              ? ENVIRONMENT_REQUEST_BYTES
+              : 32 * 1024,
       onError: (c) => c.json({ code: "BODY_TOO_LARGE" }, 413),
     })(c, next),
   );

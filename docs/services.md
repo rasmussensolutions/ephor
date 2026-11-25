@@ -29,6 +29,15 @@ A healthy deployment verifies the local app, **not external DNS or certificate r
 
 Domain changes apply on the next deployment. Reservations are kept even after removing a hostname so a failed/queued rollout or rollback cannot accidentally transfer a live route to another service. Moving hostnames between services currently requires an administrator to reconcile the old route and reservation deliberately. Raw TCP exposure and wildcard certificates are not implemented.
 
+## Environment variables
+
+Runtime and build environments each support up to **1,024 variables**, **256 KiB
+of UTF-8 JSON in total** (including names and formatting), and **64 KiB per
+value**. Names can contain up to 64 letters, numbers, or underscores and must
+start with a letter or underscore. Values may be multiline but cannot contain
+null bytes. The editor identifies whether the count, total size, or value size
+is exceeded. Update both the panel and machine daemon to use these expanded limits.
+
 ## Connecting an app to a database
 
 Open the app's **Variables** tab. **Connect a service** suggests `DATABASE_URL`

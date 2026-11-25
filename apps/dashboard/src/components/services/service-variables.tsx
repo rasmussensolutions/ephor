@@ -430,7 +430,6 @@ export function ServiceVariables({
               <Textarea
                 id={`${formId}-value`}
                 rows={3}
-                maxLength={4096}
                 spellCheck={false}
                 autoComplete="off"
                 className={inputClass}
