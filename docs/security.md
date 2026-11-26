@@ -65,6 +65,15 @@ The combined installer attempts Security and deployment setup independently afte
 
 The root helper executes only fixed inspection/scanning operations, uses bounded command output and timeouts, and cannot receive arbitrary commands from the panel. The systemd unit restricts capabilities, filesystem writes and resource use. Docker socket access and host inspection are nevertheless privileged; the daemon binary and scanner are part of the host's trusted software.
 
+Daemon 0.2.7 sets scanner `TMPDIR=/var/tmp`. The unit's `PrivateTmp=yes`
+isolates both temporary directories and removes their contents when the service
+stops. On hosts with RAM-backed `/tmp`, large image archives otherwise count
+against the collector's memory limit and can cause repeated scan timeouts or
+OOM restarts. Keep `/var/tmp` on disk with room for the largest uncompressed
+service image; verify its filesystem on the target host. This does not remove
+the scan timeout, memory limit, or private temporary-directory isolation. See
+[systemd's PrivateTmp documentation](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html#PrivateTmp=).
+
 Reports and batches of structured SSH events are buffered on disk until acknowledged. Uploads are idempotent and processed in bounded batches for D1 request budgets. Journal cursor loss, unavailable logs, first enrollment and event-volume limits create visible collection-gap events. No claim is made to capture every syscall or every host security event. Raw journal messages, container environments, registry credentials, process arguments and source mount paths are not uploaded.
 
 The unified timeline combines collector events, findings, scans, existing panel activity and account audit records. JSON export follows pagination and fails explicitly rather than silently truncating large exports. Retention is 90 days by default (7–365 days configurable). It controls the unified timeline window, collector-event cleanup and older completed scan/resolved-finding cleanup. Active findings and latest scans are retained. Existing panel/account logs retain their existing storage policy. This is centralized audit history, not a tamper-proof or externally archived log.

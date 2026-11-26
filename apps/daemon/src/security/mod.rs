@@ -117,6 +117,9 @@ fn command(path: &str, args: &[&str], seconds: u64, limit: usize) -> Result<Stri
         .env("PATH", "/usr/sbin:/usr/bin:/sbin:/bin")
         .env("LC_ALL", "C")
         .env("HOME", STATE)
+        // PrivateTmp isolates /var/tmp too. Keep image archives off /tmp,
+        // which may be tmpfs and exhaust the collector's memory cgroup.
+        .env("TMPDIR", "/var/tmp")
         .env("DOCKER_HOST", "unix:///var/run/docker.sock")
         .current_dir(STATE)
         .process_group(0)
