@@ -983,6 +983,7 @@ test("ordinary reads never expose environment, registry credentials or logs; dis
       name: "App",
       spec: {
         ...spec,
+        volumes: [{ name: "data", mountPath: "/data" }],
         environment: { API_KEY: secret },
         registry: {
           server: "docker.io",
@@ -1013,6 +1014,12 @@ test("ordinary reads never expose environment, registry credentials or logs; dis
   });
   for (const hidden of [secret, "registry-private", "private output"])
     expect(JSON.stringify(inspection)).not.toContain(hidden);
+  expect(inspection).toMatchObject({
+    spec: {
+      volumes: [{ name: "data", mountPath: "/data" }],
+      storageVersion: null,
+    },
+  });
   const variables = (await f.operations.call(f.issued.id, "list_variables", {
     serviceId: created.id,
   })) as { revision: string };
@@ -1071,6 +1078,65 @@ test("ordinary reads never expose environment, registry credentials or logs; dis
   );
   expect(output).toContain("private output");
   expect(output).not.toContain(secret);
+});
+test("build log disclosure redacts pinned build credentials without corrupting numbers from runtime settings", async () => {
+  const f = await setup();
+  const services = new Services(f.sql, f.env.secret);
+  const created = await services.create(
+    {
+      machineId: f.machine.id,
+      name: "Builder",
+      spec: { ...spec, environment: { WORKERS: "1", LIMIT: "2" } },
+    },
+    { type: "image" },
+  );
+  await f.browser.request(`/projects/${f.project.id}/add`, {
+    serviceId: created.id,
+  });
+  const buildId = crypto.randomUUID();
+  const source = await services.secrets.seal(`build-source:${buildId}`, {
+    variables: { BUILD_SECRET: "previous-build-credential" },
+    registry: { password: "previous-registry-credential" },
+  });
+  await f.operations.builds.setEnvironment(created.id, {
+    BUILD_SECRET: "rotated-credential",
+  });
+  await f.sql.query(
+    "INSERT INTO ephor_build (id,service_id,machine_id,source,config,domains,status,created_at,updated_at,logs) VALUES ($1,$2,$3,$4,$5,'{}','failed',$6,$6,$7)",
+    [
+      buildId,
+      created.id,
+      f.machine.id,
+      source,
+      (await services.get(created.id)).config,
+      Date.now(),
+      "Step 12: sha256:abc124\nprevious-build-credential\nprevious-registry-credential\nBearer accidental-value",
+    ],
+  );
+  const requested = (await f.operations.call(f.issued.id, "read_logs", {
+    serviceId: created.id,
+    buildId,
+    kind: "build",
+    requestKey: "build-logs-001",
+  })) as { operationId: string };
+  expect(
+    (
+      await f.browser.request("/mcp/decide", {
+        id: requested.operationId,
+        approve: true,
+      })
+    ).status,
+  ).toBe(200);
+  const disclosed = JSON.stringify(
+    await f.operations.status(f.issued.id, requested.operationId),
+  );
+  expect(disclosed).toContain("Step 12: sha256:abc124");
+  for (const secret of [
+    "previous-build-credential",
+    "previous-registry-credential",
+    "accidental-value",
+  ])
+    expect(disclosed).not.toContain(secret);
 });
 test("expired, changed, denied and recovered-owner approvals cannot execute", async () => {
   const f = await setup();

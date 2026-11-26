@@ -315,6 +315,8 @@ export class AgentOperations {
         healthPath: config.healthPath,
         memoryMb: config.memoryMb,
         cpus: config.cpus,
+        volumes: config.volumes ?? [],
+        storageVersion: config.storageVersion ?? null,
       },
       health: {
         status: runtime?.status ?? "unknown",
@@ -803,29 +805,41 @@ export class AgentOperations {
     if (tool === "read_logs") {
       const row = await this.services.get(serviceId);
       let logs = "";
-      if (a.kind === "runtime")
+      let secrets: string[];
+      if (a.kind === "runtime") {
         logs =
           (row.runtime ? (JSON.parse(row.runtime) as ServiceRuntime) : null)
             ?.logs ?? "";
-      else {
+        const config = await this.secrets.open<ServiceSpec>(row.id, row.config);
+        const buildEnv = await this.github.integrations.get<{
+          variables: Record<string, string>;
+        }>(`build-env:${row.id}`);
+        secrets = [
+          ...Object.values(config.environment),
+          ...Object.values(buildEnv?.variables ?? {}),
+          config.registry?.password ?? "",
+        ];
+      } else {
         if (!a.buildId) throw new AuthError("BUILD_ID_REQUIRED");
-        const [b] = await this.env.sql.query<{ logs: string }>(
-          "SELECT logs FROM ephor_build WHERE id=$1 AND service_id=$2",
+        const [b] = await this.env.sql.query<{ logs: string; source: string }>(
+          "SELECT logs,source FROM ephor_build WHERE id=$1 AND service_id=$2",
           [a.buildId, serviceId],
         );
         if (!b) throw new AuthError("NOT_FOUND", 404);
         logs = b.logs;
+        // Builders never receive runtime variables. Use the pinned build's
+        // credentials, including values rotated since that build was queued.
+        const source = await this.secrets.open<{
+          variables?: Record<string, string>;
+          registry?: ServiceSpec["registry"];
+        }>(`build-source:${a.buildId}`, b.source);
+        secrets = [
+          ...Object.values(source.variables ?? {}),
+          source.registry?.password ?? "",
+        ];
       }
       // Redaction is defense in depth; log disclosure requires its own grant.
-      const config = await this.secrets.open<ServiceSpec>(row.id, row.config);
-      const buildEnv = await this.github.integrations.get<{
-        variables: Record<string, string>;
-      }>(`build-env:${row.id}`);
-      for (const secret of [
-        ...Object.values(config.environment),
-        ...Object.values(buildEnv?.variables ?? {}),
-        config.registry?.password ?? "",
-      ]
+      for (const secret of secrets
         .filter(Boolean)
         .sort((a, b) => b.length - a.length))
         logs = logs.split(secret).join("[REDACTED]");

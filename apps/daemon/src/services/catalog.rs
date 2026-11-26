@@ -689,9 +689,25 @@ fn stop_legacy(state: &State, sid: &str) -> Result<()> {
     }
     Ok(())
 }
+fn operation_job(state: &State, job: &Job) -> Job {
+    let mut selected = job.clone();
+    if job.action == "stop" {
+        if let Some(app) = state
+            .services
+            .get(&job.service_id)
+            .and_then(|s| s.app.as_ref())
+        {
+            // Stop the deployed components even if the panel now contains an
+            // unbuilt image or pending storage/credential changes. Preserve the
+            // operation identity; stopping never applies the pending spec.
+            selected.spec = app.job.spec.clone();
+        }
+    }
+    selected
+}
 pub(super) fn apply(state: &mut State, settings: &Settings, job: &Job) -> Result<()> {
     // Resolve a custom image to an immutable identity before persisting its state.
-    let mut pinned = job.clone();
+    let mut pinned = operation_job(state, job);
     if pinned.spec.custom_storage() && job.action != "stop" {
         pinned.spec.image = pull(&pinned.spec).context("IMAGE_PULL_FAILED")?;
     }
@@ -1231,6 +1247,61 @@ mod tests {
         assert!("新しいログ".ends_with(&tail));
     }
     use super::*;
+    #[test]
+    fn stop_uses_deployed_configuration_during_recovery_without_applying_pending_changes() {
+        let mut deployed = super::super::tests::job();
+        deployed.spec.storage_version = Some(1);
+        deployed.spec.volumes = vec![PersistentVolume {
+            name: "data".into(),
+            mount_path: "/data".into(),
+        }];
+        let app = App {
+            job: deployed.clone(),
+            recipe_hash: recipe_hash(&recipe(&deployed).unwrap()),
+            provisioned: true,
+            volumes: BTreeMap::from([("data".into(), "existing-data".into())]),
+            detached_volumes: Default::default(),
+            uninitialized_volumes: Default::default(),
+            backups: vec![],
+            port: 31000,
+            access_hash: String::new(),
+            recovery_required: true,
+        };
+        let mut state = State::default();
+        state.services.insert(
+            deployed.service_id.clone(),
+            Service {
+                app: Some(app),
+                ..Default::default()
+            },
+        );
+        let mut pending = deployed.clone();
+        pending.id = "b".repeat(36);
+        pending.action = "stop".into();
+        pending.spec.image = "ephor.local/service:pending".into();
+        pending
+            .spec
+            .environment
+            .insert("SECRET".into(), "new-value".into());
+        pending.spec.volumes[0].mount_path = "/pending".into();
+        let stopped = operation_job(&state, &pending);
+        assert_eq!(stopped.id, pending.id);
+        assert_eq!(stopped.action, "stop");
+        assert_eq!(
+            serde_json::to_value(&stopped.spec).unwrap(),
+            serde_json::to_value(&deployed.spec).unwrap()
+        );
+        pending.action = "deploy".into();
+        assert_eq!(
+            serde_json::to_value(operation_job(&state, &pending).spec).unwrap(),
+            serde_json::to_value(&pending.spec).unwrap()
+        );
+        pending.action = "stop".into();
+        assert_eq!(
+            serde_json::to_value(operation_job(&State::default(), &pending).spec).unwrap(),
+            serde_json::to_value(&pending.spec).unwrap()
+        );
+    }
     #[test]
     fn storage_plan_preserves_identity_and_pending_initialization_across_restart() {
         let mut job = super::super::tests::job();
