@@ -421,6 +421,24 @@ test("maintenance refuses active scans, blocks new claims and resumes after comp
     "1",
   );
   expect(scan).not.toBeNull();
+  const preflightPath = `/machines/${f.enrollment.id}/maintenance/status`;
+  const anonymous = new Browser(f.app);
+  expect((await anonymous.request(preflightPath)).status).toBe(401);
+  const preflight = await f.browser.request(preflightPath);
+  expect(preflight.status).toBe(200);
+  const readiness = await preflight.json();
+  expect(readiness.busy).toBe(true);
+  expect(readiness.blockers).toEqual([
+    expect.objectContaining({ kind: "security scan", id: scan?.id }),
+  ]);
+  // The preflight must not clear a stale lease or grant installation authority.
+  expect(
+    (
+      await f.sql.query("SELECT status FROM ephor_security_scan WHERE id=$1", [
+        scan?.id,
+      ])
+    )[0]?.status,
+  ).toBe("running");
   await expect(f.updates.queue(f.enrollment.id, true)).rejects.toThrow(
     "MACHINE_BUSY",
   );
@@ -431,6 +449,10 @@ test("maintenance refuses active scans, blocks new claims and resumes after comp
     "UPDATE ephor_security_scan SET status='succeeded' WHERE machine_id=$1",
     [f.enrollment.id],
   );
+  expect(await (await f.browser.request(preflightPath)).json()).toEqual({
+    busy: false,
+    blockers: [],
+  });
   const job = await f.updates.queue(f.enrollment.id, true);
   await security.queue(f.enrollment.id, null, true);
   expect(
@@ -640,6 +662,54 @@ async function sharedMachine() {
   await f.updates.next(f.enrollment.id, publicKey, 3, components());
   return f;
 }
+test("explicit idle queuing drains active scans, fences new claims, and never dispatches early", async () => {
+  const f = await sharedMachine();
+  const { Security } = await import("../src/security/store");
+  const { hash } = await import("../src/auth/store");
+  const security = new Security(f.sql);
+  const ticket = await security.issue(f.enrollment.id);
+  const credential = randomToken(),
+    digest = await hash(credential);
+  await security.enroll(ticket.token, credential);
+  const scan = await security.next(f.enrollment.id, digest, "1");
+  expect(scan).not.toBeNull();
+  await expect(f.updates.queue(f.enrollment.id, true)).rejects.toThrow(
+    "MACHINE_BUSY",
+  );
+  const body = { id: f.enrollment.id, wholeMachine: true, waitForIdle: true };
+  expect(
+    (await new Browser(f.app).request("/machines/updates", body)).status,
+  ).toBe(401);
+  const response = await f.browser.request("/machines/updates", body);
+  expect(response.status).toBe(200);
+  const job = await response.json();
+  expect(
+    await f.updates.next(f.enrollment.id, publicKey, 3, components()),
+  ).toBeNull();
+  expect(
+    (
+      await f.sql.query("SELECT status FROM ephor_security_scan WHERE id=$1", [
+        scan?.id,
+      ])
+    )[0]?.status,
+  ).toBe("running");
+  await f.sql.query(
+    "UPDATE ephor_security_scan SET status='completed' WHERE id=$1",
+    [scan?.id],
+  );
+  await security.queue(f.enrollment.id, null, true);
+  expect(await security.next(f.enrollment.id, digest, "1")).toBeNull();
+  expect(
+    await f.updates.next(f.enrollment.id, publicKey, 3, components()),
+  ).toMatchObject({ id: job.id });
+  await f.sql.query("UPDATE ephor_update SET expires_at=1 WHERE id=$1", [
+    job.id,
+  ]);
+  expect(
+    await f.updates.next(f.enrollment.id, publicKey, 3, components()),
+  ).toBeNull();
+  expect(await security.next(f.enrollment.id, digest, "1")).not.toBeNull();
+});
 test("shared-binary releases require migrated clients and never reach older updaters", async () => {
   const f = await sharedMachine();
   await f.updates.next(f.enrollment.id, publicKey, 2, components());

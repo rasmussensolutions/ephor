@@ -80,11 +80,16 @@ export class Updates {
     private sql: Sql,
     private releases: Releases,
   ) {}
-  async queue(machineId: unknown, wholeMachine = false, automatic = false) {
+  async queue(
+    machineId: unknown,
+    wholeMachine = false,
+    automatic = false,
+    waitForIdle = false,
+  ) {
     if (typeof machineId !== "string" || machineId.length > 64)
       throw new AuthError("INVALID_ID");
     const result = await machineClaim(this.sql, machineId, () =>
-      this.queueLocked(machineId, wholeMachine, automatic),
+      this.queueLocked(machineId, wholeMachine, automatic, waitForIdle),
     );
     if (!result) throw new AuthError("MACHINE_BUSY", 409);
     return result;
@@ -93,6 +98,7 @@ export class Updates {
     machineId: unknown,
     wholeMachine: boolean,
     automatic: boolean,
+    waitForIdle: boolean,
   ) {
     if (typeof machineId !== "string" || machineId.length > 64)
       throw new AuthError("INVALID_ID");
@@ -172,7 +178,10 @@ export class Updates {
       [machineId, Date.now()],
     );
     if (setup) throw new AuthError("MACHINE_BUSY", 409);
-    if (await maintenanceBusy(this.sql, machineId))
+    if (
+      (await maintenanceBusy(this.sql, machineId)) &&
+      !(waitForIdle && wholeMachine && protocol === 3 && !automatic)
+    )
       throw new AuthError("MACHINE_BUSY", 409);
     const id = crypto.randomUUID();
     const now = Date.now();
@@ -243,8 +252,9 @@ export class Updates {
       id: string;
       envelope: string;
       expires_at: number;
+      status: string;
     }>(
-      "SELECT id, envelope, expires_at FROM ephor_update WHERE machine_id = $1 AND EXISTS (SELECT 1 FROM ephor_machine WHERE id = $1 AND state = 'active') AND status IN ('queued','downloading','installing') ORDER BY created_at DESC LIMIT 1",
+      "SELECT id, envelope, expires_at, status FROM ephor_update WHERE machine_id = $1 AND EXISTS (SELECT 1 FROM ephor_machine WHERE id = $1 AND state = 'active') AND status IN ('queued','downloading','installing') ORDER BY created_at DESC LIMIT 1",
       [machineId],
     );
     // Old updater binaries must never consume a whole-machine job.
@@ -253,6 +263,14 @@ export class Updates {
         JSON.parse(job.envelope).manifest,
       ).updaterProtocol;
       if (required > protocol || (protocol === 3 && required !== 3))
+        return null;
+      // The queued update fences new claims under machineClaim. Existing work
+      // drains naturally; never dispatch to the root updater while it is active.
+      // Keep the original 15-minute authorization deadline, including wait time.
+      if (
+        job.status === "queued" &&
+        (await maintenanceBusy(this.sql, machineId))
+      )
         return null;
     }
     return job

@@ -500,7 +500,14 @@ export function createApi(
       true,
     );
     const body = await c.req.json();
-    return c.json(await updates.queue(body?.id, body?.wholeMachine === true));
+    return c.json(
+      await updates.queue(
+        body?.id,
+        body?.wholeMachine === true,
+        false,
+        body?.waitForIdle === true,
+      ),
+    );
   });
   async function machineReleaseInfo() {
     const [savedRelease, release, updateJobs] = await Promise.all([

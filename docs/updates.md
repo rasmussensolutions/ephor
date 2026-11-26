@@ -92,6 +92,14 @@ Release metadata expires after 90 days. Publish a newer release before expiry; e
 
 ## Failure recovery
 
+The Maintenance page checks running work before asking for a passkey. If work is
+active, it identifies the blocker and offers **Queue update after current jobs**.
+This separate approval lets current jobs finish, holds new job claims, and only
+dispatches the signed update when the machine is idle. It preserves the normal
+15-minute request deadline; an update that cannot start in time expires and work
+resumes. Existing application containers continue running. Setup/repair leases
+and unresolved installations still block new updates.
+
 Check these on the VPS:
 
 ```sh

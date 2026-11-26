@@ -10,6 +10,7 @@
     "./ai": "./src/ai/types.ts",
     ".": "./src/index.ts",
     "./machines": "./src/machines/store.ts",
+    "./maintenance": "./src/machines/maintenance-status.ts",
     "./providers": "./src/machines/providers.ts",
     "./services": "./src/services/spec.ts",
     "./postgres-extensions": "./src/services/postgres-extensions.ts",

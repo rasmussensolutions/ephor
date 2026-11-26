@@ -1,7 +1,9 @@
 import type { Machine, MachineList } from "@ephor/api/machines";
+import type { MaintenanceStatus } from "@ephor/api/maintenance";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { api, reauthenticate } from "@/lib/auth";
+import { requestMachineUpdate } from "@/lib/machine-update";
 import { CopyEnrollmentCommand, EnrollmentCommand } from "./enrollment-command";
 
 const components = [
@@ -25,6 +27,7 @@ export function MachineMaintenance({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [blocked, setBlocked] = useState(false);
   const [command, setCommand] = useState<{
     command: string;
     expiresAt: number;
@@ -198,24 +201,76 @@ export function MachineMaintenance({
             machine.status !== "online"
           }
           onClick={() => {
-            if (
-              !confirm(
-                `Update all installed Ephor components on “${machine.name}” to ${latest?.version}? Helpers briefly restart. Protection blocking may need to be enabled again afterward. A failed health check restores the previous components.`,
-              )
-            )
-              return;
             void run(async () => {
-              await reauthenticate();
-              await api("/machines/updates", {
-                id: machine.id,
-                wholeMachine: true,
+              const queued = await requestMachineUpdate({
+                preflight: async () => {
+                  const status = await api<MaintenanceStatus>(
+                    `/machines/${encodeURIComponent(machine.id)}/maintenance/status`,
+                  );
+                  setBlocked(status.busy);
+                  return status;
+                },
+                confirm: () =>
+                  confirm(
+                    `Update all installed Ephor components on “${machine.name}” to ${latest?.version}? Helpers briefly restart. Protection blocking may need to be enabled again afterward. A failed health check restores the previous components.`,
+                  ),
+                authenticate: reauthenticate,
+                queue: () =>
+                  api("/machines/updates", {
+                    id: machine.id,
+                    wholeMachine: true,
+                  }),
               });
-              setNotice("Ephor update queued.");
+              if (queued) setNotice("Ephor update queued.");
             });
           }}
         >
           Update Ephor on this machine
         </Button>
+        {blocked && !active ? (
+          <Button
+            variant="outline"
+            disabled={
+              busy ||
+              !ready ||
+              !compatible ||
+              !needsUpdate ||
+              pinned ||
+              newerComponent ||
+              machine.status !== "online"
+            }
+            onClick={() => {
+              void run(async () => {
+                const queued = await requestMachineUpdate({
+                  waitForIdle: true,
+                  preflight: () =>
+                    api(
+                      `/machines/${encodeURIComponent(machine.id)}/maintenance/status`,
+                    ),
+                  confirm: () =>
+                    confirm(
+                      `Queue Ephor ${latest?.version} on “${machine.name}” after current jobs finish? New jobs wait for this update. Authorization expires after 15 minutes if work does not finish. Application containers keep running; Ephor helpers briefly restart. A failed health check restores the previous components.`,
+                    ),
+                  authenticate: reauthenticate,
+                  queue: (waitForIdle) =>
+                    api("/machines/updates", {
+                      id: machine.id,
+                      wholeMachine: true,
+                      waitForIdle,
+                    }),
+                });
+                if (queued) {
+                  setBlocked(false);
+                  setNotice(
+                    "Update queued. Current jobs will finish before installation; new jobs wait. The request expires after 15 minutes.",
+                  );
+                }
+              });
+            }}
+          >
+            Queue update after current jobs
+          </Button>
+        ) : null}
         <Button
           variant="outline"
           disabled={busy || !releaseInfo?.configured}

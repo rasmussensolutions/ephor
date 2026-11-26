@@ -21,6 +21,7 @@ import {
   updaterSetup,
 } from "./installer";
 import { machineClaim } from "./maintenance-lock";
+import { maintenanceStatus } from "./maintenance-status";
 import { componentInventory, maintenanceBusy } from "./updates";
 
 export function maintenanceCommand(
@@ -136,6 +137,9 @@ export async function maintenanceLease(
 }
 
 export function maintenanceOwnerRoutes(app: Hono, env: AuthEnvironment) {
+  app.get("/api/machines/:id/maintenance/status", async (c) =>
+    c.json(await maintenanceStatus(env.sql, c.req.param("id"))),
+  );
   app.post("/api/machines/maintenance/policy", async (c) => {
     await requireOwner(
       createAuth(env, c.req.raw.headers),
