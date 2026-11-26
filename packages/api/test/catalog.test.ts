@@ -1,9 +1,24 @@
 import { expect, test } from "bun:test";
 import { randomToken } from "../src/auth/store";
 import { MachineStore } from "../src/machines/store";
-import { catalog, catalogConfig } from "../src/services/catalog";
+import { catalog, catalogConfig, template } from "../src/services/catalog";
 import { Services } from "../src/services/store";
 import { enrolled, timestamp } from "./helpers";
+
+test("new PostgreSQL services use pgvector 18 without changing existing version 1 recipes", () => {
+  const current = catalogConfig("postgres");
+  expect(current.config.catalog?.version).toBe(2);
+  expect(current.config.image).toContain("pgvector/pgvector@sha256:");
+  const legacy = template("postgres", 1).components[0];
+  expect(legacy?.image).toContain("library/postgres@sha256:");
+  expect(legacy?.volumes[0]?.target).toBe("/var/lib/postgresql/data");
+  const modern = template("postgres", 2).components[0];
+  expect(
+    (modern?.environment as Record<string, string> | undefined)?.PGDATA,
+  ).toBe("/var/lib/postgresql/18/docker");
+  expect(modern?.volumes[0]?.target).toBe("/var/lib/postgresql");
+  expect(modern?.user).toBe("999:999");
+});
 
 async function setup() {
   const f = await enrolled(),
@@ -156,4 +171,28 @@ test("every catalog recipe has bounded resources, immutable upstream images, and
       b = catalogConfig(app.id);
     expect(a.config.environment).not.toEqual(b.config.environment);
   }
+});
+
+test("PostgreSQL extension settings are additive, validated and require a new worker", async () => {
+  const f = await setup();
+  const cfg = catalogConfig("postgres");
+  const created = await f.services.create(
+    { machineId: f.machineId, name: "Extensions", spec: cfg.config },
+    cfg.source,
+  );
+  await expect(f.services.queue(created.id, "deploy")).rejects.toThrow(
+    "STATEFUL_WORKER_REQUIRED",
+  );
+  await expect(
+    f.services.extensions(created.id, {
+      extensions: ["vector; DROP TABLE users"],
+    }),
+  ).rejects.toThrow("INVALID_POSTGRES_EXTENSIONS");
+  await f.services.extensions(created.id, { extensions: ["vector"] });
+  await f.services.extensions(created.id, { extensions: ["pg_trgm"] });
+  await f.services.heartbeat(f.machineId, 8);
+  await f.services.queue(created.id, "deploy");
+  expect(await f.services.next(f.machineId, 7)).toBeNull();
+  const job = await f.services.next(f.machineId, 8);
+  expect(job?.spec.catalog?.extensions).toEqual(["vector", "pg_trgm"]);
 });

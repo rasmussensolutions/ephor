@@ -1,3 +1,4 @@
+import { POSTGRES_EXTENSIONS } from "@ephor/api/postgres-extensions";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { api, reauthenticate } from "@/lib/auth";
@@ -56,6 +57,15 @@ export function CatalogDetails({
         ) && (
           <DatabaseResources
             key={JSON.stringify(service.spec.catalog.resources)}
+            service={service}
+            busy={busy}
+            run={run}
+          />
+        )}
+      {service.spec.catalog?.template === "postgres" &&
+        service.spec.catalog.version >= 2 && (
+          <PostgresExtensions
+            key={JSON.stringify(service.spec.catalog.extensions)}
             service={service}
             busy={busy}
             run={run}
@@ -387,6 +397,71 @@ function DatabaseResources({
         }
       >
         Save resource settings
+      </Button>
+    </section>
+  );
+}
+
+function PostgresExtensions({
+  service,
+  busy,
+  run,
+}: {
+  service: Service;
+  busy: boolean;
+  run: (fn: () => Promise<void>) => Promise<void>;
+}) {
+  const configured = service.spec.catalog?.extensions ?? [];
+  const installed = service.runtime?.catalog?.extensions?.installed ?? [];
+  const [selected, setSelected] = useState<string[]>(configured);
+  const pending = selected.filter((name) => !installed.includes(name));
+  return (
+    <section className="space-y-4 rounded-xl border bg-card p-5">
+      <h2 className="font-medium">PostgreSQL extensions</h2>
+      <p className="text-sm text-muted-foreground">
+        Enable supported extensions in this database. Applying changes takes a
+        recovery point and briefly restarts PostgreSQL. Existing extensions and
+        their data are kept.
+      </p>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {POSTGRES_EXTENSIONS.map((name) => (
+          <label key={name} className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={selected.includes(name) || installed.includes(name)}
+              disabled={
+                busy || installed.includes(name) || configured.includes(name)
+              }
+              onChange={(event) =>
+                setSelected(
+                  event.target.checked
+                    ? [...selected, name]
+                    : selected.filter((value) => value !== name),
+                )
+              }
+            />
+            <span className="font-mono">{name}</span>
+            {installed.includes(name) ? (
+              <span className="text-muted-foreground">Enabled</span>
+            ) : configured.includes(name) ? (
+              <span className="text-muted-foreground">Pending</span>
+            ) : null}
+          </label>
+        ))}
+      </div>
+      <Button
+        variant="outline"
+        disabled={busy || !pending.length}
+        onClick={() =>
+          run(async () => {
+            await api(`/services/${service.id}/extensions`, {
+              extensions: selected,
+            });
+            await api(`/services/${service.id}/action`, { action: "deploy" });
+          })
+        }
+      >
+        Enable selected & restart
       </Button>
     </section>
   );

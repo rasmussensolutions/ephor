@@ -35,7 +35,12 @@ export function variableConnections(config: ServiceSpec) {
   }));
 }
 function exported(config: ServiceSpec) {
-  if (config.catalog?.version !== 1) return null;
+  if (
+    !config.catalog ||
+    (config.catalog.version !== 1 &&
+      !(config.catalog.template === "postgres" && config.catalog.version === 2))
+  )
+    return null;
   if (config.catalog.template === "postgres")
     return {
       template: "postgres" as const,

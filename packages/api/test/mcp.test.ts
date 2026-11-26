@@ -1398,3 +1398,71 @@ test("revoked MCP connections can be deleted with dependent tokens while named a
   ).json();
   expect(activity.items[0].actor.name).toBe("ChatGPT");
 });
+
+test("MCP build edits preserve repository settings and reject unsafe paths", async () => {
+  const f = await setup();
+  const services = new Services(f.sql, f.env.secret);
+  await f.sql.query("UPDATE ephor_machine SET telemetry=$1 WHERE id=$2", [
+    JSON.stringify({ arch: "x86_64" }),
+    f.machine.id,
+  ]);
+  const created = await services.create(
+    {
+      machineId: f.machine.id,
+      name: "Monorepo",
+      spec: { ...spec, environment: { TOKEN: "keep-private" } },
+    },
+    {
+      type: "github",
+      installationId: "123",
+      repositoryId: "456",
+      repository: "owner/repo",
+      branch: "main",
+      context: "apps/web",
+      dockerfile: "Web.Dockerfile",
+      buildType: "dockerfile",
+      buildMemoryMb: 1024,
+      buildCpus: 1,
+    },
+  );
+  await f.browser.request(`/projects/${f.project.id}/add`, {
+    serviceId: created.id,
+  });
+  const proposal = (await f.operations.call(f.issued.id, "configure_service", {
+    serviceId: created.id,
+    requestKey: "build-memory-001",
+    buildSettings: { buildMemoryMb: 4096 },
+  })) as { operationId: string };
+  const decision = await f.browser.request("/mcp/decide", {
+    id: proposal.operationId,
+    approve: true,
+  });
+  expect(decision.status).toBe(200);
+  const row = await services.get(created.id);
+  const source = JSON.parse(row.source);
+  expect(source.buildMemoryMb).toBe(4096);
+  expect(source.context).toBe("apps/web");
+  expect(source.dockerfile).toBe("Web.Dockerfile");
+  expect(source.buildType).toBe("dockerfile");
+  expect(source.buildCpus).toBe(1);
+  expect(source.repositoryId).toBe("456");
+  const bad = (await f.operations.call(f.issued.id, "configure_service", {
+    serviceId: created.id,
+    requestKey: "build-path-bad-001",
+    buildSettings: { context: "../escape" },
+  })) as { operationId: string };
+  await f.browser.request("/mcp/decide", {
+    id: bad.operationId,
+    approve: true,
+  });
+  expect(JSON.parse((await services.get(created.id)).source).context).toBe(
+    "apps/web",
+  );
+  expect(
+    schemas.configure_service.safeParse({
+      serviceId: created.id,
+      requestKey: "build-limit-bad-001",
+      buildSettings: { buildMemoryMb: 1 },
+    }).success,
+  ).toBe(false);
+});

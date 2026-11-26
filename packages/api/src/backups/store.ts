@@ -78,7 +78,7 @@ export class Backups {
   async ready(machine: unknown, minimum = 4) {
     const id = serviceId(machine);
     const [row] = await this.sql.query(
-      "SELECT m.id FROM ephor_machine m JOIN ephor_service_worker w ON w.machine_id=m.id WHERE m.id=$1 AND m.state='active' AND w.version IN ('4','5','6','7') AND CAST(w.version AS INTEGER)>=$3 AND w.last_seen>$2",
+      "SELECT m.id FROM ephor_machine m JOIN ephor_service_worker w ON w.machine_id=m.id WHERE m.id=$1 AND m.state='active' AND w.version IN ('4','5','6','7','8') AND CAST(w.version AS INTEGER)>=$3 AND w.last_seen>$2",
       [id, Date.now() - 120000, minimum],
     );
     if (!row) throw new AuthError("BACKUP_WORKER_REQUIRED", 409);
@@ -399,7 +399,13 @@ export class Backups {
     return { id: jid, serviceId: created.id };
   }
   async next(machine: string, protocol: unknown) {
-    if (protocol !== 4 && protocol !== 5 && protocol !== 6 && protocol !== 7)
+    if (
+      protocol !== 4 &&
+      protocol !== 5 &&
+      protocol !== 6 &&
+      protocol !== 7 &&
+      protocol !== 8
+    )
       throw new AuthError("BACKUP_WORKER_REQUIRED", 409);
     await this.services.heartbeat(machine, Number(protocol));
     await this.tick(machine);

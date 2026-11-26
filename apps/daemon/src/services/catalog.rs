@@ -13,6 +13,8 @@ pub(super) struct Selection {
     protected: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     resources: Option<Resources>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    extensions: Vec<String>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -172,6 +174,18 @@ fn compatible_recipe_hash(saved: &str, t: &Template) -> bool {
 }
 pub(super) fn validate(job: &Job) -> Result<()> {
     let t = recipe(job)?;
+    if let Some(c) = job.spec.catalog.as_ref() {
+        ensure!(
+            c.extensions.is_empty()
+                || (t.id == "postgres"
+                    && t.version >= 2
+                    && c.extensions.len() <= POSTGRES_EXTENSIONS.len()
+                    && c.extensions
+                        .iter()
+                        .all(|e| POSTGRES_EXTENSIONS.contains(&e.as_str()))),
+            "Invalid PostgreSQL extensions"
+        );
+    }
     if let Some(r) = job.spec.catalog.as_ref().and_then(|c| c.resources.as_ref()) {
         ensure!(
             ["postgres", "redis", "qdrant"].contains(&t.id.as_str())
@@ -925,6 +939,9 @@ pub(super) fn apply(state: &mut State, settings: &Settings, job: &Job) -> Result
     save(state)?;
     if job.action != "backup" || was_running {
         start_components(job, &app, &t)?;
+        if job.action == "deploy" {
+            enable_postgres_extensions(job, &t)?;
+        }
         let r = revision(job, &app, &t);
         state.services.get_mut(sid).context("No service")?.active = Some(r);
         state.services.get_mut(sid).context("No service")?.app = Some(app.clone());
@@ -1040,6 +1057,55 @@ fn report_logs(mut text: String, secrets: &BTreeMap<String, String>, limit: usiz
     }
     text
 }
+const POSTGRES_EXTENSIONS: &[&str] = &[
+    "vector",
+    "pg_trgm",
+    "unaccent",
+    "uuid-ossp",
+    "hstore",
+    "btree_gin",
+    "btree_gist",
+    "citext",
+    "pgcrypto",
+    "fuzzystrmatch",
+    "tablefunc",
+];
+fn enable_postgres_extensions(job: &Job, t: &Template) -> Result<()> {
+    if t.id != "postgres" {
+        return Ok(());
+    }
+    for extension in &job.spec.catalog.as_ref().context("No catalog")?.extensions {
+        ensure!(
+            POSTGRES_EXTENSIONS.contains(&extension.as_str()),
+            "Invalid PostgreSQL extension"
+        );
+        let sql = format!("CREATE EXTENSION IF NOT EXISTS \"{}\"", extension);
+        d(
+            &[
+                "exec",
+                &name(&job.service_id, "database"),
+                "psql",
+                "-X",
+                "-U",
+                "ephor",
+                "-d",
+                "app",
+                "-v",
+                "ON_ERROR_STOP=1",
+                "-c",
+                &sql,
+            ],
+            60,
+        )
+        .context("POSTGRES_EXTENSION_FAILED")?;
+    }
+    Ok(())
+}
+fn postgres_extensions(sid: &str) -> Option<Value> {
+    let output = d(&["exec", &name(sid, "database"), "psql", "-XAt", "-U", "ephor", "-d", "app", "-c", "SELECT json_build_object('available', COALESCE((SELECT json_agg(name ORDER BY name) FROM pg_available_extensions), '[]'), 'installed', COALESCE((SELECT json_agg(extname ORDER BY extname) FROM pg_extension), '[]'))"], 10).ok()?;
+    serde_json::from_str(output.trim()).ok()
+}
+
 pub(super) fn telemetry(
     app: &App,
     collector: &mut metrics::Collector,
@@ -1138,7 +1204,7 @@ pub(super) fn telemetry(
         })
         .collect::<Vec<_>>();
     Ok((
-        json!({"components":components,"volumes":volumes,"backups":app.backups.iter().map(|b|json!({"id":b.id,"createdAt":b.created_at,"volumes":b.volumes.values().collect::<Vec<_>>()})).collect::<Vec<_>>(),"port":app.port,"recoveryRequired":app.recovery_required}),
+        json!({"components":components,"volumes":volumes,"backups":app.backups.iter().map(|b|json!({"id":b.id,"createdAt":b.created_at,"volumes":b.volumes.values().collect::<Vec<_>>()})).collect::<Vec<_>>(),"port":app.port,"recoveryRequired":app.recovery_required,"extensions":if t.id == "postgres" { postgres_extensions(sid) } else { None }}),
         text,
         stats,
     ))
@@ -1230,6 +1296,7 @@ mod tests {
             version: t.version,
             protected: t.web,
             resources: None,
+            extensions: vec![],
         });
         job.spec.environment = t
             .secrets

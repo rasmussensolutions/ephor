@@ -104,6 +104,25 @@ Custom services can join standalone database networks using Variables → Connec
 service. Connections are limited to the same machine and require protocol 5
 (protocol 6 for Qdrant).
 
+### PostgreSQL versions and extensions
+
+The PostgreSQL catalog entry now installs PostgreSQL 18 with pgvector available.
+Existing PostgreSQL 17 installations retain their pinned recipe; restarting does
+not perform a major-version upgrade. Use a logical dump and restore into a new
+PostgreSQL 18 service when migrating existing data. There is one PostgreSQL entry
+in the catalog, with versioned recipes retained internally for compatibility.
+PostgreSQL 18 requires deployment worker protocol 8 and stores its data under
+`/var/lib/postgresql/18/docker` in a volume mounted at `/var/lib/postgresql`.
+
+For PostgreSQL 18, **Setup & data → PostgreSQL extensions** enables `vector`,
+`pg_trgm`, `unaccent`, `uuid-ossp`, `hstore`, `btree_gin`, `btree_gist`, `citext`,
+`pgcrypto`, `fuzzystrmatch`, and `tablefunc`. Applying selections takes a recovery
+point and restarts the database, then runs `CREATE EXTENSION IF NOT EXISTS` for
+the selected extensions in database `app`. Installed extensions are reported by
+the worker. Selection is additive: this control never drops extensions or data.
+Extension binaries ship in the pinned image; arbitrary package installation is
+not supported. Additional extensions require a reviewed image and allowlist update.
+
 ### Qdrant and database sizing
 
 Qdrant requires protocol 6. Its pinned multi-architecture image runs as UID 1000,
@@ -215,7 +234,7 @@ database credentials. Routes and all lifecycle actions remain owner-only.
 ## Development and releases
 
 Apply `0009_catalog.sql` for PostgreSQL or D1. Run `bun run bundle:daemon` to produce
-both Linux architecture assets; the bundle manifest advertises `serviceProtocol: 3`.
+both Linux architecture assets; the bundle manifest advertises `serviceProtocol: 8`.
 The catalog file is part of the build fingerprint and Docker build context.
 Upgrade the separate deployment worker using its setup command. Monitoring-daemon
 updates alone do not replace it. Do not downgrade workers after creating catalog apps.

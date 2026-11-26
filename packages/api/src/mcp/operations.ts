@@ -124,6 +124,16 @@ export const schemas = {
       ...service,
       spec: settings.optional(),
       domains: domains.optional(),
+      buildSettings: z
+        .object({
+          buildMemoryMb: z.number().int().min(512).max(32768).optional(),
+          buildCpus: z.number().min(0.25).max(16).optional(),
+          buildType: z.enum(["auto", "dockerfile", "railpack"]).optional(),
+          dockerfile: z.string().max(150).optional(),
+          context: z.string().max(150).optional(),
+        })
+        .strict()
+        .optional(),
     })
     .strict(),
   set_variables: z
@@ -183,7 +193,7 @@ export const descriptions: Record<Tool, string> = {
   create_catalog_service:
     "Create a catalog service in an authorized project; deploy separately.",
   configure_service:
-    "Update resource settings or domains, preserving secrets. Deploy separately.",
+    "Update runtime resources, GitHub build settings or domains, preserving secrets and unspecified build settings. Deploy separately.",
   set_variables:
     "Set variables without revealing existing values. Database references use Ephor's whole-value service-ID reference syntax. Operation payloads are encrypted. Deploy separately.",
   deploy_service:
@@ -747,6 +757,14 @@ export class AgentOperations {
       await this.services.configure(serviceId, {
         spec: { ...old, ...((a.spec as object) ?? {}) },
         ...(a.domains ? { domains: a.domains } : {}),
+        ...(a.buildSettings
+          ? {
+              buildSettings: {
+                ...JSON.parse(row.source),
+                ...(a.buildSettings as object),
+              },
+            }
+          : {}),
       });
       return { ok: true, deploymentRequired: true };
     }

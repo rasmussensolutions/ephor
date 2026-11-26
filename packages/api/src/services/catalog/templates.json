@@ -304,6 +304,47 @@
       ],
       "secrets": ["API_KEY"],
       "notes": "HTTP port 6333 and gRPC port 6334 are available on the private service network. Send API_KEY as the api-key header. Backups stop the database."
+    },
+    {
+      "id": "postgres",
+      "version": 2,
+      "name": "PostgreSQL",
+      "category": "Databases",
+      "description": "Private PostgreSQL 18 with persistent storage and optional extensions.",
+      "technology": "postgres",
+      "web": false,
+      "components": [
+        {
+          "id": "database",
+          "image": "docker.io/pgvector/pgvector@sha256:ab49524d18df7200b74ac9a475e1db6297fc1eb57da4c214c63d10ecc4b754fa",
+          "port": 5432,
+          "memoryMb": 512,
+          "cpus": 1,
+          "user": "999:999",
+          "environment": {
+            "POSTGRES_USER": "ephor",
+            "POSTGRES_DB": "app",
+            "POSTGRES_PASSWORD": "${DB_PASSWORD}",
+            "PGDATA": "/var/lib/postgresql/18/docker"
+          },
+          "volumes": [
+            {
+              "key": "database",
+              "target": "/var/lib/postgresql",
+              "uid": 999
+            }
+          ],
+          "health": ["CMD", "pg_isready", "-U", "ephor", "-d", "app"],
+          "command": [],
+          "capabilities": [],
+          "tmpfs": {
+            "/var/run/postgresql": "rw,nosuid,size=16m,mode=1777"
+          },
+          "internal": false
+        }
+      ],
+      "secrets": ["DB_PASSWORD"],
+      "notes": "PostgreSQL 18. Enable supported extensions in service settings. Existing PostgreSQL 17 services retain their version; use a logical restore into a new database to upgrade."
     }
   ]
 }

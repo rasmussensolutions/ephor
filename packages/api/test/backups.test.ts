@@ -26,7 +26,7 @@ async function setup() {
   }
   const source = await machine("source"),
     target = await machine("target");
-  const cfg = catalogConfig("postgres");
+  const cfg = catalogConfig("postgres", 1);
   const service = await services.create(
     { machineId: source.id, name: "Database", spec: cfg.config },
     cfg.source,

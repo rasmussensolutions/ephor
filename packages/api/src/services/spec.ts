@@ -183,6 +183,8 @@ export function requiredProtocol(
   config: ServiceSpec,
   includeSavedReferences = false,
 ) {
+  if (config.catalog?.template === "postgres" && config.catalog.version >= 2)
+    return 8;
   if (config.storageVersion) return 7;
   return config.volumes?.length ||
     config.catalog?.resources ||

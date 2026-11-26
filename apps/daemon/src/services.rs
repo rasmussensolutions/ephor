@@ -26,7 +26,7 @@ const STATE: &str = "/var/lib/ephor-services";
 const SETTINGS: &str = "/etc/ephor/services.json";
 const PROXY: &str = "ephor-proxy";
 const DOCKER: &str = "/usr/bin/docker";
-const PROTOCOL: u8 = 7;
+const PROTOCOL: u8 = 8;
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

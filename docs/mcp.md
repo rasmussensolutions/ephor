@@ -77,6 +77,12 @@ without executing again; a concurrent retry observes the already claimed request
 A completed deployment operation means deployment was queued, not that the service
 is healthy. Builds and deployments run asynchronously and need health verification.
 
+`configure_service` accepts partial `buildSettings` for GitHub services: build
+memory, CPU, build type, context directory, and Dockerfile path. Unspecified source
+settings are preserved. Build limits are separate from runtime resources; for a
+monorepo, use the repository root as context when the Dockerfile needs the root
+lockfile or sibling workspace manifests. Deploy separately to apply changes.
+
 ## Security and failure handling
 
 - OAuth discovery uses the configured instance origin. Codes are single-use and

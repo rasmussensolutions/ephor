@@ -445,7 +445,7 @@ export class Services {
       );
     const protocol = requiredProtocol(config);
     const [ready] = await this.sql.query(
-      "SELECT w.machine_id FROM ephor_service_worker w JOIN ephor_machine m ON m.id=w.machine_id WHERE w.machine_id=$1 AND m.state='active' AND w.last_seen > $2 AND w.version IN ('2','3','4','5','6','7') AND CAST(w.version AS INTEGER)>=$3 AND w.credential_hash IS NOT NULL",
+      "SELECT w.machine_id FROM ephor_service_worker w JOIN ephor_machine m ON m.id=w.machine_id WHERE w.machine_id=$1 AND m.state='active' AND w.last_seen > $2 AND w.version IN ('2','3','4','5','6','7','8') AND CAST(w.version AS INTEGER)>=$3 AND w.credential_hash IS NOT NULL",
       [row.machine_id, Date.now() - 120000, protocol],
     );
     if (!ready)
@@ -557,7 +557,8 @@ export class Services {
       version !== 4 &&
       version !== 5 &&
       version !== 6 &&
-      version !== 7
+      version !== 7 &&
+      version !== 8
     )
       throw new AuthError("INCOMPATIBLE_SERVICE_WORKER", 409);
     await this.sql.query(
@@ -735,6 +736,31 @@ export class Services {
           component.name,
         );
     }
+  }
+  async extensions(id: unknown, body: unknown) {
+    const row = await this.get(id);
+    const config = await this.secrets.open<ServiceSpec>(row.id, row.config);
+    if (config.catalog?.template !== "postgres" || config.catalog.version < 2)
+      throw new AuthError("POSTGRES_EXTENSIONS_UNSUPPORTED");
+    const input = object(body);
+    if (
+      Object.keys(input).some((key) => key !== "extensions") ||
+      !Array.isArray(input.extensions)
+    )
+      throw new AuthError("INVALID_POSTGRES_EXTENSIONS");
+    // Additive only: saving settings must never remove an extension or its data.
+    config.catalog.extensions = [
+      ...new Set([...(config.catalog.extensions ?? []), ...input.extensions]),
+    ];
+    const validated = spec(config);
+    await this.sql.query("UPDATE ephor_service SET config=$1 WHERE id=$2", [
+      await this.secrets.seal(row.id, validated),
+      row.id,
+    ]);
+    await new AuthStore(this.sql).audit(
+      "service.extensions_configured",
+      row.id,
+    );
   }
   async resources(id: unknown, body: unknown) {
     const row = await this.get(id);

@@ -47,7 +47,7 @@ if (manifest.buildId !== buildId) manifest = {};
 manifest.version = version ?? "invalid";
 manifest.buildId = buildId;
 manifest.updaterProtocol = 3;
-manifest.serviceProtocol = 7;
+manifest.serviceProtocol = 8;
 manifest.securityProtocol = 1;
 manifest.protectionProtocol = 1;
 manifest.managedUpdatesProtocol = 2;

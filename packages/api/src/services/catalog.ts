@@ -1,6 +1,7 @@
 import { AuthError, randomToken } from "../auth/store";
 import definitions from "./catalog/templates.json";
 import { readMetrics, type ServiceMetrics } from "./metrics";
+import { POSTGRES_EXTENSIONS } from "./postgres-extensions";
 import type { ServiceSource, ServiceSpec } from "./spec";
 import type { ServiceTechnology } from "./technology";
 
@@ -9,8 +10,10 @@ export interface CatalogSpec {
   version: number;
   protected: boolean;
   resources?: { memoryMb: number; cpus: number; redisMaxmemoryMb?: number };
+  extensions?: string[];
 }
 export interface CatalogRuntime {
+  extensions?: { available: string[]; installed: string[] };
   components: {
     name: string;
     status: string;
@@ -56,11 +59,14 @@ export function catalog() {
     }));
 }
 export type CatalogItem = ReturnType<typeof catalog>[number];
-export function catalogConfig(id: unknown): {
+export function catalogConfig(
+  id: unknown,
+  version?: number,
+): {
   config: ServiceSpec;
   source: ServiceSource;
 } {
-  const t = template(id),
+  const t = template(id, version),
     main = t.components.at(-1);
   if (!main) throw new AuthError("INVALID_CATALOG_TEMPLATE");
   return {
@@ -89,6 +95,21 @@ export function validateCatalog(config: ServiceSpec) {
     t = template(c.template, c.version),
     main = t.components.at(-1);
   if (!main) throw new AuthError("INVALID_CATALOG_TEMPLATE");
+  if (
+    c.extensions !== undefined &&
+    (c.template !== "postgres" ||
+      c.version < 2 ||
+      !Array.isArray(c.extensions) ||
+      c.extensions.length > POSTGRES_EXTENSIONS.length ||
+      new Set(c.extensions).size !== c.extensions.length ||
+      c.extensions.some(
+        (e) =>
+          !POSTGRES_EXTENSIONS.includes(
+            e as (typeof POSTGRES_EXTENSIONS)[number],
+          ),
+      ))
+  )
+    throw new AuthError("INVALID_POSTGRES_EXTENSIONS");
   if (c.resources !== undefined) {
     const r = c.resources;
     if (
@@ -172,7 +193,28 @@ export function readCatalogRuntime(value: unknown): CatalogRuntime | undefined {
     typeof v.recoveryRequired !== "boolean"
   )
     throw new AuthError("INVALID_CATALOG_REPORT");
+  if (
+    v.extensions != null &&
+    (!v.extensions ||
+      ![v.extensions.available, v.extensions.installed].every(
+        (names) =>
+          Array.isArray(names) &&
+          names.length <= 64 &&
+          names.every(
+            (n) => typeof n === "string" && /^[a-z0-9_-]{1,63}$/.test(n),
+          ),
+      ))
+  )
+    throw new AuthError("INVALID_CATALOG_REPORT");
   return {
+    ...(v.extensions
+      ? {
+          extensions: {
+            available: [...v.extensions.available],
+            installed: [...v.extensions.installed],
+          },
+        }
+      : {}),
     components: v.components.map(({ name, status, image, logs, metrics }) => ({
       name,
       status,
