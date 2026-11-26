@@ -1555,6 +1555,12 @@ mod tests {
             let mut job = job_for(&t);
             job.service_id = uid();
             job.id = uid();
+            if t.id == "postgres" && t.version >= 2 {
+                job.spec.catalog.as_mut().unwrap().extensions = POSTGRES_EXTENSIONS
+                    .iter()
+                    .map(|name| (*name).into())
+                    .collect();
+            }
             if let Err(e) = super::super::apply(&mut state, &settings, &job) {
                 for c in &t.components {
                     let n = name(&job.service_id, &c.id);
@@ -1569,6 +1575,13 @@ mod tests {
             }
             let app = state.services[&job.service_id].app.clone().unwrap();
             assert!(healthy(&app));
+            if t.id == "postgres" && t.version >= 2 {
+                let extensions = postgres_extensions(&job.service_id).unwrap();
+                let installed = extensions["installed"].as_array().unwrap();
+                for extension in POSTGRES_EXTENSIONS {
+                    assert!(installed.contains(&json!(extension)));
+                }
+            }
             std::net::TcpStream::connect_timeout(
                 &format!("127.0.0.1:{}", app.port).parse().unwrap(),
                 Duration::from_secs(3),
@@ -1745,6 +1758,13 @@ mod tests {
             super::super::apply(&mut state, &settings, &job).unwrap();
             let restored = state.services[&job.service_id].app.clone().unwrap();
             assert_ne!(restored.volumes, app.volumes);
+            if t.id == "postgres" && t.version >= 2 {
+                let extensions = postgres_extensions(&job.service_id).unwrap();
+                let installed = extensions["installed"].as_array().unwrap();
+                for extension in POSTGRES_EXTENSIONS {
+                    assert!(installed.contains(&json!(extension)));
+                }
+            }
             if t.id == "qdrant" {
                 let point: Value = Client::new()
                     .get(format!(
