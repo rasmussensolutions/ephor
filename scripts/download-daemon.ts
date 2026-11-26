@@ -6,9 +6,9 @@ import { verifyLocalDaemon } from "./daemon-artifacts";
 // Pin the immutable release manifest so template builds remain reproducible even
 // after newer daemon releases are published. Update this pin with each release.
 const base =
-  "https://github.com/rasmussensolutions/ephor/releases/download/daemon-v0.2.4/";
+  "https://github.com/rasmussensolutions/ephor/releases/download/daemon-v0.2.5/";
 const manifestHash =
-  "c34422d80762befad6515091475cae75dc52abefe10884d8654f92e73f296c4c";
+  "17c244d767ececf74ee0ce48bedeaab9989511b5d6cd360620022fe274eef44a";
 const directory = resolve("apps/dashboard/public/daemon");
 if (process.env.EPHOR_DAEMON_LOCAL === "1") {
   const local = await verifyLocalDaemon(directory);
