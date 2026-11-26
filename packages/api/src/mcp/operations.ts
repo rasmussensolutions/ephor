@@ -756,6 +756,33 @@ export class AgentOperations {
     if (tool === "configure_service") {
       const row = await this.services.get(serviceId),
         old = await this.secrets.open<ServiceSpec>(row.id, row.config);
+      if (old.catalog) {
+        const requested = a.spec as Record<string, unknown> | undefined;
+        // Catalog recipes, secrets and private networking remain immutable.
+        // Reuse the reviewed database resize path and its resource validation.
+        if (
+          !requested ||
+          a.domains !== undefined ||
+          a.buildSettings !== undefined ||
+          Object.entries(requested).some(
+            ([key, value]) =>
+              key !== "memoryMb" &&
+              key !== "cpus" &&
+              JSON.stringify(value) !==
+                JSON.stringify(old[key as keyof ServiceSpec]),
+          )
+        )
+          throw new AuthError("CATALOG_CONFIG_LOCKED", 409);
+        await this.services.resources(serviceId, {
+          ...old.catalog.resources,
+          ...(old.catalog.template === "redis" && !old.catalog.resources
+            ? { redisMaxmemoryMb: 96 }
+            : {}),
+          memoryMb: requested.memoryMb,
+          cpus: requested.cpus,
+        });
+        return { ok: true, deploymentRequired: true };
+      }
       await this.services.configure(serviceId, {
         spec: { ...old, ...((a.spec as object) ?? {}) },
         ...(a.domains ? { domains: a.domains } : {}),

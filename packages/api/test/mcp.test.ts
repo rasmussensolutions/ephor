@@ -6,6 +6,8 @@ import { AuthStore, FRESH_MS, randomToken } from "../src/auth/store";
 import { MachineStore } from "../src/machines/store";
 import { AgentOperations, schemas } from "../src/mcp/operations";
 import { AgentAccess, policySchema } from "../src/mcp/policy";
+import { catalogConfig } from "../src/services/catalog";
+import type { ServiceSpec } from "../src/services/spec";
 import { Services } from "../src/services/store";
 import { Browser, enrolled, origin, timestamp } from "./helpers";
 
@@ -1531,4 +1533,68 @@ test("MCP build edits preserve repository settings and reject unsafe paths", asy
       buildSettings: { buildMemoryMb: 1 },
     }).success,
   ).toBe(false);
+});
+
+test("MCP resizes catalog databases without permitting recipe or network changes", async () => {
+  const f = await setup();
+  const services = new Services(f.sql, f.env.secret);
+  const recipe = catalogConfig("postgres");
+  const created = await services.create(
+    { machineId: f.machine.id, name: "Database", spec: recipe.config },
+    recipe.source,
+  );
+  await f.browser.request(`/projects/${f.project.id}/add`, {
+    serviceId: created.id,
+  });
+  const original = (await services.get(created.id)).config;
+  const resize = async (key: string, values: Record<string, unknown>) => {
+    const operation = (await f.operations.call(
+      f.issued.id,
+      "configure_service",
+      { serviceId: created.id, requestKey: key, ...values },
+    )) as { operationId: string };
+    await f.browser.request("/mcp/decide", {
+      id: operation.operationId,
+      approve: true,
+    });
+    return await f.operations.status(f.issued.id, operation.operationId);
+  };
+  const requested = {
+    image: recipe.config.image,
+    port: 5432,
+    healthPath: "/",
+    memoryMb: 1536,
+    cpus: 1,
+  };
+  expect(
+    (await resize("resize-postgres-001", { spec: requested })).status,
+  ).toBe("completed");
+  const saved = await services.get(created.id);
+  const old = await services.secrets.open<ServiceSpec>(created.id, original);
+  const updated = await services.secrets.open<ServiceSpec>(
+    created.id,
+    saved.config,
+  );
+  expect(updated.catalog?.resources).toEqual({ memoryMb: 1536, cpus: 1 });
+  expect(updated.environment).toEqual(old.environment);
+  expect(updated.image).toBe(old.image);
+  expect(updated.port).toBe(old.port);
+  expect(
+    await f.sql.query("SELECT id FROM ephor_deployment WHERE service_id=$1", [
+      created.id,
+    ]),
+  ).toHaveLength(0);
+  for (const [index, patch] of [
+    { spec: { ...requested, image: "docker.io/library/nginx:latest" } },
+    { spec: { ...requested, port: 8080 } },
+    { spec: { ...requested, volumes: [{ name: "data", mountPath: "/etc" }] } },
+    { spec: requested, domains: { primary: "db.example.com" } },
+    { spec: requested, buildSettings: { buildMemoryMb: 4096 } },
+    { spec: { ...requested, memoryMb: 64 } },
+  ].entries()) {
+    expect((await resize(`resize-reject-${index}`, patch)).status).toBe(
+      "failed",
+    );
+    expect((await services.get(created.id)).config).toBe(saved.config);
+  }
 });
