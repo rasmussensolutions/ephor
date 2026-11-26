@@ -31,15 +31,25 @@ export async function maintenanceStatus(
   );
   if (!host) throw new AuthError("MACHINE_NOT_FOUND", 404);
   const now = Date.now();
-  const rows = await sql.query(
-    `SELECT 'deployment' AS kind,id,updated_at AS since,0 AS until FROM ephor_deployment WHERE machine_id=$1 AND status='running'
-    UNION ALL SELECT 'build',id,updated_at,0 FROM ephor_build WHERE machine_id=$1 AND status='running'
-    UNION ALL SELECT 'backup',id,updated_at,0 FROM ephor_backup_job WHERE machine_id=$1 AND status='running'
-    UNION ALL SELECT 'security scan',id,started_at,lease_until FROM ephor_security_scan WHERE machine_id=$1 AND status='running'
-    UNION ALL SELECT 'protection job',id,started_at,expires_at FROM ephor_protection_job WHERE machine_id=$1 AND status='running'
-    UNION ALL SELECT 'update',id,updated_at,expires_at FROM ephor_update WHERE machine_id=$1 AND ((status IN ('queued','downloading') AND expires_at>$2) OR status='installing' OR (status='expired' AND install_started=1)) LIMIT 50`,
-    [machine, now],
-  );
+  // D1 permits fewer compound SELECT terms than SQLite/PostgreSQL defaults.
+  // Bound each independent read, then cap the combined display snapshot.
+  const queries = [
+    "SELECT 'deployment' AS kind,id,updated_at AS since,0 AS until FROM ephor_deployment WHERE machine_id=$1 AND status='running' LIMIT 50",
+    "SELECT 'build' AS kind,id,updated_at AS since,0 AS until FROM ephor_build WHERE machine_id=$1 AND status='running' LIMIT 50",
+    "SELECT 'backup' AS kind,id,updated_at AS since,0 AS until FROM ephor_backup_job WHERE machine_id=$1 AND status='running' LIMIT 50",
+    "SELECT 'security scan' AS kind,id,started_at AS since,lease_until AS until FROM ephor_security_scan WHERE machine_id=$1 AND status='running' LIMIT 50",
+    "SELECT 'protection job' AS kind,id,started_at AS since,expires_at AS until FROM ephor_protection_job WHERE machine_id=$1 AND status='running' LIMIT 50",
+    "SELECT 'update' AS kind,id,updated_at AS since,expires_at AS until FROM ephor_update WHERE machine_id=$1 AND ((status IN ('queued','downloading') AND expires_at>$2) OR status='installing' OR (status='expired' AND install_started=1)) LIMIT 50",
+  ];
+  const rows = (
+    await Promise.all(
+      queries.map((query) =>
+        sql.query(query, query.includes("$2") ? [machine, now] : [machine]),
+      ),
+    )
+  )
+    .flat()
+    .slice(0, 50);
   const blockers: MaintenanceStatus["blockers"] = rows.map((row) => ({
     kind: row.kind as MaintenanceStatus["blockers"][number]["kind"],
     id: String(row.id),

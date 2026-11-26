@@ -421,6 +421,14 @@ test("maintenance refuses active scans, blocks new claims and resumes after comp
     "1",
   );
   expect(scan).not.toBeNull();
+  // Reproduce Cloudflare D1's compound-query limit; local SQLite accepts
+  // the six-way UNION that previously failed in the deployed Worker.
+  const query = f.sql.query.bind(f.sql);
+  f.sql.query = (statement, values) => {
+    if (statement.split(/\bUNION\b/i).length > 5)
+      throw new Error("too many terms in compound SELECT: SQLITE_ERROR");
+    return query(statement, values);
+  };
   const preflightPath = `/machines/${f.enrollment.id}/maintenance/status`;
   const anonymous = new Browser(f.app);
   expect((await anonymous.request(preflightPath)).status).toBe(401);
