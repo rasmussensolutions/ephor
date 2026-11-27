@@ -474,6 +474,33 @@ test("local builds snapshot secrets, expose only build variables, and deploy a v
     redirect: true,
   });
 });
+test("build progress preserves the authoritative deployment protocol", async () => {
+  const f = await setup();
+  await f.services.heartbeat(f.machineId, 8);
+  const build = await f.builds.queue(f.serviceId);
+  if (!build) throw new Error("missing build");
+  await f.builds.next(f.machineId);
+  await f.sql.query(
+    "UPDATE ephor_service_worker SET last_seen=1 WHERE machine_id=$1",
+    [f.machineId],
+  );
+  expect(
+    await f.builds.progress(f.machineId, { id: build.id, phase: "building" }),
+  ).toEqual({ active: true });
+  const [worker] = await f.sql.query(
+    "SELECT version,last_seen FROM ephor_service_worker WHERE machine_id=$1",
+    [f.machineId],
+  );
+  expect(worker?.version).toBe("8");
+  expect(Number(worker?.last_seen)).toBeGreaterThan(1);
+  // Real capability changes must still take effect, including downgrades.
+  await f.services.next(f.machineId, 5);
+  const [downgraded] = await f.sql.query(
+    "SELECT version FROM ephor_service_worker WHERE machine_id=$1",
+    [f.machineId],
+  );
+  expect(downgraded?.version).toBe("5");
+});
 test("duplicate, obsolete, and cancelled builds cannot replace newer deployments", async () => {
   const f = await setup();
   const first = await f.builds.queue(f.serviceId, true, "delivery-one");

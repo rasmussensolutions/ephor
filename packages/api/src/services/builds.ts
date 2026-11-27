@@ -329,7 +329,13 @@ export class Builds {
       [id, machineId],
     );
     if (!build) return { active: false };
-    await this.services.heartbeat(machineId, 2);
+    // Build progress proves liveness, not the worker's deployment protocol.
+    // Only next/heartbeat may update capabilities; otherwise an active build
+    // intermittently makes a current worker appear unable to deploy volumes.
+    await this.sql.query(
+      "UPDATE ephor_service_worker SET last_seen=$1 WHERE machine_id=$2",
+      [Date.now(), machineId],
+    );
     const phase = ["fetching", "planning", "building", "publishing"].includes(
       String(b.phase),
     )
