@@ -1,7 +1,7 @@
 import {
-  componentCardHeight,
   type MapPoint,
   type mapLayout,
+  serviceCardHeight,
 } from "./service-map";
 
 type Card = MapPoint & { width?: number; height?: number };
@@ -9,9 +9,9 @@ type Card = MapPoint & { width?: number; height?: number };
 // Keep connectors outside both cards, switching sides as their separation changes.
 export function mapConnector(from: Card, to: Card) {
   const fw = from.width ?? 264,
-    fh = from.height ?? componentCardHeight;
+    fh = from.height ?? serviceCardHeight;
   const tw = to.width ?? 264,
-    th = to.height ?? componentCardHeight;
+    th = to.height ?? serviceCardHeight;
   const width = (fw + tw) / 2,
     height = (fh + th) / 2;
   const dx = to.x + tw / 2 - from.x - fw / 2,

@@ -423,6 +423,7 @@ export function RepositoryPicker({
           </div>
           <Button
             render={<Link to="/settings/integrations" />}
+            nativeButton={false}
             variant="outline"
           >
             Connect GitHub

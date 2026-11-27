@@ -337,7 +337,11 @@ function MachinePage({ initial }: { initial: MachineDetail }) {
         </div>
       )}
       {(tab === "Services" || tab === "Canvas") && (
-        <MachineServices id={id} view={tab === "Canvas" ? "canvas" : "table"} />
+        <MachineServices
+          id={id}
+          machineName={machine.name}
+          view={tab === "Canvas" ? "canvas" : "table"}
+        />
       )}
       {tab === "Security" && <SecurityWorkspace machineId={id} />}
       {tab === "Storage" && (

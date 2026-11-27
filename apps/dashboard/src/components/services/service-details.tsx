@@ -65,6 +65,7 @@ import { ComponentVariables } from "./component-variables";
 import { DeploymentInspector } from "./deployment-inspector";
 import { DisplayNameEditor } from "./display-name-editor";
 import { FirstDeployment } from "./first-deployment";
+import { ServiceStorageDetails } from "./service-storage-details";
 export function ServiceDetails({
   id,
   initial,
@@ -76,7 +77,7 @@ export function ServiceDetails({
   id: string;
   initial: { data: ServiceList; machines: MachineList };
   drawer?: boolean;
-  initialSection?: "Domains";
+  initialSection?: "Domains" | "Storage";
   initialNotice?: string;
   onPendingChange?: (pending: VariablePending) => void;
 }) {
@@ -96,9 +97,11 @@ export function ServiceDetails({
   const service = data.services.find((item) => item.id === id);
   const [tab, setTab] = useState(
       initialSection
-        ? drawer
-          ? "Settings"
-          : initialSection
+        ? initialSection === "Storage"
+          ? "Storage"
+          : drawer
+            ? "Settings"
+            : initialSection
         : drawer
           ? "Deployments"
           : "Overview",
@@ -435,6 +438,9 @@ export function ServiceDetails({
                 ]),
             ...(drawer && (service.topology?.components.length ?? 0) > 1
               ? ["Components"]
+              : []),
+            ...(service.spec.volumes?.length || tab === "Storage"
+              ? ["Storage"]
               : []),
             ...(!drawer &&
             (service.spec.catalog ||
@@ -986,6 +992,7 @@ export function ServiceDetails({
               </div>
             </section>
           ))}
+        {tab === "Storage" && <ServiceStorageDetails service={service} />}
         {tab === "Security" && <SecurityWorkspace serviceId={service.id} />}
         {tab === "Logs" && (
           <section

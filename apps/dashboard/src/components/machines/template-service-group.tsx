@@ -1,10 +1,9 @@
-import { SquaresFourIcon } from "@phosphor-icons/react/dist/csr/SquaresFour";
 import { ServiceIcon } from "@/components/services/service-icon";
 import { ServiceStatus } from "@/components/services/service-status";
 import { groupGridOffset } from "@/lib/map-grid";
 import type { Project } from "@/lib/projects";
 import {
-  componentCardHeight,
+  componentHeight,
   componentLabel,
   componentLayout,
   componentMetrics,
@@ -15,6 +14,7 @@ import {
 } from "@/lib/service-map";
 import { mapConnector } from "@/lib/service-map-connector";
 import { groupPalette } from "@/lib/service-presentation";
+import { serviceStorage } from "@/lib/service-storage";
 import {
   bytes,
   currentMetrics,
@@ -23,6 +23,9 @@ import {
   serviceStatus,
 } from "@/lib/services";
 import { MapDraggable } from "./map-draggable";
+import { ServiceCardFrame, serviceCardActionClass } from "./service-card-frame";
+import { ServiceCardStorage } from "./service-card-storage";
+import { ServiceCardSummary } from "./service-card-summary";
 import { ServiceCardUsage } from "./service-card-usage";
 import { ServiceGroupEditor } from "./service-group-editor";
 import { ServiceProjectBadge } from "./service-project-badge";
@@ -31,6 +34,7 @@ export function TemplateServiceGroup({
   service,
   data,
   project,
+  machineName,
   onOpen,
   zoom,
   onMove,
@@ -40,6 +44,7 @@ export function TemplateServiceGroup({
   service: Service;
   data: ServiceList;
   project?: Project;
+  machineName?: string;
   zoom: number;
   onMove: (component: string, point: MapPoint) => void;
   onCommit: (component: string, point: MapPoint) => void;
@@ -48,7 +53,7 @@ export function TemplateServiceGroup({
     service: Service,
     trigger: HTMLElement,
     component?: string,
-    section?: "Domains",
+    section?: "Domains" | "Storage",
   ) => void;
 }) {
   const topology = service.topology,
@@ -58,8 +63,21 @@ export function TemplateServiceGroup({
   const { components } = layout;
   const grouped = components.length > 1;
   const groupName = service.presentation?.groupName ?? service.name;
-  const accent =
-    groupPalette[service.presentation?.groupColor ?? "neutral"].color;
+  const groupColorKey = service.presentation?.groupColor ?? "neutral";
+  const groupColor = groupPalette[groupColorKey].color;
+  const accent = `color-mix(in oklab, ${groupColor} 48%, black)`;
+  const lightHeader =
+    groupColorKey === "neutral"
+      ? "color-mix(in oklab, var(--background) 90%, transparent)"
+      : `oklch(from ${groupColor} 0.875 calc(c * 0.65) h / 94%)`;
+  const lightBody =
+    groupColorKey === "neutral"
+      ? "color-mix(in oklab, var(--card) 85%, transparent)"
+      : `oklch(from ${groupColor} 0.966 calc(c * 0.18) h / 98%)`;
+  const lightBorder =
+    groupColorKey === "neutral"
+      ? "color-mix(in oklab, var(--border) 90%, var(--card))"
+      : `color-mix(in oklab, var(--border) 76%, ${groupColor})`;
   const total = currentMetrics(service);
   const appStatus = serviceStatus(service, data);
   const position = (name: string) => layout.positions[name] ?? { x: 0, y: 0 };
@@ -68,28 +86,54 @@ export function TemplateServiceGroup({
     <div
       role={grouped ? "group" : undefined}
       aria-label={grouped ? `${groupName} service group` : undefined}
-      className={grouped ? "h-full rounded-2xl border" : "h-full"}
+      className={
+        grouped
+          ? "relative h-full overflow-hidden rounded-2xl border backdrop-blur-[5px]"
+          : "h-full"
+      }
       style={
         grouped
           ? {
-              borderColor: `color-mix(in srgb, ${accent} 45%, transparent)`,
-              backgroundColor: `color-mix(in srgb, ${accent} 6%, transparent)`,
+              backgroundColor: `light-dark(
+                ${lightHeader},
+                color-mix(in oklab, var(--background) 55%, ${accent} 9%)
+              )`,
+              borderColor: `light-dark(
+                ${lightBorder},
+                color-mix(in oklab, ${accent} 30%, var(--border))
+              )`,
             }
           : undefined
       }
     >
       {grouped && (
-        <div className="flex h-14 items-center gap-3 px-6">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-0 top-14 bottom-0 rounded-t-xl"
+          style={{
+            backgroundColor: `light-dark(
+              ${lightBody},
+              color-mix(in oklab, color-mix(in oklab, var(--card), var(--background) 38%) 61%, ${accent} 9%)
+            )`,
+            boxShadow: `0 0 0 1px light-dark(
+              ${lightBorder},
+              color-mix(in oklab, ${accent} 16%, var(--border))
+            )`,
+          }}
+        />
+      )}
+      {grouped && (
+        <div className="flex h-14 items-center gap-3 px-6 [&:not(.dark_*)]:[--muted-foreground:oklch(0.43_0_0)]">
           <button
             type="button"
             data-map-handle
             aria-label={`Move ${groupName} group`}
             className="flex min-w-0 flex-1 cursor-grab items-center gap-3 text-left active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded"
           >
-            <SquaresFourIcon
+            <ServiceIcon
+              source={service.source}
+              image={primary.image}
               size={20}
-              style={{ color: accent }}
-              className="shrink-0"
             />
             <span className="truncate text-sm font-medium" title={groupName}>
               {groupName}
@@ -114,6 +158,7 @@ export function TemplateServiceGroup({
         className={grouped ? "relative mx-6 mt-1" : "relative"}
         style={{
           height: layout.height,
+          marginRight: grouped ? 24 + layout.leftInset : undefined,
         }}
       >
         {grouped && (
@@ -123,8 +168,14 @@ export function TemplateServiceGroup({
           >
             {topology.dependencies.map((edge) => {
               const connector = mapConnector(
-                position(edge.from),
-                position(edge.to),
+                {
+                  ...position(edge.from),
+                  height: componentHeight(service, edge.from),
+                },
+                {
+                  ...position(edge.to),
+                  height: componentHeight(service, edge.to),
+                },
               );
               if (!connector) return null;
               return (
@@ -149,81 +200,57 @@ export function TemplateServiceGroup({
           const label = isPrimary
             ? service.name
             : componentLabel(component, service);
-          const dependencies = topology.dependencies.filter(
-            (d) => d.from === component.name,
-          );
+          const height = componentHeight(service, component.name);
           const card = (
-            <div
+            <ServiceCardFrame
               key={component.name}
-              style={{ width: 264, height: componentCardHeight }}
-              className="relative flex flex-col overflow-hidden rounded-xl border bg-card"
+              name={label}
+              icon={
+                <ServiceIcon
+                  source={isPrimary ? service.source : { type: "image" }}
+                  image={component.image}
+                  size={16}
+                />
+              }
+              action={
+                <button
+                  type="button"
+                  aria-haspopup="dialog"
+                  aria-label={
+                    isPrimary ? service.name : `${service.name} / ${label}`
+                  }
+                  title={label}
+                  onClick={(event) =>
+                    onOpen(
+                      service,
+                      event.currentTarget,
+                      isPrimary ? undefined : component.name,
+                    )
+                  }
+                  className={`absolute inset-0 ${serviceCardActionClass}`}
+                />
+              }
+              footer={
+                <ServiceCardStorage
+                  volumes={serviceStorage(service, component.name)}
+                  onOpen={(trigger) =>
+                    onOpen(service, trigger, component.name, "Storage")
+                  }
+                />
+              }
             >
-              <button
-                type="button"
-                aria-haspopup="dialog"
-                aria-label={
-                  isPrimary ? service.name : `${service.name} / ${label}`
+              <ServiceCardSummary
+                status={componentStatus(service, component.name)}
+                machineName={machineName}
+                project={grouped ? undefined : project}
+                domain={
+                  isPrimary && primaryHasDomains(service)
+                    ? service.domain
+                    : undefined
                 }
-                onClick={(e) =>
-                  onOpen(
-                    service,
-                    e.currentTarget,
-                    isPrimary ? undefined : component.name,
-                  )
-                }
-                className="absolute inset-0 cursor-grab rounded-xl active:cursor-grabbing hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
               />
-              <div className="pointer-events-none relative flex min-h-0 flex-1 flex-col gap-4 px-4 py-4">
-                <span className="flex w-full items-center gap-3">
-                  <ServiceIcon
-                    source={isPrimary ? service.source : { type: "image" }}
-                    image={component.image}
-                    size={23}
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span
-                      className="block truncate text-sm font-medium"
-                      title={label}
-                    >
-                      {label}
-                    </span>
-                    {isPrimary && primaryHasDomains(service) && (
-                      <button
-                        type="button"
-                        data-map-no-drag
-                        aria-label={`Domain setup for ${service.name}`}
-                        title={service.domain ?? "Set up domain"}
-                        onClick={(e) =>
-                          onOpen(service, e.currentTarget, undefined, "Domains")
-                        }
-                        className="pointer-events-auto block w-full truncate text-left text-sm text-muted-foreground hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      >
-                        {service.domain ?? "Set up domain"}
-                      </button>
-                    )}
-                  </span>
-                </span>
-                <div className="flex min-w-0 items-center justify-between gap-2">
-                  <ServiceStatus
-                    status={componentStatus(service, component.name)}
-                  />
-                  {!grouped && <ServiceProjectBadge project={project} />}
-                </div>
-              </div>
-              {!(isPrimary && primaryHasDomains(service)) && (
-                <span
-                  className="pointer-events-none relative flex h-8 shrink-0 items-center truncate border-t px-4 text-[11px] text-muted-foreground"
-                  title={dependencies
-                    .map((d) => `${d.variables.join(", ")} → ${d.to}`)
-                    .join("; ")}
-                >
-                  {dependencies.length
-                    ? `Uses ${dependencies.map((d) => componentLabel(topology.components.find((c) => c.name === d.to) ?? { name: d.to, image: "" }, service)).join(", ")}`
-                    : `Private · Port ${component.port}`}
-                </span>
-              )}
               <ServiceCardUsage metrics={usage} />
-            </div>
+            </ServiceCardFrame>
           );
           return grouped ? (
             <MapDraggable
@@ -232,7 +259,7 @@ export function TemplateServiceGroup({
               gridOffset={groupGridOffset}
               zoom={zoom}
               label={`Move ${label}`}
-              style={{ width: 264, height: componentCardHeight }}
+              style={{ width: 264, height }}
               onMove={(next) => onMove(component.name, next)}
               onCommit={(next) => onCommit(component.name, next)}
               onCancel={() => onCancel(component.name)}
@@ -240,7 +267,9 @@ export function TemplateServiceGroup({
               {card}
             </MapDraggable>
           ) : (
-            <div key={component.name}>{card}</div>
+            <div key={component.name} style={{ width: 264, height }}>
+              {card}
+            </div>
           );
         })}
       </div>

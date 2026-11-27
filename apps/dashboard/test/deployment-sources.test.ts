@@ -18,6 +18,17 @@ test("malformed deployment search parameters fall back to the default source", (
   ).toEqual({ source: undefined, machineId: undefined, projectId: undefined });
 });
 
+test("existing services can be selected only for a project deployment", () => {
+  expect(deploymentSearch({ source: "existing", projectId: "p1" })).toEqual({
+    source: "existing",
+    projectId: "p1",
+    machineId: undefined,
+  });
+  expect(deploymentSearch({ source: "existing", machineId: "m1" }).source).toBe(
+    undefined,
+  );
+});
+
 // Older bookmarks should still open templates with their deployment context.
 test("database links resolve to templates without a separate source category", () => {
   expect(

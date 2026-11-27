@@ -2,7 +2,6 @@ import { ArrowsOutSimpleIcon } from "@phosphor-icons/react/dist/csr/ArrowsOutSim
 import { MagicWandIcon } from "@phosphor-icons/react/dist/csr/MagicWand";
 import { MinusIcon } from "@phosphor-icons/react/dist/csr/Minus";
 import { PlusIcon } from "@phosphor-icons/react/dist/csr/Plus";
-import { Link } from "@tanstack/react-router";
 import {
   useEffect,
   useEffectEvent,
@@ -37,12 +36,14 @@ export function MachineServicesMap({
   onOpen,
   fullPage = false,
   machines,
+  machineName,
   projects = [],
   autoLayoutDisabled = false,
 }: {
   fullPage?: boolean;
   autoLayoutDisabled?: boolean;
   machines?: { id: string; name: string }[];
+  machineName?: string;
   projects?: Project[];
   services: Service[];
   data: ServiceList;
@@ -50,7 +51,7 @@ export function MachineServicesMap({
     service: Service,
     trigger: HTMLElement,
     component?: string,
-    section?: "Domains",
+    section?: "Domains" | "Storage",
   ) => void;
 }) {
   const viewport = useRef<HTMLElement>(null);
@@ -298,26 +299,6 @@ export function MachineServicesMap({
                   transform: `scale(${zoom})`,
                 }}
               >
-                {groups.map((group) => (
-                  <div
-                    key={group.id}
-                    className="pointer-events-none absolute rounded-2xl border border-border/60 bg-muted/10"
-                    style={{
-                      left: group.x,
-                      top: 0,
-                      width: group.width,
-                      height: group.height,
-                    }}
-                  >
-                    <Link
-                      to="/machines/$machineId"
-                      params={{ machineId: group.id }}
-                      className="pointer-events-auto absolute top-4 left-5 text-sm font-medium text-muted-foreground hover:text-foreground"
-                    >
-                      {group.name}
-                    </Link>
-                  </div>
-                ))}
                 {connections.length > 0 && (
                   <svg
                     role="img"
@@ -371,6 +352,11 @@ export function MachineServicesMap({
                         service={service}
                         data={data}
                         project={serviceProjects.get(service.id)}
+                        machineName={
+                          machines?.find(
+                            (machine) => machine.id === service.machineId,
+                          )?.name ?? machineName
+                        }
                         onOpen={onOpen}
                         zoom={zoom}
                         onCancel={(component) =>
@@ -388,6 +374,11 @@ export function MachineServicesMap({
                         service={service}
                         data={data}
                         project={serviceProjects.get(service.id)}
+                        machineName={
+                          machines?.find(
+                            (machine) => machine.id === service.machineId,
+                          )?.name ?? machineName
+                        }
                         onOpen={onOpen}
                       />
                     )}

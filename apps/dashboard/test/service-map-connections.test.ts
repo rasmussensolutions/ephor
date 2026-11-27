@@ -82,8 +82,8 @@ test("connectors meet differently sized card boundaries and omit overlapping car
     "M 132 400",
   );
   expect(mapConnector(from, { ...to, x: 100, y: 10 })).toBeNull();
-  // Existing catalog component connectors keep their default geometry.
+  // Default component connectors meet the midpoint of the compact card.
   expect(mapConnector({ x: 0, y: 0 }, { x: 344, y: 0 })?.path).toStartWith(
-    "M 264 96",
+    "M 264 84",
   );
 });

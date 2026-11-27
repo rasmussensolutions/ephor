@@ -13,12 +13,16 @@ import {
 } from "@/components/ui/dialog";
 import { Select } from "@/components/ui/select";
 import { api } from "@/lib/auth";
-import { deploymentSources } from "@/lib/deployment-sources";
+import {
+  deploymentSources,
+  existingDeploymentSource,
+} from "@/lib/deployment-sources";
 import type { Project } from "@/lib/projects";
 import { queryClient } from "@/lib/query";
 import type { ServiceList } from "@/lib/services";
 import { CatalogForm } from "./catalog-form";
 import type { DeploymentOptions } from "./deployment-provider";
+import { ExistingServicePicker } from "./existing-service-picker";
 import { prefetchFirstRepositoryPage } from "./github-source";
 import { ServiceForm } from "./service-form";
 
@@ -38,6 +42,7 @@ function deploymentQueryOptions({ machineId, projectId }: DeploymentOptions) {
           (machine) => machine.status !== "revoked",
         ),
         workers: data.workers,
+        services: projectId ? data.services : [],
         project,
       };
     },
@@ -68,7 +73,11 @@ export default function DeploymentDialog({
   trigger: HTMLElement | null;
 }) {
   const { machineId, projectId } = options;
-  const [source, setSource] = useState(options.source ?? "github");
+  const [source, setSource] = useState(
+    !projectId && options.source === "existing"
+      ? "github"
+      : (options.source ?? "github"),
+  );
   const [repository, setRepository] = useState("");
   const [template, setTemplate] = useState("");
   const [image, setImage] = useState("");
@@ -77,6 +86,9 @@ export default function DeploymentDialog({
   const navigate = useNavigate();
   const query = useQuery(deploymentQueryOptions(options));
   const data = query.data;
+  const sources = projectId
+    ? [...deploymentSources, existingDeploymentSource]
+    : deploymentSources;
   const machine = data?.machines.find(
     (item) => item.id === machineId && item.status !== "revoked",
   );
@@ -138,7 +150,7 @@ export default function DeploymentDialog({
               aria-label="Deployment source"
               value={source}
               disabled={busy}
-              options={deploymentSources.map(({ mode, label, icon: Icon }) => ({
+              options={sources.map(({ mode, label, icon: Icon }) => ({
                 value: mode,
                 label,
                 icon:
@@ -156,9 +168,7 @@ export default function DeploymentDialog({
                   ),
               }))}
               onValueChange={(value) => {
-                const next = deploymentSources.find(
-                  ({ mode }) => mode === value,
-                );
+                const next = sources.find(({ mode }) => mode === value);
                 if (next && next.mode !== source) {
                   setRepository("");
                   setTemplate("");
@@ -184,6 +194,14 @@ export default function DeploymentDialog({
                 Try again
               </Button>
             </div>
+          ) : data && source === "existing" && data.project ? (
+            <ExistingServicePicker
+              projectId={data.project.id}
+              services={data.services}
+              machines={data.machines}
+              onBusyChange={setBusy}
+              onAdded={onClose}
+            />
           ) : machineId && !machine ? (
             <p
               role="alert"
@@ -201,7 +219,7 @@ export default function DeploymentDialog({
               onSourceStepChange={setIsSourceStep}
               onSaved={onSaved}
             />
-          ) : data && source !== "catalog" ? (
+          ) : data && (source === "github" || source === "image") ? (
             <ServiceForm
               key={source}
               service={null}

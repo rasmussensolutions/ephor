@@ -19,20 +19,25 @@ import {
 } from "@/lib/service-map";
 import { bytes, type ServiceList, uptime } from "@/lib/services";
 import { DisplayNameEditor } from "./display-name-editor";
+import { ServiceStorageDetails } from "./service-storage-details";
 
 export function ComponentDetails({
   id,
   name,
   initial,
   onApp,
+  initialSection,
 }: {
   id: string;
   name: string;
   initial: { data: ServiceList; machines: MachineList };
   onApp?: () => void;
+  initialSection?: "Storage";
 }) {
   const { data, error } = useServices(initial, id);
-  const [tab, setTab] = useState<"Metrics" | "Logs" | "Variables">("Metrics");
+  const [tab, setTab] = useState<"Metrics" | "Logs" | "Variables" | "Storage">(
+    initialSection ?? "Metrics",
+  );
   const service = data.services.find((s) => s.id === id);
   const component = service?.topology?.components.find((c) => c.name === name);
   if (!service || !component)
@@ -81,7 +86,16 @@ export function ComponentDetails({
         aria-label="Component view"
         className="flex shrink-0 gap-6 overflow-x-auto border-b px-5 sm:px-10"
       >
-        {(["Metrics", "Logs", "Variables"] as const).map((value) => (
+        {(
+          [
+            "Metrics",
+            "Logs",
+            "Variables",
+            ...(component.volumes.length || tab === "Storage"
+              ? ["Storage" as const]
+              : []),
+          ] as const
+        ).map((value) => (
           <button
             key={value}
             type="button"
@@ -154,22 +168,6 @@ export function ComponentDetails({
                 ))}
               </section>
             )}
-            {component.volumes.length > 0 && (
-              <section className="space-y-2">
-                <h2 className="text-sm font-medium">Persistent storage</h2>
-                {component.volumes.map((path) => (
-                  <p
-                    key={path}
-                    className="break-all rounded-lg border p-3 font-mono text-xs"
-                  >
-                    {path}
-                  </p>
-                ))}
-                <p className="text-xs text-muted-foreground">
-                  Included in app backups.
-                </p>
-              </section>
-            )}
             <p className="break-all font-mono text-[11px] text-muted-foreground">
               {component.image}
             </p>
@@ -197,6 +195,9 @@ export function ComponentDetails({
               </pre>
             )}
           </section>
+        )}
+        {tab === "Storage" && (
+          <ServiceStorageDetails service={service} component={name} />
         )}
         {tab === "Variables" && <ComponentVariables id={id} name={name} />}
       </div>

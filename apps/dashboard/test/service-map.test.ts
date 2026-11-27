@@ -176,10 +176,10 @@ test("saved root and child positions grow map bounds without moving unrelated ca
   const layout = mapLayout([moved, { ...service, id: "other" }]);
   expect(layout.nodes[0]?.x).toBe(1008);
   expect(layout.nodes[0]?.y).toBe(792);
-  expect(layout.nodes[0]?.width).toBe(719);
-  expect(layout.nodes[0]?.height).toBe(771);
+  expect(layout.nodes[0]?.width).toBe(744);
+  expect(layout.nodes[0]?.height).toBe(747);
   expect(layout.width).toBeGreaterThanOrEqual(1712);
-  expect(layout.height).toBeGreaterThanOrEqual(1580);
+  expect(layout.height).toBeGreaterThanOrEqual(1603);
   expect(layout.nodes[1]?.x).toBe(original.nodes[1]?.x);
   expect(layout.nodes[1]?.y).toBe(original.nodes[1]?.y);
 });

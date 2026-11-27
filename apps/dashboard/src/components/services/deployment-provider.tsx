@@ -8,10 +8,10 @@ import {
   useRef,
   useState,
 } from "react";
-import type { DeploymentMode } from "@/lib/deployment-sources";
+import type { DeploymentSource } from "@/lib/deployment-sources";
 
 export interface DeploymentOptions {
-  source?: DeploymentMode;
+  source?: DeploymentSource;
   machineId?: string;
   projectId?: string;
 }

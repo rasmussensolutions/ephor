@@ -1,7 +1,17 @@
 import { imageTechnology } from "@ephor/api/services";
 import { groupGridOffset, mapGridSize, snapMapPoint } from "./map-grid";
+import { storageFooterHeight } from "./service-storage";
 import type { Service } from "./services";
-export const componentCardHeight = 192;
+export const serviceCardHeight = 168;
+export function componentHeight(service: Service, component: string) {
+  return (
+    serviceCardHeight +
+    (service.topology?.components.find((c) => c.name === component)?.volumes
+      .length
+      ? storageFooterHeight
+      : 0)
+  );
+}
 export function primaryComponent(service: Service) {
   const topology = service.topology;
   // Older API responses retain recipe order, with the main endpoint last.
@@ -68,10 +78,24 @@ export function componentLayout(service: Service) {
       component.name,
       service.presentation?.positions?.[component.name] ?? {
         x: (index % 2) * 344,
-        y: Math.floor(index / 2) * (componentCardHeight + 56),
+        y: Math.floor(index / 2) * (serviceCardHeight + 56),
       },
     ]),
   );
+  // Add space only for rows with storage, preserving stateless card dimensions.
+  let extraHeight = 0;
+  for (let index = 0; index < components.length; index += 2) {
+    const row = components.slice(index, index + 2);
+    for (const component of row) {
+      if (!service.presentation?.positions?.[component.name]) {
+        const point = positions[component.name];
+        if (point) point.y += extraHeight;
+      }
+    }
+    extraHeight +=
+      Math.max(...row.map((c) => componentHeight(service, c.name))) -
+      serviceCardHeight;
+  }
   if (components.length > 1) {
     for (const [key, point] of Object.entries(positions))
       positions[key] = snapMapPoint(point.x, point.y, groupGridOffset);
@@ -79,10 +103,16 @@ export function componentLayout(service: Service) {
   return {
     components,
     positions,
+    // Mirror the leftmost saved offset on the right, including snapped offsets.
+    leftInset: components.length
+      ? Math.min(...Object.values(positions).map((p) => p.x))
+      : 0,
     width: Math.max(264, ...Object.values(positions).map((p) => p.x + 264)),
     height: Math.max(
-      componentCardHeight,
-      ...Object.values(positions).map((p) => p.y + componentCardHeight),
+      serviceCardHeight,
+      ...components.map(
+        (c) => (positions[c.name]?.y ?? 0) + componentHeight(service, c.name),
+      ),
     ),
   };
 }
@@ -91,26 +121,31 @@ export function mapLayout(services: Service[]) {
     const count = service.topology?.components.length ?? 0;
     const grouped = count > 1;
     const children = componentLayout(service);
+    const standaloneHeight = count
+      ? componentHeight(service, children.components[0]?.name ?? "")
+      : serviceCardHeight +
+        (service.spec?.volumes?.length ? storageFooterHeight : 0);
+    const defaultChildren = grouped
+      ? componentLayout({ ...service, presentation: undefined })
+      : children;
     return {
       service,
       grouped,
       x: 0,
       y: 0,
-      width: grouped ? children.width + 48 : count ? 264 : 288,
-      height: grouped
-        ? children.height + 88
+      width: grouped
+        ? children.width + 50 + children.leftInset
         : count
-          ? componentCardHeight
-          : 210,
+          ? 264
+          : 288,
+      height: grouped ? children.height + 88 : standaloneHeight,
       // Default placement stays stable when a group is stretched by dragging.
-      baseWidth: grouped ? 656 : count ? 264 : 288,
-      baseHeight: grouped
-        ? 88 +
-          Math.ceil(count / 2) * componentCardHeight +
-          Math.max(0, Math.ceil(count / 2) - 1) * 56
+      baseWidth: grouped
+        ? defaultChildren.width + 50 + defaultChildren.leftInset
         : count
-          ? componentCardHeight
-          : 210,
+          ? 264
+          : 288,
+      baseHeight: grouped ? defaultChildren.height + 88 : standaloneHeight,
     };
   });
   const columns = Math.min(3, Math.max(1, Math.ceil(Math.sqrt(nodes.length))));

@@ -24,8 +24,10 @@ import type { Service, ServiceList } from "@/lib/services";
 export function MachineServices({
   id,
   view,
+  machineName,
 }: {
   id: string;
+  machineName: string;
   view: "table" | "canvas";
 }) {
   const openDeployment = useDeploymentDialog();
@@ -37,7 +39,7 @@ export function MachineServices({
     service: Service;
     trigger: HTMLElement;
     component?: string;
-    section?: "Domains";
+    section?: "Domains" | "Storage";
   } | null>(null);
   useEffect(() => {
     const changed = (event: Event) =>
@@ -123,6 +125,7 @@ export function MachineServices({
             <ContextMenuTrigger render={<div />}>
               <MachineServicesMap
                 key={id}
+                machineName={machineName}
                 services={services}
                 data={data}
                 projects={projects ?? []}

@@ -3,17 +3,14 @@ import { ArchiveIcon } from "@phosphor-icons/react/dist/csr/Archive";
 import { ArrowCircleUpIcon } from "@phosphor-icons/react/dist/csr/ArrowCircleUp";
 import { ArrowLeftIcon } from "@phosphor-icons/react/dist/csr/ArrowLeft";
 import { BellIcon } from "@phosphor-icons/react/dist/csr/Bell";
-import { ChatCircleDotsIcon } from "@phosphor-icons/react/dist/csr/ChatCircleDots";
 import { ClockCounterClockwiseIcon } from "@phosphor-icons/react/dist/csr/ClockCounterClockwise";
 import { FlowArrowIcon } from "@phosphor-icons/react/dist/csr/FlowArrow";
 import { GearSixIcon } from "@phosphor-icons/react/dist/csr/GearSix";
 import { GraphIcon } from "@phosphor-icons/react/dist/csr/Graph";
 import { HouseIcon } from "@phosphor-icons/react/dist/csr/House";
-import { MagicWandIcon } from "@phosphor-icons/react/dist/csr/MagicWand";
 import { MoonIcon } from "@phosphor-icons/react/dist/csr/Moon";
 import { PlugsIcon } from "@phosphor-icons/react/dist/csr/Plugs";
 import { PulseIcon } from "@phosphor-icons/react/dist/csr/Pulse";
-import { ScrollIcon } from "@phosphor-icons/react/dist/csr/Scroll";
 import { ShieldCheckIcon } from "@phosphor-icons/react/dist/csr/ShieldCheck";
 import { SidebarSimpleIcon } from "@phosphor-icons/react/dist/csr/SidebarSimple";
 import { SignOutIcon } from "@phosphor-icons/react/dist/csr/SignOut";
@@ -45,7 +42,6 @@ const navigationGroups = [
       { title: "Home", to: "/", icon: HouseIcon },
       { title: "Notifications", to: "/notifications", icon: BellIcon },
       { title: "Activity", to: "/activity", icon: ClockCounterClockwiseIcon },
-      { title: "Ask AI", to: "/ask-ai", icon: ChatCircleDotsIcon },
     ],
   },
   {
@@ -61,9 +57,7 @@ const navigationGroups = [
     items: [
       { title: "Security", to: "/security", icon: ShieldCheckIcon },
       { title: "Monitors", to: "/monitors", icon: PulseIcon },
-      { title: "Logs", to: "/logs", icon: ScrollIcon },
       { title: "Workflows", to: "/workflows", icon: FlowArrowIcon },
-      { title: "Fixes", to: "/fixes", icon: MagicWandIcon },
     ],
   },
 ] as const;

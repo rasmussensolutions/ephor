@@ -26,7 +26,7 @@ export function ServiceDrawer({
   trigger: HTMLElement | null;
   onClose: () => void;
   component?: string;
-  initialSection?: "Domains";
+  initialSection?: "Domains" | "Storage";
   onApp?: () => void;
 }) {
   const [initial, setInitial] = useState<{
@@ -89,6 +89,9 @@ export function ServiceDrawer({
                 name={component}
                 initial={initial}
                 onApp={onApp}
+                initialSection={
+                  initialSection === "Storage" ? "Storage" : undefined
+                }
               />
             ) : (
               <ServiceDetails
